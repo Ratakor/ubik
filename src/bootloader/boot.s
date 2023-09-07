@@ -102,7 +102,7 @@ start:
 	xor bx, bx
 	mov di, buffer
 
-.search_kernel
+.search_kernel:
 	mov si, file_kernel_bin
 	mov cx, 11 ; compare up to 11 characters
 	push di
