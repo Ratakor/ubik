@@ -63,33 +63,26 @@ fn die(status: u8, comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn readFat(disk: fs.File, reader: anytype) !void {
-    const siz = boot_sector.sectors_per_fat * boot_sector.bytes_per_sector;
-    fat_buf = try allocator.alloc(u8, siz);
+    fat_buf = try allocator.alloc(u8, boot_sector.sectors_per_fat * boot_sector.bytes_per_sector);
     errdefer allocator.free(fat_buf);
     const lba = boot_sector.reserved_sectors;
     try disk.seekTo(lba * boot_sector.bytes_per_sector);
-    // ok = ok && (fread(bufferOut, BootSector.BytesPerSector, count, disk) == count);
     if (try reader.readAll(fat_buf) != fat_buf.len) {
-        return error.BAD; // TODO
+        return error.ReadFatError;
     }
 }
 
 fn readRootDirectory(disk: fs.File, reader: anytype) !void {
-    const lba: u32 = boot_sector.reserved_sectors + boot_sector.sectors_per_fat * boot_sector.fat_count;
-    const size: u32 = @sizeOf(DirectoryEntry) * boot_sector.dir_entry_count;
-    var sectors: u32 = size / boot_sector.bytes_per_sector;
+    const lba = boot_sector.reserved_sectors + boot_sector.sectors_per_fat * boot_sector.fat_count;
+    const size = @sizeOf(DirectoryEntry) * boot_sector.dir_entry_count;
+    var sectors = size / boot_sector.bytes_per_sector;
     if (@mod(size, boot_sector.bytes_per_sector) > 0) {
         sectors += 1;
     }
 
     root_directory_end = lba + sectors;
-
-    // TODO
-//     RootDirectory = malloc(sectors * BootSector.BytesPerSector); // this was for readsectors
     root_directory = try allocator.alloc(DirectoryEntry, boot_sector.dir_entry_count);
     errdefer allocator.free(root_directory);
-    // TODO
-//     return readSectors(disk, lba, sectors, RootDirectory);
     try disk.seekTo(lba * boot_sector.bytes_per_sector);
     for (0..boot_sector.dir_entry_count) |i| {
         root_directory[i] = try reader.readStruct(DirectoryEntry);
@@ -107,39 +100,27 @@ fn findFile(name: []const u8) ?*DirectoryEntry {
 
 fn readFile(file_entry: *DirectoryEntry, disk: fs.File, reader: anytype, buf: []u8) !void {
     var current_cluster = file_entry.first_cluster_low;
-
     var i: usize = 0;
+
     while (current_cluster < 0x0FF8) {
-        const lba: u32 = root_directory_end + (current_cluster -% 2) * boot_sector.sectors_per_cluster;
+        const lba = root_directory_end + (current_cluster -% 2) * boot_sector.sectors_per_cluster;
         try disk.seekTo(lba * boot_sector.bytes_per_sector);
         if (try reader.readAll(buf[i..]) != buf.len) {
             return;
-            // return error.BAD; // TODO
         }
         i += boot_sector.sectors_per_cluster * boot_sector.bytes_per_sector;
 
-        const fat_idx: u32 = current_cluster * 3 / 2 - 1;
+        const idx = current_cluster * 3 / 2; // - 1 ?
         if (current_cluster % 2 == 0) {
-            current_cluster = @as(u16, fat_buf[fat_idx]) & 0x0FFF;
+            current_cluster = mem.readIntSliceNative(u16, fat_buf[idx..]) & 0x0FFF;
         } else {
-            current_cluster = @as(u16, fat_buf[fat_idx]) >> 4;
+            current_cluster = mem.readIntSliceNative(u16, fat_buf[idx..]) >> 4;
         }
     }
+}
 
-    // do {
-    //     uint32_t lba = g_RootDirectoryEnd + (currentCluster - 2) * g_BootSector.SectorsPerCluster;
-    //     ok = ok && readSectors(disk, lba, g_BootSector.SectorsPerCluster, outputBuffer);
-    //     outputBuffer += g_BootSector.SectorsPerCluster * g_BootSector.BytesPerSector;
-
-    //     uint32_t fatIndex = currentCluster * 3 / 2;
-    //     if (currentCluster % 2 == 0)
-    //         currentCluster = (*(uint16_t*)(g_Fat + fatIndex)) & 0x0FFF;
-    //     else
-    //         currentCluster = (*(uint16_t*)(g_Fat + fatIndex)) >> 4;
-
-    // } while (ok && currentCluster < 0x0FF8);
-
-    // return ok;
+inline fn isprint(c: u8) bool {
+    return c -% 0x20 < 0x5f;
 }
 
 fn usage() noreturn {
@@ -149,7 +130,6 @@ fn usage() noreturn {
 }
 
 // zig build-exe fat.zig && ./fat ../../build/floppy.img "TEST    TXT"
-// TODO: ~22min
 pub fn main() !void {
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
@@ -191,11 +171,12 @@ pub fn main() !void {
     const stdout = bw.writer();
 
     for (0..file_entry.size) |i| {
-        _ = i;
- //        if (isprint(buffer[i])) fputc(buffer[i], stdout);
- //        else printf("<%02x>", buffer[i]);
+        if (isprint(buf[i])) {
+            try stdout.writeByte(buf[i]);
+        } else {
+            try stdout.print("<{x:0>2}>", .{buf[i]});
+        }
     }
-    try stdout.print("{any}\n", .{buf});
     try stdout.writeAll("\n");
     try bw.flush();
 }

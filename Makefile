@@ -9,7 +9,7 @@ IMG        = ${BUILD_DIR}/floppy.img
 BOOTLOADER = ${BUILD_DIR}/bootloader.bin
 KERNEL     = ${BUILD_DIR}/kernel.bin
 
-all: ${IMG} tools
+all: ${IMG} # tools
 
 ${IMG}: ${BOOTLOADER} ${KERNEL}
 	dd if=/dev/zero of=${IMG} bs=512 count=2880
