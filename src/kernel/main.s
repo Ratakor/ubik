@@ -1,10 +1,16 @@
-org 0x7c00
+org 0x0
 bits 16
 
 %define ENDL 0x0d, 0x0a
 
 start:
-	jmp main
+	; print kernel message
+	mov si, msg_kernel
+	call puts
+
+.halt:
+	cli
+	hlt
 
 ; print a string to the screen
 ; param:
@@ -13,6 +19,7 @@ puts:
 	; save registers we will modify
 	push si
 	push ax
+	push bx
 
 .loop:
 	lodsb ; loads next char in al
@@ -26,30 +33,9 @@ puts:
 	jmp .loop
 
 .done:
+	pop bx
 	pop ax
 	pop si
 	ret
 
-main:
-	; setup data segments
-	mov ax, 0 ; can't write a constant to ds/es directly
-	mov ds, ax
-	mov es, ax
-
-	; setup stack
-	mov ss, ax
-	mov sp, 0x7c00 ; stack grows downwards from where we are loaded in memory
-
-	; print message
-	mov si, msg
-	call puts
-
-	hlt
-
-.halt:
-	jmp .halt
-
-msg: db "Hello world!", ENDL, 0
-
-times 510-($-$$) db 0
-dw 0AA55h
+msg_kernel: db "hello world from kernel", ENDL, 0
