@@ -3,31 +3,29 @@
 # TODO
 - use zig instead of make
 - make a microkernel not a monolithic kernel
-- use FAT32 instead of FAT12
 - support RISC-V64, aarch64 and x86_64
+- current font are under GPL
+- choose between BOOTBOOT, limine and custom bootloader
 
-# Limine Zig Bare Bones
+# dependencies
+- all: make, zig, limine (included)
+- iso: xorriso
+- hdd: gptfdisk, mtools
+- run: qemu
 
-This repository will demonstrate how to set up a basic x86-64 kernel in Zig using Limine.
+# makefile targets
 
-## How to use this?
+Running `make all` will compile the kernel (from the `kernel/` directory) and
+then generate a bootable ISO image.
 
-### Dependencies
+Running `make all-hdd` will compile the kernel and then generate a raw image
+suitable to be flashed onto a USB stick or hard drive/SSD.
 
-Any `make` command depends on GNU make (`gmake`) and is expected to be run using it. This usually means using `make` on most GNU/Linux distros, or `gmake` on other non-GNU systems.
+Running `make run` will build the kernel and a bootable ISO (equivalent to make
+all) and then run it using `qemu` (if installed).
 
-All `make all*` targets depend on Zig, at least version 0.11.x.
+Running `make run-hdd` will build the kernel and a raw HDD image (equivalent to
+make all-hdd) and then run it using `qemu` (if installed).
 
-Additionally, building an ISO with `make all` requires `xorriso`, and building a HDD/USB image with `make all-hdd` requires `sgdisk` (usually from `gdisk` or `gptfdisk` packages) and `mtools`.
-
-### Makefile targets
-
-Running `make all` will compile the kernel (from the `kernel/` directory) and then generate a bootable ISO image.
-
-Running `make all-hdd` will compile the kernel and then generate a raw image suitable to be flashed onto a USB stick or hard drive/SSD.
-
-Running `make run` will build the kernel and a bootable ISO (equivalent to make all) and then run it using `qemu` (if installed).
-
-Running `make run-hdd` will build the kernel and a raw HDD image (equivalent to make all-hdd) and then run it using `qemu` (if installed).
-
-The `run-uefi` and `run-hdd-uefi` targets are equivalent to their non `-uefi` counterparts except that they boot `qemu` using a UEFI-compatible firmware.
+The `run-uefi` and `run-hdd-uefi` targets are equivalent to their non `-uefi`
+counterparts except that they boot `qemu` using a UEFI-compatible firmware.
