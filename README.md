@@ -1,14 +1,15 @@
-# x86 operating system in asm/zig
+# Système 9
+x86_64 operating system in zig
 
 # TODO
 - use zig instead of make
-- make a microkernel not a monolithic kernel
+- current font is under GPL
+- add a CI
 - support RISC-V64, aarch64 and x86_64
-- current font are under GPL
-- choose between BOOTBOOT, limine and custom bootloader
+- replace limine with a custom bootloader
 
 # dependencies
-- all: make, zig, limine (included)
+- all: make, zig
 - iso: xorriso
 - hdd: gptfdisk, mtools
 - run: qemu

@@ -13,20 +13,18 @@ pub const Terminal = struct {
     cursor: Cursor = .{},
 
     fn putChar(self: @This(), glyph: u8) void {
-        const fg = self.foreground;
-        const bg = self.background;
         const fb = self.framebuffer;
-        const cursor = self.cursor;
+        const buf = @as([*]u32, @ptrCast(@alignCast(fb.address)))[0 .. (fb.pitch * fb.height) / 4];
         const glyph_size = font_height;
         for (0..font_height) |y| {
             var data = font[@as(usize, glyph) * glyph_size + y ..];
             var mask: u8 = 0x80;
             for (0..font_width) |x| {
-                const offset = (cursor.y + y) * fb.pitch + (cursor.x + x) * 4;
+                const idx = self.cursor.x + x + (self.cursor.y + y) * fb.width;
                 if (data[0] & mask != 0) {
-                    @as(*u32, @ptrCast(@alignCast(fb.address + offset))).* = fg;
+                    buf[idx] = self.foreground;
                 } else {
-                    @as(*u32, @ptrCast(@alignCast(fb.address + offset))).* = bg;
+                    buf[idx] = self.background;
                 }
                 mask >>= 1;
                 if (mask == 0) {
@@ -44,14 +42,16 @@ pub const Terminal = struct {
                     self.cursor.x = 0;
                     self.cursor.y += font_height;
                 },
-                '\t' => self.cursor.x += font_width * 4,
+                '\t' => {
+                    self.cursor.x += font_width * 8;
+                },
                 else => {
                     self.putChar(glyph);
                     self.cursor.x += font_width;
                 },
             }
 
-            if (self.cursor.x + font_width > self.framebuffer.width) {
+            if (self.cursor.x >= self.framebuffer.width) {
                 self.cursor.x = 0;
                 self.cursor.y += font_height;
             }
@@ -65,4 +65,11 @@ pub const Terminal = struct {
     pub fn writer(self: *@This()) Writer {
         return .{ .context = self };
     }
+
+    pub fn clear(self: @This()) void {
+        const fb = self.framebuffer;
+        const buf = @as([*]u32, @ptrCast(@alignCast(fb.address)))[0 .. (fb.pitch * fb.height) / 4];
+        @memset(buf, 0);
+    }
+
 };

@@ -1,6 +1,6 @@
-IMAGE_NAME = barebones
+ARCH       = x86_64
+IMAGE_NAME = système-9-${ARCH}
 # ZIGFLAGS   = -Doptimize=ReleaseFast
-LIMINE     = limine/limine
 
 all: ${IMAGE_NAME}.iso
 
@@ -22,14 +22,14 @@ ovmf:
 	mkdir -p ovmf
 	cd ovmf && curl -Lo OVMF.fd https://retrage.github.io/edk2-nightly/bin/RELEASEX64_OVMF.fd
 
-${LIMINE}:
-	@# git clone https://github.com/limine-bootloader/limine.git --branch=v5.x-branch-binary --depth=1
+limine:
+	git clone https://github.com/limine-bootloader/limine.git --branch=v5.x-branch-binary --depth=1
 	${MAKE} -C limine
 
 kernel:
 	zig build ${ZIGFLAGS}
 
-${IMAGE_NAME}.iso: ${LIMINE} kernel
+${IMAGE_NAME}.iso: limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root
 	cp -v zig-out/bin/kernel.elf\
@@ -45,7 +45,7 @@ ${IMAGE_NAME}.iso: ${LIMINE} kernel
 	./limine/limine bios-install ${IMAGE_NAME}.iso
 	rm -rf iso_root
 
-${IMAGE_NAME}.hdd: ${LIMINE} kernel
+${IMAGE_NAME}.hdd: limine kernel
 	rm -f ${IMAGE_NAME}.hdd
 	dd if=/dev/zero bs=1M count=0 seek=64 of=${IMAGE_NAME}.hdd
 	sgdisk ${IMAGE_NAME}.hdd -n 1:2048 -t 1:ef00
@@ -57,7 +57,10 @@ ${IMAGE_NAME}.hdd: ${LIMINE} kernel
 	mcopy -i ${IMAGE_NAME}.hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
 
 clean:
-	rm -rf zig-cache zig-out ovmf iso_root
-	rm -f ${IMAGE_NAME}.iso ${IMAGE_NAME}.hdd ${LIMINE}
+	rm -rf zig-cache zig-out iso_root
+	rm -f ${IMAGE_NAME}.iso ${IMAGE_NAME}.hdd
 
-.PHONY: all all-hdd run run-uefi run-hdd run-hdd-uefi kernel clean
+distclean: clean
+	rm -rf ovmf limine
+
+.PHONY: all all-hdd run run-uefi run-hdd run-hdd-uefi kernel clean distclean
