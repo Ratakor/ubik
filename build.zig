@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) !void {
     const limine = b.dependency("limine", .{});
     const kernel = b.addExecutable(.{
         .name = "kernel.elf",
-        .root_source_file = .{ .path = "kernel/kernel.zig" },
+        .root_source_file = .{ .path = "kernel/main.zig" },
         .target = target,
         .optimize = optimize,
     });

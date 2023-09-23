@@ -1,6 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
-const tty = @import("Terminal.zig");
+const tty = @import("tty.zig");
 
 const KernelError = error{
     EmptyResponse,
