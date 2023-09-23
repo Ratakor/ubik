@@ -1,6 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
-const Terminal = @import("Terminal.zig").Terminal;
+const tty = @import("Terminal.zig");
 
 const KernelError = error{
     EmptyResponse,
@@ -45,49 +45,48 @@ fn drawSquares(fb: *limine.Framebuffer) void {
     }
 }
 
+inline fn halt() noreturn {
+    while (true) asm volatile ("hlt");
+}
 
-// pub fn panic(msg: []const u8, trace: ?*std.builtin.StackTrace) noreturn {
-//     @setCold(true);
-//     nosuspend tty.panic("{}", msg);
-//     // TODO: dump trace
-//     // const first_trace_addr = ret_addr orelse @returnAddress();
-//     // std.debug.panicImpl(error_return_trace, first_trace_addr, msg);
-// }
 
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    @setCold(true);
+    tty.foreground = tty.Color.red;
+    tty.print("\nKernel panic: ", .{});
+    tty.foreground = tty.Color.white;
+    tty.print("{s}", .{msg});
+    halt();
+}
 
 export fn _start() callconv(.C) noreturn {
     asm volatile ("cli");
 
-    const framebuffer_response = framebuffer_request.response orelse unreachable;
+    // const framebuffer_response = framebuffer_request.response orelse unreachable;
     // if (framebuffer_response.framebuffer_count < 1) unreachable;
-    const framebuffer = framebuffer_response.framebuffers()[0];
+    // const framebuffer = framebuffer_response.framebuffers()[0];
+    // tty.init(framebuffer);
 
-    main(framebuffer) catch |err| {
-        var terminal: Terminal = .{
-            .framebuffer = framebuffer,
-            .foreground = 0x00FF0000,
-        };
-        terminal.clear();
-        terminal.writer().print("Kernel failed: {any}", .{err}) catch unreachable;
-    };
+    main() catch |err| panic(@errorName(err), null, null);
 
-    while (true) {
-        asm volatile ("hlt");
-    }
+    halt();
 }
 
 // const PageAllocator = struct {
 //     std.mem.page_size
 // };
 
-fn main(fb: *limine.Framebuffer) !void {
-    // drawSquares(fb);
+fn main() !void {
+    const framebuffer_response = framebuffer_request.response orelse unreachable;
+    if (framebuffer_response.framebuffer_count < 1) unreachable;
+    const framebuffer = framebuffer_response.framebuffers()[0];
+    tty.init(framebuffer);
 
-    var terminal: Terminal = .{ .framebuffer = fb };
-    const writer = terminal.writer();
-    writer.print("Hello, World!\n", .{}) catch unreachable;
-    // writer.context.foreground = 0xBD93F9;
-    // writer.print("new color of value {X}\n", .{writer.context.foreground}) catch unreachable;
+    drawSquares(framebuffer);
+
+    tty.print("Hello, World!\n", .{});
+    // tty.foreground = 0xBD93F9;
+    // tty.print("new color of value {X}\n", .{tty.foreground});
 
     const memory_map_response = memory_map_request.response orelse return KernelError.EmptyResponse;
     // var buffer: [std.mem.page_size]u8 = undefined;
@@ -109,7 +108,7 @@ fn main(fb: *limine.Framebuffer) !void {
         // try writer.print("{} {}\n", .{i, entry});
     }
 
-    writer.print("{}\n", .{total_mem}) catch unreachable;
+    tty.print("{}\n", .{total_mem});
 
     // for (entries.items) |map| {
     //     try writer.print("{}\n", .{map});
