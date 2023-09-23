@@ -2,6 +2,7 @@
 x86_64 operating system in zig
 
 # TODO
+- use flanterm
 - use zig instead of make
 - current font is under GPL
 - add a CI

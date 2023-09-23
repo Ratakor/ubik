@@ -2,14 +2,8 @@ const std = @import("std");
 const limine = @import("limine");
 const tty = @import("tty.zig");
 
-const KernelError = error{
-    EmptyResponse,
-};
-
 export var framebuffer_request: limine.FramebufferRequest = .{};
 export var memory_map_request: limine.MemoryMapRequest = .{};
-
-// var framebuffer: *volatile limine.Framebuffer = undefined;
 
 // fn loadFile(name: []const u8) !*limine.File {
 //     const module_response = module_request.response orelse done();
@@ -85,32 +79,24 @@ fn main() !void {
     drawSquares(framebuffer);
 
     tty.print("Hello, World!\n", .{});
-    // tty.foreground = 0xBD93F9;
-    // tty.print("new color of value {X}\n", .{tty.foreground});
+    tty.foreground = @enumFromInt(0xBD93F9);
+    tty.print("new color of value {X}\n\n\n", .{@intFromEnum(tty.foreground)});
+    tty.foreground = tty.Color.white;
 
-    const memory_map_response = memory_map_request.response orelse return KernelError.EmptyResponse;
-    // var buffer: [std.mem.page_size]u8 = undefined;
-    // var fba = std.heap.FixedBufferAllocator.init(&buffer);
-    // const allocator = fba.allocator();
-    // var entries = std.ArrayList(*limine.MemoryMapEntry).init(allocator);
-    var total_mem: u64 = 0;
-    for (memory_map_response.entries(), 0..) |entry, i| {
-        _ = i;
-        // switch (entry.kind) {
-        //     .usable, .acpi_reclaimable, .bootloader_reclaimable => {
-        //         total_mem += entry.length;
-        //     },
-        //     else => {},
-        // }
+    const memory_map_response = memory_map_request.response orelse unreachable;
+
+    var total_free: u64 = 0;
+    var largest: *limine.MemoryMapEntry = memory_map_response.entries()[0];
+    for (memory_map_response.entries()[1..]) |entry| {
         if (entry.kind == .usable) {
-            total_mem += entry.length;
+            total_free += entry.length;
+            if (entry.length > largest.length) {
+                largest = entry;
+            }
         }
-        // try writer.print("{} {}\n", .{i, entry});
     }
 
-    tty.print("{}\n", .{total_mem});
+    tty.print("total_free: {}\n", .{total_free});
+    tty.print("largest seg: {}\n", .{largest});
 
-    // for (entries.items) |map| {
-    //     try writer.print("{}\n", .{map});
-    // }
 }

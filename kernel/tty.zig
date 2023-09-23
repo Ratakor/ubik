@@ -10,6 +10,7 @@ pub const Color = enum(u32) {
     magenta = 0xFF00FF,
     yellow = 0xFFFF00,
     white = 0xFFFFFF,
+    _,
 };
 
 const Writer = std.io.Writer(void, error{}, write);
