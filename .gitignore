@@ -1,6 +1,3 @@
 zig-cache/
 zig-out/
-limine/
-ovmf/
 *.iso
-*.hdd
