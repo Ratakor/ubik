@@ -1,5 +1,8 @@
+// TODO: switch to flanterm
+
 const std = @import("std");
 const limine = @import("limine");
+const root = @import("root");
 
 pub const Color = enum(u32) {
     black = 0x000000,
@@ -28,7 +31,21 @@ pub var foreground = Color.white;
 pub var background = Color.black;
 pub const writer: Writer = .{ .context = {} };
 
-pub fn init(fb: *limine.Framebuffer) void {
+/// draw 3 sqares one red, one green and one blue
+pub fn drawSquares() void {
+    cursor.y += 10;
+    for (cursor.y..cursor.y + 20) |y| {
+        for (0..20) |x| {
+            framebuffer[(x + 10) + y * framebuffer_width] = @intFromEnum(Color.red);
+            framebuffer[(x + 40) + y * framebuffer_width] = @intFromEnum(Color.green);
+            framebuffer[(x + 70) + y * framebuffer_width] = @intFromEnum(Color.blue);
+        }
+    }
+    cursor.y += 30;
+}
+
+pub fn init() void {
+    const fb = root.framebuffer_request.response.?.framebuffers()[0];
     framebuffer = @as([*]u32, @ptrCast(@alignCast(fb.address)))[0 .. (fb.pitch * fb.height) / 4];
     framebuffer_width = fb.width;
     framebuffer_height = fb.height;
@@ -62,7 +79,6 @@ fn writeChar(char: u8) void {
     }
 }
 
-
 fn write(_: void, str: []const u8) error{}!usize {
     for (str) |char| {
         switch (char) {
@@ -88,7 +104,7 @@ fn write(_: void, str: []const u8) error{}!usize {
             cursor.y += font_height;
         }
 
-        if (cursor.y >= framebuffer_height) {
+        if (cursor.y + font_height > framebuffer_height) {
             cursor.y = 0;
             // TODO: handle scrolling
         }

@@ -34,4 +34,7 @@ pub fn build(b: *std.Build) !void {
         .ReleaseFast, .ReleaseSmall => true,
     };
     b.installArtifact(kernel);
+
+    const fmt_step = b.step("fmt", "Format all source files");
+    fmt_step.dependOn(&b.addFmt(.{ .paths = &.{ "build.zig", "kernel" } }).step);
 }
