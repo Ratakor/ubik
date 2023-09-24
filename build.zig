@@ -43,7 +43,6 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
     const image_params = &[_][]const u8{
         "/bin/sh", "-c",
         std.mem.concat(b.allocator, u8, &.{
-            // "git clone https://github.com/limine-bootloader/limine.git --branch=v5.x-branch-binary --depth=1 ; ",
             "make -C limine && ",
             "mkdir -p ", image_dir, " && ",
             "cp zig-out/bin/kernel.elf limine.cfg limine/limine-bios.sys ",

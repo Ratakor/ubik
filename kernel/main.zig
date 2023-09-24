@@ -1,6 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 const tty = @import("tty.zig");
+const gdt = @import("gdt.zig");
 const pmem = @import("pmem.zig");
 const vmem = @import("vmem.zig");
 const debug = @import("debug.zig");
@@ -79,6 +80,7 @@ fn main() !void {
     tty.print("new color of value {X}\n\n", .{@intFromEnum(tty.foreground)});
     tty.foreground = tty.Color.white;
 
+    gdt.init();
     try pmem.init();
 
     const buf = try pmem.alloc(u8, 1, false);

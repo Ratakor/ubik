@@ -6,7 +6,7 @@ const page_size = std.mem.page_size;
 
 // TODO
 pub const page_allocator = Allocator{
-    .ptr = undefined, // TODO
+    .ptr = undefined,
     .vtable = &vtable,
 };
 
@@ -21,6 +21,7 @@ fn alloc(_: *anyopaque, size: usize, _: u8, _: usize) ?[*]u8 {
 
     // TODO
     _ = aligned_size;
+    // return pmem.alloc(u8, @divExact(aligned_size, page_size), false) catch return null;
 
     return null;
 }
@@ -42,21 +43,9 @@ fn resize(_: *anyopaque, buf: []u8, _: u8, new_size: usize, _: usize) bool {
     return false;
 }
 
-/// Free and invalidate a buffer.
-///
-/// `buf.len` must equal the most recent length returned by `alloc` or
-/// given to a successful `resize` call.
-///
-/// `buf_align` must equal the same value that was passed as the
-/// `ptr_align` parameter to the original `alloc` call.
-///
-/// `ret_addr` is optionally provided as the first return address of the
-/// allocation call stack. If the value is `0` it means no return address
-/// has been provided.
 fn free(_: *anyopaque, buf: []u8, _: u8, _: usize) void {
     // TODO
     _ = buf;
     // const aligned_buf_len = std.mem.alignForward(usize, buf.len, page_size);
     // vmem.free(@alignCast(ptr[0 .. aligned_buf_len]));
-
 }

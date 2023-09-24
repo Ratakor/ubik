@@ -102,7 +102,7 @@ fn innerAlloc(pages: usize, limit: u64) ?u64 {
     return null;
 }
 
-// TODO this is too complex for pmem, remove zig types magic
+// TODO this is too complex for pmem, remove zig types magic and errors
 
 pub fn alloc(comptime T: type, pages: usize, zero: bool) error{OutOfMemory}![]T {
     // TODO: lock defer unlock
