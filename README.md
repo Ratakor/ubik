@@ -1,5 +1,5 @@
 # Système 9
-an operating system made with zig
+an operating system made with zig using Ubik as its kernel
 
 # TODO
 - use flanterm

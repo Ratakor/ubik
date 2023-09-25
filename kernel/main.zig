@@ -1,5 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
+const serial = @import("serial.zig");
 const tty = @import("tty.zig");
 const gdt = @import("gdt.zig");
 const pmem = @import("pmem.zig");
@@ -7,7 +8,6 @@ const vmem = @import("vmem.zig");
 const debug = @import("debug.zig");
 
 // pub const page_allocator = mem.page_allocator;
-const os_name = "Système 9";
 
 export var boot_info_request: limine.BootloaderInfoRequest = .{};
 pub export var hhdm_request: limine.HhdmRequest = .{};
@@ -73,13 +73,14 @@ fn main() !void {
 
     tty.drawSquares();
 
-    tty.print("Booting " ++ os_name ++ " with {s} {s}\n", .{ boot_info.name, boot_info.version });
+    tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
 
     tty.print("Hello, World!\n", .{});
     tty.foreground = @enumFromInt(0xBD93F9);
     tty.print("new color of value {X}\n\n", .{@intFromEnum(tty.foreground)});
     tty.foreground = tty.Color.white;
 
+    serial.init();
     gdt.init();
     try pmem.init();
 
