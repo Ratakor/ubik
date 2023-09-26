@@ -1,12 +1,14 @@
 const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
+const SpinLock = @import("lock.zig").SpinLock;
 const tty = @import("tty.zig");
 
 const page_size = std.mem.page_size;
 const free_page = false;
 
 // TODO use u64 and logical operation to speed up the process ?
+var lock: SpinLock = .{};
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
 var usable_pages: u64 = 0;
@@ -105,7 +107,9 @@ fn innerAlloc(pages: usize, limit: u64) ?u64 {
 // TODO this is too complex for pmem, remove zig types magic and errors
 
 pub fn alloc(comptime T: type, pages: usize, zero: bool) error{OutOfMemory}![]T {
-    // TODO: lock defer unlock
+    lock.lock();
+    defer lock.unlock();
+
     const last = last_idx;
     const address = innerAlloc(pages, bitmap.len) orelse blk: {
         last_idx = 0;
@@ -121,7 +125,9 @@ pub fn alloc(comptime T: type, pages: usize, zero: bool) error{OutOfMemory}![]T 
 }
 
 pub fn free(memory: anytype) void {
-    // TODO: lock defer unlock
+    lock.lock();
+    defer lock.unlock();
+
     const length = memory.len * @sizeOf(std.meta.Elem(@TypeOf(memory)));
     const pages = @divExact(length, page_size);
     const page = @intFromPtr(memory.ptr) / page_size;
@@ -133,7 +139,9 @@ pub fn free(memory: anytype) void {
 }
 
 // pub fn alloc(pages: usize, zero: bool) ?*anyopaque {
-//     // TODO: lock defer unlock
+//     lock.lock();
+//     defer lock.unlock();
+
 //     const last = last_idx;
 //     const address = innerAlloc(pages, bitmap.len) orelse blk: {
 //         last_idx = 0;
@@ -149,7 +157,9 @@ pub fn free(memory: anytype) void {
 // }
 
 // pub fn free(ptr: *anyopaque, pages: usize) void {
-//     // TODO: lock defer unlock
+//     lock.lock();
+//     defer lock.unlock();
+
 //     const page = @intFromPtr(ptr) / page_size;
 //     for (page..page + pages) |i| {
 //         bitmap[i] = free_page;

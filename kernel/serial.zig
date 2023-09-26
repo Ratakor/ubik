@@ -1,7 +1,11 @@
 // TODO: mostly useless
 
+const SpinLock = @import("lock.zig").SpinLock;
+
 const com1_port = 0x3f8;
 const com_ports = [_]u16{ com1_port, 0x2f8, 0x3e8, 0x2e8 };
+
+var lock: SpinLock = .{};
 
 pub fn init() void {
     for (com_ports) |port| {
@@ -94,7 +98,9 @@ inline fn transmitData(port: u16, value: u8) void {
 }
 
 pub fn outChar(char: u8) void {
-    // TODO lock
+    lock.lock();
+    defer lock.unlock();
+
     if (char == '\n') {
         transmitData(com1_port, '\r');
     }
@@ -102,7 +108,9 @@ pub fn outChar(char: u8) void {
 }
 
 pub fn outStr(str: []const u8) void {
-    // TODO lock
+    lock.lock();
+    defer lock.unlock();
+
     for (str) |char| {
         if (char == '\n') {
             transmitData(com1_port, '\r');

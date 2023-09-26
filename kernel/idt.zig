@@ -1,6 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
+const SpinLock = @import("lock.zig").SpinLock;
 const tty = @import("tty.zig");
 
 const interrupt_gate = 0b1000_1110;
@@ -32,7 +33,7 @@ var idt: [256]IDTEntry = undefined;
 // pub var isr: [256]*const anyopaque = undefined;
 // extern void *isr_thunks[];
 pub var panic_ipi_vector: u8 = undefined;
-// var lock: SpinLock = SPINKLOCK_INIT;
+var lock: SpinLock = .{};
 var free_vector: u8 = 32;
 
 // extern fn panic_ipi_entry() callconv (.Naked) void;
@@ -54,7 +55,8 @@ pub fn init() void {
 }
 
 fn allocateVector() u8 {
-    // TODO: lock.acquire defer lock.release
+    lock.lock();
+    defer lock.unlock();
 
     if (free_vector == 0xf0) {
         @panic("IDT exhausted");

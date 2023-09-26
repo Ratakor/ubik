@@ -7,7 +7,6 @@ const idt = @import("idt.zig");
 const pmem = @import("pmem.zig");
 const vmem = @import("vmem.zig");
 const debug = @import("debug.zig");
-const SpinLock = @import("lock.zig").SpinLock;
 
 // pub const page_allocator = mem.page_allocator;
 
