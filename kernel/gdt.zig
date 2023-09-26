@@ -1,8 +1,3 @@
-const std = @import("std");
-const limine = @import("limine");
-const root = @import("root");
-const tty = @import("tty.zig");
-
 // https://wiki.osdev.org/Global_Descriptor_Table
 
 const GDTEntry = packed struct {
@@ -58,27 +53,19 @@ var gdtr: GDTDescriptor = .{
 var gdt: GDT = .{
     .null_entry = .{},
     .kernel_code = .{
-        .limit_low = 0xffff,
-        .limit_high = 0xf,
-        .access = 0b10011010,
+        .access = 0b1001_1010,
         .flags = 0b1010,
     },
     .kernel_data = .{
-        .limit_low = 0xffff,
-        .limit_high = 0xf,
-        .access = 0b10010010,
+        .access = 0b1001_0010,
         .flags = 0b1100,
     },
     .user_code = .{
-        .limit_low = 0xffff,
-        .limit_high = 0xf,
-        .access = 0b11111010,
+        .access = 0b1111_1010,
         .flags = 0b1010,
     },
     .user_data = .{
-        .limit_low = 0xffff,
-        .limit_high = 0xf,
-        .access = 0b11110010,
+        .access = 0b1111_0010,
         .flags = 0b1100,
     },
     // .tss = undefined,
@@ -91,21 +78,20 @@ var tss: TSS = .{
 };
 
 pub fn init() void {
-    gdtr.base = @intFromPtr(&gdt);
-
     reloadGDT();
 }
 
 fn reloadGDT() void {
+    gdtr.base = @intFromPtr(&gdt);
     asm volatile (
         \\lgdt (%[gdtr])
-        // reload CS register
+        // reload CS register, 0x08 = kernel_code
         \\push $0x08
         \\lea 1f(%%rip), %%rax
         \\push %%rax
         \\lretq
         \\1:
-        // reload data segment registers
+        // reload data segment registers, 0x10 = kernel_data
         \\mov $0x10, %%ax
         \\mov %%ax, %%ds
         \\mov %%ax, %%es
@@ -113,7 +99,7 @@ fn reloadGDT() void {
         \\mov %%ax, %%gs
         \\mov %%ax, %%ss
         :
-        : [gdtr] "r" (&gdtr)
+        : [gdtr] "r" (&gdtr),
         : "rax", "memory"
     );
 }

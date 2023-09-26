@@ -110,4 +110,3 @@ pub fn outStr(str: []const u8) void {
         transmitData(com1_port, char);
     }
 }
-

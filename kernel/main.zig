@@ -3,9 +3,11 @@ const limine = @import("limine");
 const serial = @import("serial.zig");
 const tty = @import("tty.zig");
 const gdt = @import("gdt.zig");
+const idt = @import("idt.zig");
 const pmem = @import("pmem.zig");
 const vmem = @import("vmem.zig");
 const debug = @import("debug.zig");
+const SpinLock = @import("lock.zig").SpinLock;
 
 // pub const page_allocator = mem.page_allocator;
 
@@ -82,6 +84,9 @@ fn main() !void {
 
     serial.init();
     gdt.init();
+    idt.init(); // TODO
+    // exception.init <- do that in idt.zig
+    // interrupt_event.init <- same ^
     try pmem.init();
 
     const buf = try pmem.alloc(u8, 1, false);

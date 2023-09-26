@@ -131,3 +131,28 @@ pub fn free(memory: anytype) void {
     }
     used_pages -= pages;
 }
+
+// pub fn alloc(pages: usize, zero: bool) ?*anyopaque {
+//     // TODO: lock defer unlock
+//     const last = last_idx;
+//     const address = innerAlloc(pages, bitmap.len) orelse blk: {
+//         last_idx = 0;
+//         break :blk innerAlloc(pages, last) orelse return null;
+//     };
+
+//     used_pages += pages;
+//     const ptr: [*]u8 = @ptrFromInt(address);
+//     const slice = ptr[0 .. pages * page_size];
+//     if (zero) @memset(slice, 0);
+
+//     return slice;
+// }
+
+// pub fn free(ptr: *anyopaque, pages: usize) void {
+//     // TODO: lock defer unlock
+//     const page = @intFromPtr(ptr) / page_size;
+//     for (page..page + pages) |i| {
+//         bitmap[i] = free_page;
+//     }
+//     used_pages -= pages;
+// }
