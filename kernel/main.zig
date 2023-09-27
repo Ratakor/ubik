@@ -83,7 +83,14 @@ fn main() !void {
 
     serial.init();
     gdt.init();
-    idt.init(); // TODO
+    idt.init();
+
+    asm volatile ("sti");
+    // page fault
+    const ptr: *u32 = @ptrFromInt(0x800000000);
+    ptr.* = 32;
+    halt();
+
     try pmem.init();
 
     const buf = try pmem.alloc(u8, 1, false);

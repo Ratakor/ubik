@@ -11,7 +11,7 @@ const call_gate = 0b1000_1100;
 const trap_gate = 0b1000_1111;
 
 const InterruptStub = *const fn () callconv(.Naked) void;
-pub const InterruptHandler = fn (vector: u8, ctx: *cpu.Context) void;
+pub const InterruptHandler = *const fn (ctx: *cpu.Context) void;
 
 const IDTEntry = packed struct {
     offset_low: u16,
@@ -40,8 +40,8 @@ const IDTRegister = extern struct {
     base: u64 align(1) = undefined,
 };
 
-const exceptions: []const []const u8 = .{
-    "Division Error",
+const exceptions = [_][]const u8{
+    "Division by zero",
     "Debug",
     "Non-maskable Interrupt",
     "Breakpoint",
@@ -76,7 +76,7 @@ const exceptions: []const []const u8 = .{
 };
 
 var isr = [_]InterruptHandler{exceptionHandler} ** 256;
-var next_vector: u8 = 32;
+var next_vector: u8 = exceptions.len;
 
 var idtr: IDTRegister = .{};
 var idt: [256]IDTEntry = undefined;
@@ -89,7 +89,8 @@ pub fn init() void {
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
     }
 
-    idt[0xe].ist = 2; // page fault
+    // idt[0xe].ist = 2; // page fault <-- bad
+
     // idt[sched_call_vector].ist = 1;
     // idt[syscall_vector].type_attributes = 0xee;
 
@@ -99,7 +100,7 @@ pub fn init() void {
 pub fn allocateVector() u8 {
     const vector = @atomicRmw(u8, &next_vector, .Add, 1, .AcqRel);
     if (vector >= 256 - 16) {
-        @panic("IDT exhausted\n");
+        @panic("IDT exhausted");
     }
     return vector;
 }
@@ -116,15 +117,16 @@ fn idtReload() void {
     );
 }
 
-fn exceptionHandler(vector: u8, ctx: *cpu.Context) void {
-    _ = ctx;
+fn exceptionHandler(ctx: *cpu.Context) void {
+    const vector = ctx.vector;
+
     // TODO handle stuff
     // if (vector == 0xe and mmap.handlePageFault(ctx)) {
     //     return;
     // }
 
-    if (vector <= 32) {
-        std.debug.panic("Exception \"{s}\" triggered (vector: {})", .{ exceptions[vector], vector });
+    if (vector < exceptions.len) {
+        std.debug.panic("Exception \"{s}\" triggered (vector: {})\ncs: {x}", .{ exceptions[vector], vector, ctx.cs });
     } else {
         std.debug.panic("Unhandled interrupt triggered (vector: {})", .{vector});
     }
@@ -153,12 +155,15 @@ fn makeStubHandler(vector: u8) InterruptStub {
     }.handler;
 }
 
-// TODO: this makes zig crash
-export fn interruptHandler(vector: u8, ctx: *cpu.Context) callconv(.C) void {
-    _ = ctx;
-    _ = vector;
-    // const handler = isr[frame.vector & 0xFF];
-    // handler(frame);
+export fn interruptHandler(ctx: *cpu.Context) callconv(.C) void {
+    // if (ctx.cs != 0x08) {
+    //     asm volatile ("swapgs");
+    // }
+    const handler = isr[ctx.vector]; // & 0xFF];
+    handler(ctx);
+    // if (ctx.cs != 0x08) {
+    //     asm volatile ("swapgs");
+    // }
 }
 
 // export fn swapGsIfNeeded(frame: *InterruptFrame) callconv(.C) void {
@@ -169,11 +174,9 @@ export fn interruptHandler(vector: u8, ctx: *cpu.Context) callconv(.C) void {
 
 export fn commonStub() callconv(.Naked) void {
     asm volatile (
-    // TODO: check if user
-    // \\cmpq $0x4b, 16(%%rsp)
-    // \\jne 1f
-    // \\swapgs
-        \\
+        \\cmp $0x08, 0x8(%%rsp)
+        \\je 1f
+        \\swapgs
         \\1:
         \\push %%r15
         \\push %%r14
@@ -190,44 +193,18 @@ export fn commonStub() callconv(.Naked) void {
         \\push %%rcx
         \\push %%rbx
         \\push %%rax
-//         \\xor %%rax, %%rax
-//         \\mov %%es, %%ax
-//         \\push %%rax
-//         \\mov %%ds, %%ax
-//         \\push %%rax
-        \\mov %%es, %%eax
+        \\mov %%es, %%ax
         \\push %%rax
-        \\mov %%ds, %%eax
+        \\mov %%ds, %%ax
         \\push %%rax
         \\
-//         \\mov %%rsp, %%rdi
-//         \\call swapGsIfNeeded
-//         \\mov %%rsp, %%rdi
-//         \\call interruptHandler
-//         \\mov %%rsp, %%rdi
-//         \\call swapGsIfNeeded
-        // TODO: cld ?
-        \\cld
+        \\mov %%rsp, %%rdi
+        \\call interruptHandler
         \\
-        //TODO: 0x30 ?
-        \\mov $0x30, %%eax
-        \\mov %%eax, %%ds
-        \\mov %%eax, %%es
-        \\mov %%eax, %%ss
-
-        // \\mov $\num, %%rdi
-        // \\mov $(\num * 8), %%rax
-        // \\lea isr(%%rip), %%rbx
-        // \\add %%rax, %%rbx
-        // \\mov %%rsp, %%rsi
-        // \\xor %%rbp, %%rbp
-        // \\call *(%%rbx)
-
         \\pop %%rax
-        // ax pas eax ?
-        \\mov %%eax, %%ds
+        \\mov %%ax, %%ds
         \\pop %%rax
-        \\mov %%eax, %%es
+        \\mov %%ax, %%es
         \\pop %%rax
         \\pop %%rbx
         \\pop %%rcx
@@ -246,11 +223,9 @@ export fn commonStub() callconv(.Naked) void {
         // add 8 or 16 ?
         \\add $8, %%rsp
 
-        // TODO: if user
-        // \\cmpq $0x4b, 8(%%rsp)
-        // \\jne 1f
-        // \\swapgs
-
+        \\cmp $0x08, 0x8(%%rsp)
+        \\je 1f
+        \\swapgs
         \\1:
         \\iretq
     );
