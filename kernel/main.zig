@@ -78,18 +78,12 @@ fn main() !void {
 
     tty.print("Hello, World!\n", .{});
     tty.foreground = @enumFromInt(0xBD93F9);
-    tty.print("new color of value {X}\n\n", .{@intFromEnum(tty.foreground)});
+    tty.print("new color of value {X}\n", .{@intFromEnum(tty.foreground)});
     tty.foreground = tty.Color.white;
 
     serial.init();
     gdt.init();
     idt.init();
-
-    asm volatile ("sti");
-    // page fault
-    const ptr: *u32 = @ptrFromInt(0x800000000);
-    ptr.* = 32;
-    halt();
 
     try pmem.init();
 
@@ -101,4 +95,7 @@ fn main() !void {
     tty.print("{*} {}\n", .{ buf2.ptr, buf2.len });
 
     try vmem.init();
+
+    asm volatile ("sti");
+    @breakpoint();
 }

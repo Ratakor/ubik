@@ -1,10 +1,12 @@
 const std = @import("std");
 const cpu = @import("cpu.zig");
 
-// TODO: idk
-const syscall_vector: u8 = 0xfd;
-const sched_call_vector: u8 = 0xfe;
-const spurious_vector: u8 = 0xff;
+// TODO
+// const syscall_vector = 0xFD;
+// const sched_call_vector = 0xFE;
+// const spurious_vector = 0xFF;
+
+const page_fault = 0xE;
 
 const interrupt_gate = 0b1000_1110;
 const call_gate = 0b1000_1100;
@@ -89,10 +91,8 @@ pub fn init() void {
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
     }
 
-    // idt[0xe].ist = 2; // page fault <-- bad
-
     // idt[sched_call_vector].ist = 1;
-    // idt[syscall_vector].type_attributes = 0xee;
+    // idt[syscall_vector].type_attributes = 0xEE;
 
     idtReload();
 }
@@ -118,17 +118,24 @@ fn idtReload() void {
 }
 
 fn exceptionHandler(ctx: *cpu.Context) void {
-    const vector = ctx.vector;
+    const vector = ctx.isr_vector;
 
     // TODO handle stuff
-    // if (vector == 0xe and mmap.handlePageFault(ctx)) {
+    // if (vector == page_fault and mmap.handlePageFault(ctx)) {
     //     return;
     // }
 
     if (vector < exceptions.len) {
-        std.debug.panic("Exception \"{s}\" triggered (vector: {})\ncs: {x}", .{ exceptions[vector], vector, ctx.cs });
+        std.debug.panic("Exception \"{s}\" triggered with vector: {} and error code: {}", .{
+            exceptions[vector],
+            vector,
+            ctx.error_code,
+        });
     } else {
-        std.debug.panic("Unhandled interrupt triggered (vector: {})", .{vector});
+        std.debug.panic("Unhandled interrupt triggered with vector: {} and error code: {}", .{
+            vector,
+            ctx.error_code,
+        });
     }
 }
 
@@ -155,29 +162,25 @@ fn makeStubHandler(vector: u8) InterruptStub {
     }.handler;
 }
 
+// TODO swapgs
+
 export fn interruptHandler(ctx: *cpu.Context) callconv(.C) void {
     // if (ctx.cs != 0x08) {
     //     asm volatile ("swapgs");
     // }
-    const handler = isr[ctx.vector]; // & 0xFF];
+    const handler = isr[ctx.isr_vector];
     handler(ctx);
     // if (ctx.cs != 0x08) {
     //     asm volatile ("swapgs");
     // }
 }
 
-// export fn swapGsIfNeeded(frame: *InterruptFrame) callconv(.C) void {
-//     if (frame.cs != 0x28) {
-//         asm volatile ("swapgs");
-//     }
-// }
-
 export fn commonStub() callconv(.Naked) void {
     asm volatile (
-        \\cmp $0x08, 0x8(%%rsp)
-        \\je 1f
-        \\swapgs
-        \\1:
+    // \\cmpq $0x08, 0x8(%%rsp)
+    // \\je 1f
+    // \\swapgs
+    // \\1:
         \\push %%r15
         \\push %%r14
         \\push %%r13
@@ -220,13 +223,12 @@ export fn commonStub() callconv(.Naked) void {
         \\pop %%r13
         \\pop %%r14
         \\pop %%r15
-        // add 8 or 16 ?
-        \\add $8, %%rsp
-
-        \\cmp $0x08, 0x8(%%rsp)
-        \\je 1f
-        \\swapgs
-        \\1:
+        \\add $16, %%rsp
+        \\
+        // \\cmpq $0x08, 0x8(%%rsp)
+        // \\je 1f
+        // \\swapgs
+        // \\1:
         \\iretq
     );
 }

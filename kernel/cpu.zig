@@ -22,8 +22,8 @@ pub const Context = struct {
     r13: u64,
     r14: u64,
     r15: u64,
-    vector: u64, // TODO
-    err: u64,
+    isr_vector: u64,
+    error_code: u64,
     rip: u64,
     cs: u64,
     rflags: u64,
