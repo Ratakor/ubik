@@ -1,7 +1,11 @@
 const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
+const SpinLock = @import("lock.zig").SpinLock;
 const tty = @import("tty.zig");
+const pmm = @import("pmm.zig");
+
+const page_size = std.mem.page_size;
 
 pub const Flags = enum(u64) {
     present = 1 << 0,

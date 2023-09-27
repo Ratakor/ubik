@@ -8,12 +8,12 @@ const page_size = std.mem.page_size;
 const free_page = false;
 
 // TODO use u64 and logical operation to speed up the process ?
-var lock: SpinLock = .{};
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
 var usable_pages: u64 = 0;
 var used_pages: u64 = 0;
 var reserved_pages: u64 = 0;
+var lock: SpinLock = .{};
 
 pub fn init() !void {
     const memory_map = root.memory_map_request.response.?;
@@ -101,6 +101,7 @@ fn innerAlloc(pages: usize, limit: u64) ?u64 {
             p = 0;
         }
     }
+    last_idx = 0;
     return null;
 }
 
@@ -138,20 +139,18 @@ pub fn free(memory: anytype) void {
     used_pages -= pages;
 }
 
-// pub fn alloc(pages: usize, zero: bool) ?*anyopaque {
+// pub fn alloc(pages: usize, comptime zero: bool) ?*anyopaque {
 //     lock.lock();
 //     defer lock.unlock();
 
 //     const last = last_idx;
-//     const address = innerAlloc(pages, bitmap.len) orelse blk: {
-//         last_idx = 0;
-//         break :blk innerAlloc(pages, last) orelse return null;
-//     };
+//     const address = innerAlloc(pages, bitmap.len) orelse
+//         innerAlloc(pages, last) orelse return null;
 
 //     used_pages += pages;
 //     const ptr: [*]u8 = @ptrFromInt(address);
 //     const slice = ptr[0 .. pages * page_size];
-//     if (zero) @memset(slice, 0);
+//     comptime if (zero) @memset(slice, 0);
 
 //     return slice;
 // }

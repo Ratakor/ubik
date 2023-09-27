@@ -1,5 +1,5 @@
 const std = @import("std");
-const vmem = @import("vmem.zig");
+const vmm = @import("vmm.zig");
 
 const Allocator = std.mem.Allocator;
 const page_size = std.mem.page_size;
@@ -21,7 +21,7 @@ fn alloc(_: *anyopaque, size: usize, _: u8, _: usize) ?[*]u8 {
 
     // TODO
     _ = aligned_size;
-    // return pmem.alloc(u8, @divExact(aligned_size, page_size), false) catch return null;
+    // return pmm.alloc(u8, @divExact(aligned_size, page_size), false) catch return null;
 
     return null;
 }
@@ -36,7 +36,7 @@ fn resize(_: *anyopaque, buf: []u8, _: u8, new_size: usize, _: usize) bool {
         const ptr = buf.ptr + aligned_new_size;
         // TODO
         _ = ptr;
-        // vmem.free(@alignCast(ptr[0 .. aligned_buf_len - aligned_new_size]));
+        // vmm.free(@alignCast(ptr[0 .. aligned_buf_len - aligned_new_size]));
         return true;
     }
 
@@ -47,5 +47,5 @@ fn free(_: *anyopaque, buf: []u8, _: u8, _: usize) void {
     // TODO
     _ = buf;
     // const aligned_buf_len = std.mem.alignForward(usize, buf.len, page_size);
-    // vmem.free(@alignCast(ptr[0 .. aligned_buf_len]));
+    // vmm.free(@alignCast(ptr[0 .. aligned_buf_len]));
 }

@@ -4,8 +4,8 @@ const serial = @import("serial.zig");
 const tty = @import("tty.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
-const pmem = @import("pmem.zig");
-const vmem = @import("vmem.zig");
+const pmm = @import("pmm.zig");
+const vmm = @import("vmm.zig");
 const debug = @import("debug.zig");
 
 // pub const page_allocator = mem.page_allocator;
@@ -84,17 +84,17 @@ fn main() !void {
     serial.init();
     gdt.init();
     idt.init();
+    // TODO: init events <-- for interrupts
+    try pmm.init();
 
-    try pmem.init();
-
-    const buf = try pmem.alloc(u8, 1, false);
-    defer pmem.free(buf);
+    const buf = try pmm.alloc(u8, 1, false);
+    defer pmm.free(buf);
     tty.print("{*} {}\n", .{ buf.ptr, buf.len });
-    const buf2 = try pmem.alloc(u64, 1, false);
-    defer pmem.free(buf2);
+    const buf2 = try pmm.alloc(u64, 1, false);
+    defer pmm.free(buf2);
     tty.print("{*} {}\n", .{ buf2.ptr, buf2.len });
 
-    try vmem.init();
+    try vmm.init();
 
     asm volatile ("sti");
     @breakpoint();

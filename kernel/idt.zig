@@ -94,7 +94,15 @@ pub fn init() void {
     // idt[sched_call_vector].ist = 1;
     // idt[syscall_vector].type_attributes = 0xEE;
 
-    idtReload();
+    reloadIDT();
+}
+
+pub fn reloadIDT() void {
+    asm volatile ("lidt (%[idtr])"
+        :
+        : [idtr] "r" (&idtr),
+        : "memory"
+    );
 }
 
 pub fn allocateVector() u8 {
@@ -107,14 +115,6 @@ pub fn allocateVector() u8 {
 
 pub fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
-}
-
-fn idtReload() void {
-    asm volatile ("lidt (%[idtr])"
-        :
-        : [idtr] "r" (&idtr),
-        : "memory"
-    );
 }
 
 fn exceptionHandler(ctx: *cpu.Context) void {
@@ -132,10 +132,7 @@ fn exceptionHandler(ctx: *cpu.Context) void {
             ctx.error_code,
         });
     } else {
-        std.debug.panic("Unhandled interrupt triggered with vector: {} and error code: {}", .{
-            vector,
-            ctx.error_code,
-        });
+        std.debug.panic("Unhandled exception triggered, dumping context\n{}", .{ctx});
     }
 }
 
