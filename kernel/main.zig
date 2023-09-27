@@ -84,8 +84,6 @@ fn main() !void {
     serial.init();
     gdt.init();
     idt.init(); // TODO
-    // exception.init <- do that in idt.zig
-    // interrupt_event.init <- same ^
     try pmem.init();
 
     const buf = try pmem.alloc(u8, 1, false);
