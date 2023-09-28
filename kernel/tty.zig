@@ -1,7 +1,6 @@
 // TODO: switch to flanterm
 
 const std = @import("std");
-const limine = @import("limine");
 const root = @import("root");
 
 pub const Color = enum(u32) {

@@ -90,12 +90,9 @@ fn main() !void {
     // TODO: init events <-- for interrupts
     try pmm.init();
 
-    const buf = try pmm.alloc(u8, 1, false);
+    const buf = try pmm.alloc(1, false);
     defer pmm.free(buf);
     tty.print("{*} {}\n", .{ buf.ptr, buf.len });
-    const buf2 = try pmm.alloc(u64, 1, false);
-    defer pmm.free(buf2);
-    tty.print("{*} {}\n", .{ buf2.ptr, buf2.len });
 
     try vmm.init();
 

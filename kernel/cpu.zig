@@ -4,7 +4,7 @@ const SpinLock = @import("lock.zig").SpinLock;
 // TODO: defined elsewhere
 pub const Thread = struct {};
 
-pub const Context = struct {
+pub const Context = extern struct {
     ds: u64,
     es: u64,
     rax: u64,
@@ -52,8 +52,7 @@ pub const CpuLocal = struct {
     idle_thread: *Thread,
     tlb_shootdown_lock: SpinLock,
     tlb_shootdown_done: SpinLock,
-    tlb_shootdown_cr3: usize, // TODO: uintptr_t
-
+    tlb_shootdown_cr3: usize,
 };
 
 pub var sysenter: bool = false;

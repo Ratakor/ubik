@@ -2,11 +2,11 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 
 // TODO
-// const syscall_vector = 0xFD;
-// const sched_call_vector = 0xFE;
-// const spurious_vector = 0xFF;
+// const syscall_vector = 0xfd;
+// const sched_call_vector = 0xfe;
+// const spurious_vector = 0xff;
 
-const page_fault = 0xE;
+pub const page_fault_vector = 0x0e;
 
 const interrupt_gate = 0b1000_1110;
 const call_gate = 0b1000_1100;
@@ -91,8 +91,9 @@ pub fn init() void {
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
     }
 
+    // TODO
     // idt[sched_call_vector].ist = 1;
-    // idt[syscall_vector].type_attributes = 0xEE;
+    // idt[syscall_vector].type_attributes = 0xee;
 
     reloadIDT();
 }
@@ -119,21 +120,47 @@ pub fn registerHandler(vector: u8, handler: InterruptHandler) void {
 
 fn exceptionHandler(ctx: *cpu.Context) void {
     const vector = ctx.isr_vector;
-
-    // TODO handle stuff
-    // if (vector == page_fault and mmap.handlePageFault(ctx)) {
-    //     return;
-    // }
-
-    if (vector < exceptions.len) {
-        std.debug.panic("Exception \"{s}\" triggered with vector: {} and error code: {}", .{
-            exceptions[vector],
-            vector,
-            ctx.error_code,
-        });
-    } else {
-        std.debug.panic("Unhandled exception triggered, dumping context\n{}", .{ctx});
-    }
+    std.debug.panic(
+        \\Unhandled exception "{?s}" triggered, dumping context
+        \\vector: 0x{x}, error code: 0x{x}
+        \\ds: 0x{x}, es: 0x{x}
+        \\rax: 0x{x}, rbx: 0x{x}
+        \\rcx: 0x{x}, rdx: 0x{x}
+        \\rsi: 0x{x}, rdi: 0x{x}
+        \\rbp: 0x{x}, r8: 0x{x}
+        \\r9: 0x{x}, r10: 0x{x}
+        \\r11: 0x{x}, r12: 0x{x}
+        \\r13: 0x{x}, r14: 0x{x}
+        \\r15: 0x{x}, rip: 0x{x}
+        \\cs: 0x{x}, rflags: 0x{x}
+        \\rsp: 0x{x}, ss: 0x{x}
+    , .{
+        if (vector < exceptions.len) exceptions[vector] else null,
+        vector,
+        ctx.error_code,
+        ctx.ds,
+        ctx.es,
+        ctx.rax,
+        ctx.rbx,
+        ctx.rcx,
+        ctx.rdx,
+        ctx.rsi,
+        ctx.rdi,
+        ctx.rbp,
+        ctx.r8,
+        ctx.r9,
+        ctx.r10,
+        ctx.r11,
+        ctx.r12,
+        ctx.r13,
+        ctx.r14,
+        ctx.r15,
+        ctx.rip,
+        ctx.cs,
+        ctx.rflags,
+        ctx.rsp,
+        ctx.ss,
+    });
 }
 
 fn makeStubHandler(vector: u8) InterruptStub {
@@ -141,10 +168,10 @@ fn makeStubHandler(vector: u8) InterruptStub {
         fn handler() callconv(.Naked) void {
             const has_error_code = switch (vector) {
                 0x8 => true,
-                0xA...0xE => true,
+                0xa...0xe => true,
                 0x11 => true,
                 0x15 => true,
-                0x1D...0x1E => true,
+                0x1d...0x1e => true,
                 else => false,
             };
             if (!has_error_code) asm volatile ("pushq $0");

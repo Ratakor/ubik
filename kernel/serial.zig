@@ -35,7 +35,7 @@ fn initPort(port: u16) bool {
     return true;
 }
 
-inline fn out(comptime T: type, port: u16, value: T) void {
+pub inline fn out(comptime T: type, port: u16, value: T) void {
     switch (T) {
         u8 => asm volatile (
             \\outb %[val], %[port]
@@ -62,7 +62,7 @@ inline fn out(comptime T: type, port: u16, value: T) void {
     }
 }
 
-inline fn in(comptime T: type, port: u16) T {
+pub inline fn in(comptime T: type, port: u16) T {
     return switch (T) {
         u8 => asm volatile (
             \\inb %[port], %[res]
