@@ -186,25 +186,18 @@ fn makeStubHandler(vector: u8) InterruptStub {
     }.handler;
 }
 
-// TODO swapgs
-
 export fn interruptHandler(ctx: *cpu.Context) callconv(.C) void {
-    // if (ctx.cs != 0x08) {
-    //     asm volatile ("swapgs");
-    // }
     const handler = isr[ctx.isr_vector];
     handler(ctx);
-    // if (ctx.cs != 0x08) {
-    //     asm volatile ("swapgs");
-    // }
 }
 
 export fn commonStub() callconv(.Naked) void {
     asm volatile (
-    // \\cmpq $0x08, 0x8(%%rsp)
-    // \\je 1f
-    // \\swapgs
-    // \\1:
+    // if (cs != gdt.kernel_code) -> swapgs
+        \\cmpq $0x08, 24(%%rsp)
+        \\je 1f
+        \\swapgs
+        \\1:
         \\push %%r15
         \\push %%r14
         \\push %%r13
@@ -247,12 +240,13 @@ export fn commonStub() callconv(.Naked) void {
         \\pop %%r13
         \\pop %%r14
         \\pop %%r15
+        // if (cs != gdt.kernel_code) -> swapgs
+        \\cmpq $0x08, 24(%%rsp)
+        \\je 1f
+        \\swapgs
+        \\1:
+        // restore stack
         \\add $16, %%rsp
-        \\
-        // \\cmpq $0x08, 0x8(%%rsp)
-        // \\je 1f
-        // \\swapgs
-        // \\1:
         \\iretq
     );
 }

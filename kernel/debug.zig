@@ -61,12 +61,10 @@ pub fn printStackTrace(stack_trace: *std.builtin.StackTrace) void {
     }
 }
 
-fn printInfo(address: u64, symbol_name: []const u8, file_name: []const u8, line: usize) void {
-    tty.print("0x{x:0>16}: {s} at {s}:{d}\n", .{ address, symbol_name, file_name, line });
-}
-
 fn printSymbol(address: u64) void {
     var symbol_name: []const u8 = "<no symbol info>";
+    var file_name: []const u8 = "??";
+    var line: usize = 0;
 
     if (debug_info) |*info| brk: {
         if (info.getSymbolName(address)) |name| {
@@ -76,10 +74,11 @@ fn printSymbol(address: u64) void {
         const compile_unit = info.findCompileUnit(address) catch break :brk;
         const line_info = info.getLineNumberInfo(debug_allocator, compile_unit.*, address) catch break :brk;
 
-        return printInfo(address, symbol_name, line_info.file_name, line_info.line);
+        file_name = line_info.file_name;
+        line = line_info.line;
     }
 
-    printInfo(address, symbol_name, "??", 0);
+    tty.print("0x{x:0>16}: {s} at {s}:{d}\n", .{ address, symbol_name, file_name, line });
 }
 
 fn getSectionData(elf: [*]const u8, shdr: []const u8) []const u8 {

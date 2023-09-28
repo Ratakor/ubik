@@ -8,6 +8,7 @@ const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const mem = @import("mem.zig");
+const time = @import("time.zig");
 
 pub const std_options = struct {
     pub const logFn = debug.log;
@@ -21,6 +22,7 @@ pub export var kernel_file_request: limine.KernelFileRequest = .{};
 // export var module_request: limine.ModuleRequest = .{};
 // export var rsdp_request: limine.RsdpRequest = .{};
 pub export var kernel_address_request: limine.KernelAddressRequest = .{};
+pub export var boot_time_request: limine.BootTimeRequest = .{};
 
 inline fn halt() noreturn {
     while (true) asm volatile ("hlt");
@@ -76,7 +78,7 @@ fn main() !void {
 
     serial.init();
     debug.init() catch |err| {
-        tty.print("Failed to initialize debug info: {}\n", .{err});
+        tty.print("Failed to initialize debug info: {}\n", .{err}); // TODO warning
     };
     gdt.init();
     idt.init();
@@ -91,7 +93,7 @@ fn main() !void {
     // TODO: apic
     // TODO: acpi
     // TODO: pci
-    // TODO: timers (pit ?)
+    time.init(); // TODO: timers (pit ?)
 
     // TODO: proc
     // TODO: scheduler
@@ -104,6 +106,8 @@ fn main() !void {
     // TODO: start /bin/init <- load elf with std.elf
 
     ///////////////////////////////////////////////////////////////////////////
+    tty.print("{}\n", .{time.realtime});
+
     const buf = try pmm.alloc(1, false);
     defer pmm.free(buf);
     tty.print("{*} {}\n", .{ buf.ptr, buf.len });
