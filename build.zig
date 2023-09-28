@@ -77,7 +77,7 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the image with qemu");
     const run_cmd = b.addSystemCommand(&.{
-        "qemu-system-x86_64", "-M", "q35", "-m", "2G", "-cdrom", image_name, "-boot", "d"
+        "qemu-system-x86_64", "-serial", "stdio", "-M", "q35", "-m", "2G", "-cdrom", image_name, "-boot", "d"
     });
     run_cmd.step.dependOn(image_step);
     run_step.dependOn(&run_cmd.step);

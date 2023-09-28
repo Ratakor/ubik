@@ -1,6 +1,10 @@
 const std = @import("std");
 const root = @import("root");
+const SpinLock = @import("lock.zig").SpinLock;
+const serial = @import("serial.zig");
 const tty = @import("tty.zig");
+
+var log_lock: SpinLock = .{};
 
 var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
@@ -121,4 +125,24 @@ fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
     }
 
     return error.SectionNotFound;
+}
+
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const level_txt = comptime switch (level) {
+        .err => "\x1b[31merror\x1b[m",
+        .warn => "\x1b[33mwarning\x1b[m",
+        .info => "\x1b[32minfo\x1b[m",
+        .debug => "\x1b[34mdebug\x1b[m",
+    };
+    const prefix2 = (if (scope != .default) "@" ++ @tagName(scope)) ++ ": ";
+    log_lock.lock();
+    defer log_lock.unlock();
+    const fmt = level_txt ++ prefix2 ++ format ++ "\n";
+    nosuspend tty.print(fmt, args);
+    nosuspend serial.print(fmt, args);
 }

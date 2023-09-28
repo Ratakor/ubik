@@ -1,14 +1,17 @@
 const std = @import("std");
 const limine = @import("limine");
+const debug = @import("debug.zig");
 const serial = @import("serial.zig");
 const tty = @import("tty.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
-const debug = @import("debug.zig");
+const mem = @import("mem.zig");
 
-// pub const page_allocator = mem.page_allocator;
+pub const std_options = struct {
+    pub const logFn = debug.log;
+};
 
 export var boot_info_request: limine.BootloaderInfoRequest = .{};
 pub export var hhdm_request: limine.HhdmRequest = .{};
@@ -18,18 +21,6 @@ pub export var kernel_file_request: limine.KernelFileRequest = .{};
 // export var module_request: limine.ModuleRequest = .{};
 // export var rsdp_request: limine.RsdpRequest = .{};
 pub export var kernel_address_request: limine.KernelAddressRequest = .{};
-
-// fn loadFile(name: []const u8) !*limine.File {
-//     const module_response = module_request.response.?;
-//     for (module_response.modules()) |file| {
-//         const path: []u8 = file.path[0..std.mem.len(file.path)];
-//         if (std.mem.endsWith(u8, path, name)) {
-//             return file;
-//         }
-//     }
-
-//     return error.FileNotFound;
-// }
 
 inline fn halt() noreturn {
     while (true) asm volatile ("hlt");
@@ -69,17 +60,19 @@ fn main() !void {
     // const module = module_request.response.?;
     // const rsdp = rsdp_request.response.?;
 
-    // TODO: log when init is successful
+    // TODO: log when init is successful (with serial or tty idk)
     tty.init();
 
-    tty.drawSquares();
+    tty.drawSquares(); // TODO: draw logo instead
 
     tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
 
+    ///////////////////////////////////////////////////////////////////////////
     tty.print("Hello, World!\n", .{});
     tty.foreground = @enumFromInt(0xBD93F9);
     tty.print("new color of value {X}\n", .{@intFromEnum(tty.foreground)});
     tty.foreground = tty.Color.white;
+    ///////////////////////////////////////////////////////////////////////////
 
     serial.init();
     debug.init() catch |err| {
@@ -88,14 +81,34 @@ fn main() !void {
     gdt.init();
     idt.init();
     // TODO: init events <-- for interrupts
-    try pmm.init();
+    // TODO: interrupt controller (pic or apic)
+    // TODO: PS/2 -> handle keyboard/mouse <-- extern
 
+    try pmm.init();
+    try vmm.init(); // TODO
+    // try mem.init(); // TODO: heap allocator -> use gpa
+
+    // TODO: apic
+    // TODO: acpi
+    // TODO: pci
+    // TODO: timers (pit ?)
+
+    // TODO: proc
+    // TODO: scheduler
+    // TODO: cpu
+    // TODO: threads <-- with priority level ? <- have a list of thread based
+    // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
+
+    // TODO: filesystem <-- extern
+
+    // TODO: start /bin/init <- load elf with std.elf
+
+    ///////////////////////////////////////////////////////////////////////////
     const buf = try pmm.alloc(1, false);
     defer pmm.free(buf);
     tty.print("{*} {}\n", .{ buf.ptr, buf.len });
 
-    try vmm.init();
-
     asm volatile ("sti");
     @breakpoint();
+    ///////////////////////////////////////////////////////////////////////////
 }

@@ -1,15 +1,19 @@
-// TODO: mostly useless
-
+const std = @import("std");
 const SpinLock = @import("lock.zig").SpinLock;
 
-const com1_port = 0x3f8;
-const com_ports = [_]u16{ com1_port, 0x2f8, 0x3e8, 0x2e8 };
+pub const Port = enum(u16) {
+    com1 = 0x3f8,
+    com2 = 0x2f8,
+    com3 = 0x3e8,
+    com4 = 0x2e8,
+};
 
-var lock: SpinLock = .{};
+var com1_lock: SpinLock = .{};
+const com1_writer = std.io.Writer(void, error{}, com1Write){ .context = {} };
 
 pub fn init() void {
-    for (com_ports) |port| {
-        _ = initPort(port);
+    for (std.enums.values(Port)) |port| {
+        _ = initPort(@intFromEnum(port));
     }
 }
 
@@ -86,35 +90,28 @@ pub inline fn in(comptime T: type, port: u16) T {
     };
 }
 
-inline fn isTransmitterEmpty(port: u16) bool {
-    return (in(u8, port + 5) & 0b01000000) != 0;
+inline fn transmitterIsEmpty(port: Port) bool {
+    return in(u8, @intFromEnum(port) + 5) & 0b01000000 != 0;
 }
 
-inline fn transmitData(port: u16, value: u8) void {
-    while (!isTransmitterEmpty(port)) {
+inline fn transmitData(port: Port, value: u8) void {
+    while (!transmitterIsEmpty(port)) {
         asm volatile ("pause");
     }
-    out(u8, port, value);
+    out(u8, @intFromEnum(port), value);
 }
 
-pub fn outChar(char: u8) void {
-    lock.lock();
-    defer lock.unlock();
-
-    if (char == '\n') {
-        transmitData(com1_port, '\r');
-    }
-    transmitData(com1_port, char);
-}
-
-pub fn outStr(str: []const u8) void {
-    lock.lock();
-    defer lock.unlock();
+fn com1Write(_: void, str: []const u8) error{}!usize {
+    com1_lock.lock();
+    defer com1_lock.unlock();
 
     for (str) |char| {
-        if (char == '\n') {
-            transmitData(com1_port, '\r');
-        }
-        transmitData(com1_port, char);
+        transmitData(Port.com1, char);
     }
+
+    return str.len;
+}
+
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+    std.fmt.format(com1_writer, fmt, args) catch unreachable;
 }
