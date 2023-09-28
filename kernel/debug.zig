@@ -1,5 +1,3 @@
-// TODO: ugly + bad (doesn't seem to work for zig code)
-
 const std = @import("std");
 const root = @import("root");
 const tty = @import("tty.zig");
@@ -9,30 +7,48 @@ var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.dwarf.DwarfInfo = null;
 
+pub fn init() !void {
+    errdefer debug_info = null;
+    const kernel_file = root.kernel_file_request.response.?.kernel_file;
+
+    debug_info = .{
+        .endian = .Little,
+        .sections = .{
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_info"), .owned = true },
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_abbrev"), .owned = true },
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_str"), .owned = true },
+            null, // debug_str_offsets
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_line"), .owned = true },
+            null, // debug_line_str
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_ranges"), .owned = true },
+            null, // debug_loclists
+            null, // debug_rnglists
+            null, // debug_addr
+            null, // debug_names
+            null, // debug_frame
+            null, // eh_frame
+            null, // eh_frame_hdr
+        },
+        .is_macho = false,
+    };
+
+    try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
+}
+
 pub fn printStackIterator(stack_iter: std.debug.StackIterator) void {
     var iter = stack_iter;
 
-    init() catch |err| {
-        tty.print("Failed to initialize debug info: {}", .{err});
-    };
-
     tty.print("Stack trace:\n", .{});
-
     while (iter.next()) |addr| {
         printSymbol(addr);
     }
 }
 
 pub fn printStackTrace(stack_trace: *std.builtin.StackTrace) void {
-    init() catch |err| {
-        tty.print("Failed to initialize debug info: {}", .{err});
-    };
-
-    tty.print("Stack trace:\n", .{});
-
     var frame_index: usize = 0;
     var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
 
+    tty.print("Stack trace:\n", .{});
     while (frames_left != 0) {
         const return_address = stack_trace.instruction_addresses[frame_index];
         printSymbol(return_address);
@@ -41,40 +57,8 @@ pub fn printStackTrace(stack_trace: *std.builtin.StackTrace) void {
     }
 }
 
-fn init() !void {
-    if (debug_info != null) return;
-
-    errdefer debug_info = null;
-
-    const kernel_file_reponse = root.kernel_file_request.response orelse return error.NoKernelFile;
-    const kernel_file = kernel_file_reponse.kernel_file;
-
-    debug_info = .{
-        .endian = .Little,
-        .sections = [_]?std.dwarf.DwarfInfo.Section{
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_info"), .owned = true },
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_abbrev"), .owned = true },
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_str"), .owned = true },
-            null,
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_line"), .owned = true },
-            null,
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_ranges"), .owned = true },
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null,
-        },
-        .is_macho = false,
-    };
-
-    try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
-}
-
 fn printInfo(address: u64, symbol_name: []const u8, file_name: []const u8, line: usize) void {
-    tty.print("0x{X:0>16}: {s} at {s}:{d}\n", .{ address, symbol_name, file_name, line });
+    tty.print("0x{x:0>16}: {s} at {s}:{d}\n", .{ address, symbol_name, file_name, line });
 }
 
 fn printSymbol(address: u64) void {

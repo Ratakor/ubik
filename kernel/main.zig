@@ -82,6 +82,9 @@ fn main() !void {
     tty.foreground = tty.Color.white;
 
     serial.init();
+    debug.init() catch |err| {
+        tty.print("Failed to initialize debug info: {}\n", .{err});
+    };
     gdt.init();
     idt.init();
     // TODO: init events <-- for interrupts
