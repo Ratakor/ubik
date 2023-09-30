@@ -30,7 +30,11 @@ inline fn halt() noreturn {
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
-    tty.print("\n\x1b[31mKernel panic:\x1b[m {s}\n", .{msg});
+    tty.resetColor();
+    tty.Color.setFg(.red);
+    tty.write("\nKernel panic: ");
+    tty.resetColor();
+    tty.print("{s}\n", .{msg});
     debug.printStackIterator(std.debug.StackIterator.init(@returnAddress(), @frameAddress()));
     halt();
 }
@@ -39,7 +43,7 @@ export fn _start() callconv(.C) noreturn {
     asm volatile ("cli");
 
     main() catch |err| {
-        tty.print("\n\x1b[31mKernel error:\x1b[m {}\n", .{err});
+        tty.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {s}\n", .{@errorName(err)});
         if (@errorReturnTrace()) |stack_trace| {
             debug.printStackTrace(stack_trace);
         }
@@ -54,16 +58,14 @@ fn main() !void {
     // const rsdp = rsdp_request.response.?;
 
     // TODO: log when init is successful (with serial or tty idk)
-    tty.init();
     serial.init();
+    tty.init() catch unreachable;
+
+    tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
+
     debug.init() catch |err| {
         tty.print("Failed to initialize debug info: {}\n", .{err}); // TODO warning
     };
-
-    // tty.drawSquares(); // TODO: draw logo instead
-
-    // TODO: tty start a row too high
-    tty.print("\nBooting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
 
     gdt.init();
     idt.init();
@@ -90,12 +92,15 @@ fn main() !void {
 
     // TODO: start /bin/init <- load elf with std.elf
 
+    tty.ColorRGB.setFgStr("#bd93f9");
     tty.print("Hello, World!\n", .{});
+    tty.Color256.setBg(69);
+    tty.Color.setFg(.bright_black);
     tty.print("realtime: {}\n", .{time.realtime});
-
+    tty.resetColor();
     const buf = try pmm.alloc(1, false);
     defer pmm.free(buf);
-    tty.print("allocated a buffer of size {} with addr = {*}\n", .{ buf.len, buf.ptr });
+    tty.print("allocated a buffer of size {} and address = {*}\n", .{ buf.len, buf.ptr });
 
     asm volatile ("sti");
     @breakpoint();

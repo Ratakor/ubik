@@ -1,17 +1,12 @@
-//! Based on https://github.com/mintsuki/flanterm.git
-//! Tries to implement this standard for terminfo
+//! Tries to implement this standard for terminfo with some exceptions
 //! https://man7.org/linux/man-pages/man4/console_codes.4.html
+//! Based on https://github.com/mintsuki/flanterm.git
 
 const std = @import("std");
-
-const maxInt = std.math.maxInt;
-const control_code = std.ascii.control_code;
 
 pub const Terminal = @This();
 const Context = Terminal;
 
-tab_size: usize,
-autoflush: bool,
 cursor_enabled: bool,
 scroll_enabled: bool,
 control_sequence: bool,
@@ -33,42 +28,20 @@ charsets: [2]u8,
 current_charset: usize,
 escape_offset: usize,
 esc_values_i: usize,
+esc_values: [MAX_ESC_VALUES]u32,
 current_primary: usize,
 current_bg: usize,
 scroll_top_margin: usize,
 scroll_bottom_margin: usize,
-esc_values: [MAX_ESC_VALUES]u32,
-oob_output: OobOutput,
 
 rows: usize,
 cols: usize,
-
-font_width: usize,
-font_height: usize,
-glyph_width: usize,
-glyph_height: usize,
-
-font_scale_x: usize,
-font_scale_y: usize,
-
 offset_x: usize,
 offset_y: usize,
 
-framebuffer: [*]volatile u32,
-pitch: usize,
+framebuffer: []volatile u32,
 width: usize,
 height: usize,
-bpp: usize,
-
-font_bits: []u8,
-font_bool: []bool,
-
-ansi_colors: [8]Color,
-ansi_bright_colors: [8]Color,
-default_fg: Color,
-default_bg: Color,
-default_fg_bright: Color,
-default_bg_bright: Color,
 
 grid: []Char,
 queue: []QueueItem,
@@ -79,17 +52,15 @@ text_fg: Color,
 text_bg: Color,
 cursor_x: usize,
 cursor_y: usize,
+old_cursor_x: usize,
+old_cursor_y: usize,
+saved_cursor_x: usize,
+saved_cursor_y: usize,
 
 saved_state_text_fg: Color,
 saved_state_text_bg: Color,
-saved_state_cursor_x: usize, // TODO: 3 saved cursors
+saved_state_cursor_x: usize,
 saved_state_cursor_y: usize,
-
-old_cursor_x: usize,
-old_cursor_y: usize,
-
-saved_cursor_x: usize,
-saved_cursor_y: usize,
 saved_state_bold: bool,
 saved_state_bg_bold: bool,
 saved_state_reverse_video: bool,
@@ -110,17 +81,6 @@ pub const Callback = enum(u64) {
     kbd_leds = 60,
     mode = 70,
     linux = 80,
-};
-
-pub const OobOutput = enum(u64) {
-    ocrnl = 1 << 0,
-    ofdel = 1 << 1,
-    ofill = 1 << 2,
-    olcuc = 1 << 3,
-    onlcr = 1 << 4,
-    onlret = 1 << 5,
-    onocr = 1 << 6,
-    opost = 1 << 7,
 };
 
 const Color = enum(u32) {
@@ -147,10 +107,6 @@ const Char = struct {
     c: u32,
     fg: Color,
     bg: Color,
-
-    inline fn eql(a: *const Char, b: *const Char) bool {
-        return a.c != b.c or a.bg != b.bg or a.fg != b.fg;
-    }
 };
 
 const QueueItem = struct {
@@ -159,18 +115,84 @@ const QueueItem = struct {
     c: Char,
 };
 
-pub const MAX_ESC_VALUES = 16;
-pub const FONT_GLYPHS = 256;
-const CHARSET_DEFAULT = 0;
-const CHARSET_DEC_SPECIAL = 1;
+const maxInt = std.math.maxInt;
+const control_code = std.ascii.control_code;
 
-var fba_buffer: [64 * 1024 * 1024]u8 = undefined; // 64MB
+var fba_buffer: [8 * 1024 * 1024]u8 = undefined; // 8MB
 var fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const allocator = fba.allocator();
 
-// Builtin font originally taken from:
-// https://github.com/viler-int10h/vga-text-mode-fonts/raw/master/FONTS/PC-OTHER/TOSH-SAT.F16
-const builtin_font = @embedFile("TOSH-SAT.F16");
+const MAX_ESC_VALUES = 16;
+const FONT_GLYPHS = 256;
+const CHARSET_DEFAULT = 0;
+const CHARSET_DEC_SPECIAL = 1;
+const FONT_WIDTH = 8 + 1; // + 1 for padding
+const FONT_HEIGHT = 16;
+// TODO: add scale/zoom? look for glyph_width/height on commit 984172b
+
+const TAB_SIZE = 8;
+const DEFAULT_BG = Color.black;
+const DEFAULT_FG = Color.grey;
+const DEFAULT_BG_BRIGHT = Color.bright_black;
+const DEFAULT_FG_BRIGHT = Color.bright_grey;
+
+const font = blk: {
+    @setEvalBranchQuota(100000);
+
+    // Builtin font originally taken from:
+    // https://github.com/viler-int10h/vga-text-mode-fonts
+    const builtin_font = @embedFile("STANDARD.F16");
+    const font_bool_size = FONT_GLYPHS * FONT_HEIGHT * FONT_WIDTH;
+    var font_bool: [font_bool_size]bool = undefined;
+
+    for (0..FONT_GLYPHS) |i| {
+        const glyph = builtin_font[i * FONT_HEIGHT ..];
+
+        for (0..FONT_HEIGHT) |y| {
+            // NOTE: the characters in VGA fonts are always one byte wide.
+            // 9 dot wide fonts have 8 dots and one empty column, except
+            // characters 0xC0-0xDF replicate column 9.
+            for (0..8) |x| {
+                const offset = i * FONT_HEIGHT * FONT_WIDTH + y * FONT_WIDTH + x;
+                font_bool[offset] = (glyph[y] & (@as(u8, 0x80) >> @intCast(x))) != 0;
+            }
+
+            // fill columns above 8 like VGA Line Graphics Mode does
+            for (8..FONT_WIDTH) |x| {
+                const offset = i * FONT_HEIGHT * FONT_WIDTH + y * FONT_WIDTH + x;
+                if (i >= 0xc0 and i <= 0xdf) {
+                    font_bool[offset] = (glyph[y] & 1) != 0;
+                } else {
+                    font_bool[offset] = false;
+                }
+            }
+        }
+    }
+
+    break :blk font_bool;
+};
+
+const ansi_colors = [8]Color{
+    Color.black,
+    Color.red,
+    Color.green,
+    Color.brown,
+    Color.blue,
+    Color.magenta,
+    Color.cyan,
+    Color.grey,
+};
+
+const ansi_bright_colors = [8]Color{
+    Color.bright_black,
+    Color.bright_red,
+    Color.bright_green,
+    Color.bright_brown,
+    Color.bright_blue,
+    Color.bright_magenta,
+    Color.bright_cyan,
+    Color.bright_grey,
+};
 
 // zig fmt: off
 const col256 = [_]u32{
@@ -212,117 +234,29 @@ pub fn write(self: *Context, buf: []const u8) void {
         self.putChar(char);
     }
 
-    if (self.autoflush) {
-        self.doubleBufferFlush();
-    }
+    self.doubleBufferFlush(); // TODO: write directly to framebuffer?
 }
 
 pub fn init(
-    framebuffer: [*]u32,
+    framebuffer: [*]u8,
     width: usize,
     height: usize,
-    pitch: usize,
-    font: ?*[]const u8,
-    font_width: usize, // = 8
-    font_height: usize, // = 16
-    font_scale_x: usize, // = 1 // TODO just scale not x/y
-    font_scale_y: usize, // = 1
-    callback: *const CallbackFn,
+    callback: ?*const CallbackFn,
 ) !*Context {
-    _ = font;
-
     var self = try allocator.create(Context);
     @memset(std.mem.asBytes(self), 0);
 
-    // TODO: no need to have ansi_colors in struct ?
-    self.ansi_colors[0] = Color.black;
-    self.ansi_colors[1] = Color.red;
-    self.ansi_colors[2] = Color.green;
-    self.ansi_colors[3] = Color.brown;
-    self.ansi_colors[4] = Color.blue;
-    self.ansi_colors[5] = Color.magenta;
-    self.ansi_colors[6] = Color.cyan;
-    self.ansi_colors[7] = Color.grey;
+    self.text_fg = DEFAULT_FG;
+    self.text_bg = @enumFromInt(0xffffffff);
 
-    self.ansi_bright_colors[0] = Color.bright_black;
-    self.ansi_bright_colors[1] = Color.bright_red;
-    self.ansi_bright_colors[2] = Color.bright_green;
-    self.ansi_bright_colors[3] = Color.bright_brown;
-    self.ansi_bright_colors[4] = Color.bright_blue;
-    self.ansi_bright_colors[5] = Color.bright_magenta;
-    self.ansi_bright_colors[6] = Color.bright_cyan;
-    self.ansi_bright_colors[7] = Color.bright_grey;
-
-    self.default_bg = Color.black;
-    self.default_fg = Color.grey; // @enumFromInt(0x00ffffff); // TODO
-    self.default_bg_bright = Color.bright_black;
-    self.default_fg_bright = Color.bright_grey; // @enumFromInt(0xffffffff); // TODO
-
-    self.text_fg = self.default_fg;
-    self.text_bg = @enumFromInt(0xffffffff); // TODO
-
-    self.framebuffer = framebuffer;
+    self.framebuffer = @as([*]u32, @ptrCast(@alignCast(framebuffer)))[0 .. width * height];
     self.width = width;
     self.height = height;
-    self.pitch = pitch;
 
-    const font_bytes = ((font_width * font_height * FONT_GLYPHS) / 8);
-
-    // if (font != NULL) {
-    //     self.font_width = font_width;
-    //     self.font_height = font_height;
-    //     self.font_bits_size = FONT_BYTES;
-    //     self.font_bits = _malloc(self.font_bits_size);
-    //     if (self.font_bits == NULL) {
-    //         goto fail;
-    //     }
-    //     memcpy(self.font_bits, font, self.font_bits_size);
-    // } else {
-    self.font_width = font_width;
-    self.font_height = font_height;
-    self.font_bits = try allocator.alloc(u8, font_bytes);
-    @memcpy(self.font_bits, builtin_font);
-    // }
-
-    self.font_width += 1; // spacing
-
-    const font_bool_size = FONT_GLYPHS * font_height * self.font_width;
-    self.font_bool = try allocator.alloc(bool, font_bool_size);
-
-    for (0..FONT_GLYPHS) |i| {
-        const glyph: [*]u8 = @ptrCast(&self.font_bits[i * font_height]);
-
-        for (0..font_height) |y| {
-            // NOTE: the characters in VGA fonts are always one byte wide.
-            // 9 dot wide fonts have 8 dots and one empty column, except
-            // characters 0xC0-0xDF replicate column 9.
-            for (0..8) |x| {
-                const offset = i * font_height * self.font_width + y * self.font_width + x;
-                self.font_bool[offset] = glyph[y] & (@as(u8, 0x80) >> @intCast(x)) != 0;
-            }
-            // fill columns above 8 like VGA Line Graphics Mode does
-            for (8..self.font_width) |x| {
-                const offset = i * font_height * self.font_width + y * self.font_width + x;
-                if (i >= 0xc0 and i <= 0xdf) {
-                    self.font_bool[offset] = (glyph[y] & 1) != 0; // TODO weird &
-                } else {
-                    self.font_bool[offset] = false;
-                }
-            }
-        }
-    }
-
-    self.font_scale_x = font_scale_x;
-    self.font_scale_y = font_scale_y;
-
-    self.glyph_width = self.font_width * font_scale_x;
-    self.glyph_height = font_height * font_scale_y;
-
-    self.cols = self.width / self.glyph_width;
-    self.rows = self.height / self.glyph_height;
-
-    self.offset_x = (self.width % self.glyph_width) / 2;
-    self.offset_y = (self.height % self.glyph_height) / 2;
+    self.cols = self.width / FONT_WIDTH;
+    self.rows = self.height / FONT_HEIGHT;
+    self.offset_x = (self.width % FONT_WIDTH) / 2;
+    self.offset_y = (self.height % FONT_HEIGHT) / 2;
 
     const screen_size = self.rows * self.cols;
     self.grid = try allocator.alloc(Char, screen_size);
@@ -335,17 +269,21 @@ pub fn init(
     @memset(self.map, null);
     self.queue_i = 0;
 
-    self.callback = callback;
+    if (callback) |cb| {
+        self.callback = cb;
+    } else {
+        self.callback = dummyCallBack;
+    }
 
     self.reinit();
-    self.fullRefresh();
+    @memset(self.framebuffer, @intFromEnum(DEFAULT_BG));
+    self.drawCursor();
+    self.cursor_y = 1;
 
     return self;
 }
 
 pub fn reinit(self: *Context) void {
-    self.tab_size = 8;
-    self.autoflush = true;
     self.cursor_enabled = true;
     self.scroll_enabled = true;
     self.control_sequence = false;
@@ -368,32 +306,14 @@ pub fn reinit(self: *Context) void {
     self.escape_offset = 0;
     self.esc_values_i = 0;
     self.saved_cursor_x = 0;
-    self.saved_cursor_y = 0;
+    self.saved_cursor_y = 1;
     self.current_primary = maxInt(usize);
     self.current_bg = maxInt(usize);
     self.scroll_top_margin = 0;
     self.scroll_bottom_margin = self.rows;
-    self.oob_output = OobOutput.onlcr;
 }
 
-fn fullRefresh(self: *Context) void {
-    for (0..self.height) |y| {
-        for (0..self.width) |x| {
-            self.framebuffer[y * (self.pitch / @sizeOf(u32)) + x] = @intFromEnum(self.default_bg);
-        }
-    }
-
-    for (0..self.rows * self.cols) |i| {
-        const x = i % self.cols;
-        const y = i / self.cols;
-
-        self.plotChar(&self.grid[i], x, y);
-    }
-
-    if (self.cursor_enabled) {
-        self.drawCursor();
-    }
-}
+fn dummyCallBack(_: *Context, _: Callback, _: u64, _: u64, _: u64) void {}
 
 inline fn swapPalette(self: *Context) void {
     const tmp = self.text_bg;
@@ -401,55 +321,44 @@ inline fn swapPalette(self: *Context) void {
     self.text_fg = tmp;
 }
 
-// TODO: _x _y
-fn plotChar(self: *Context, c: *Char, _x: usize, _y: usize) void {
+fn plotChar(self: *Context, c: *const Char, _x: usize, _y: usize) void {
     if (_x >= self.cols or _y >= self.rows) return;
 
-    const x = self.offset_x + _x * self.glyph_width;
-    const y = self.offset_y + _y * self.glyph_height;
+    const x = self.offset_x + _x * FONT_WIDTH;
+    const y = self.offset_y + _y * FONT_HEIGHT;
 
-    const glyph: [*]bool = @ptrCast(&self.font_bool[c.c * self.font_height * self.font_width]);
-    // naming: fx,fy for font coordinates, gx,gy for glyph coordinates
-    for (0..self.glyph_height) |gy| {
-        const fy = gy / self.font_scale_y;
-        const fb_line = self.framebuffer + x + (y + gy) * (self.pitch / 4);
+    const glyph = font[c.c * FONT_HEIGHT * FONT_WIDTH ..];
+    for (0..FONT_HEIGHT) |fy| {
+        const fb_line = self.framebuffer[x + (y + fy) * self.width ..];
 
-        for (0..self.font_width) |fx| {
-            const draw = glyph[fy * self.font_width + fx];
-            for (0..self.font_scale_x) |i| {
-                const gx = self.font_scale_x * fx + i;
-                const bg = if (@intFromEnum(c.bg) == 0xffffffff) self.default_bg else c.bg;
-                const fg = if (@intFromEnum(c.fg) == 0xffffffff) self.default_bg else c.fg;
-
-                fb_line[gx] = @intFromEnum(if (draw) fg else bg);
-            }
+        for (0..FONT_WIDTH) |fx| {
+            const draw = glyph[fy * FONT_WIDTH + fx];
+            const bg = if (@intFromEnum(c.bg) == 0xffffffff) DEFAULT_BG else c.bg;
+            const fg = if (@intFromEnum(c.fg) == 0xffffffff) DEFAULT_BG else c.fg;
+            fb_line[fx] = @intFromEnum(if (draw) fg else bg);
         }
     }
 }
 
-// TODO: _x _y
-fn plotCharFast(self: Context, old: *Char, c: *Char, _x: usize, _y: usize) void {
+fn plotCharFast(self: Context, old: *const Char, c: *const Char, _x: usize, _y: usize) void {
     if (_x >= self.cols or _y >= self.rows) return;
 
-    const x = self.offset_x + _x * self.glyph_width;
-    const y = self.offset_y + _y * self.glyph_height;
+    const x = self.offset_x + _x * FONT_WIDTH;
+    const y = self.offset_y + _y * FONT_HEIGHT;
 
-    const new_glyph: [*]bool = @ptrCast(&self.font_bool[c.c * self.font_height * self.font_width]);
-    const old_glyph: [*]bool = @ptrCast(&self.font_bool[old.c * self.font_height * self.font_width]);
-    for (0..self.glyph_height) |gy| {
-        const fy = gy / self.font_scale_y;
-        const fb_line = self.framebuffer + x + (y + gy) * (self.pitch / 4);
-        for (0..self.font_width) |fx| {
-            const old_draw = old_glyph[fy * self.font_width + fx];
-            const new_draw = new_glyph[fy * self.font_width + fx];
-            if (old_draw == new_draw)
-                continue;
-            for (0..self.font_scale_x) |i| {
-                const gx = self.font_scale_x * fx + i;
-                const bg = if (@intFromEnum(c.bg) == 0xffffffff) self.default_bg else c.bg;
-                const fg = if (@intFromEnum(c.fg) == 0xffffffff) self.default_bg else c.fg;
-                fb_line[gx] = @intFromEnum(if (new_draw) fg else bg);
-            }
+    const new_glyph = font[c.c * FONT_HEIGHT * FONT_WIDTH ..];
+    const old_glyph = font[old.c * FONT_HEIGHT * FONT_WIDTH ..];
+    for (0..FONT_HEIGHT) |fy| {
+        const fb_line = self.framebuffer[x + (y + fy) * self.width ..];
+
+        for (0..FONT_WIDTH) |fx| {
+            const old_draw = old_glyph[fy * FONT_WIDTH + fx];
+            const new_draw = new_glyph[fy * FONT_WIDTH + fx];
+            if (old_draw == new_draw) continue;
+
+            const bg = if (@intFromEnum(c.bg) == 0xffffffff) DEFAULT_BG else c.bg;
+            const fg = if (@intFromEnum(c.fg) == 0xffffffff) DEFAULT_BG else c.fg;
+            fb_line[fx] = @intFromEnum(if (new_draw) fg else bg);
         }
     }
 }
@@ -459,7 +368,7 @@ fn pushToQueue(self: *Context, c: *const Char, x: usize, y: usize) void {
 
     const i = y * self.cols + x;
     const queue = self.map[i] orelse blk: {
-        if (!Char.eql(&self.grid[i], c)) return;
+        if (std.meta.eql(self.grid[i], c.*)) return;
         const q = &self.queue[self.queue_i];
         self.queue_i += 1;
         q.x = x;
@@ -510,28 +419,19 @@ fn clear(self: *Context, move: bool) void {
 
     if (move) {
         self.cursor_x = 0;
-        self.cursor_y = 0;
+        self.cursor_y = 1;
     }
 }
 
-// isize, i32, idk cast ??
-fn setCursorPos(self: *Context, x: usize, y: usize) void {
+inline fn setCursorPos(self: *Context, x: usize, y: usize) void {
     if (x >= self.cols) {
-        if(@as(isize, @intCast(x)) < 0) {
-            self.cursor_x = 0;
-        } else {
-            self.cursor_x = self.cols - 1;
-        }
+        self.cursor_x = self.cols - 1;
     } else {
         self.cursor_x = x;
     }
 
     if (y >= self.rows) {
-        if (@as(isize, @intCast(y)) < 0) {
-            self.cursor_y = 0;
-        } else {
-            self.cursor_y = self.rows - 1;
-        }
+        self.cursor_y = self.rows - 1;
     } else {
         self.cursor_y = y;
     }
@@ -554,19 +454,19 @@ fn moveChar(self: *Context, new_x: usize, new_y: usize, old_x: usize, old_y: usi
 }
 
 inline fn setTextFg(self: *Context, fg: usize) void {
-    self.text_fg = self.ansi_colors[fg];
+    self.text_fg = ansi_colors[fg];
 }
 
 inline fn setTextBg(self: *Context, bg: usize) void {
-    self.text_bg = self.ansi_colors[bg];
+    self.text_bg = ansi_colors[bg];
 }
 
 inline fn setTextFgBright(self: *Context, fg: usize) void {
-    self.text_fg = self.ansi_bright_colors[fg];
+    self.text_fg = ansi_bright_colors[fg];
 }
 
 inline fn setTextBgBright(self: *Context, bg: usize) void {
-    self.text_bg = self.ansi_bright_colors[bg];
+    self.text_bg = ansi_bright_colors[bg];
 }
 
 inline fn setTextFgRgb(self: *Context, fg: u32) void {
@@ -578,25 +478,23 @@ inline fn setTextBgRgb(self: *Context, bg: u32) void {
 }
 
 inline fn setTextFgDefault(self: *Context) void {
-    self.text_fg = self.default_fg;
+    self.text_fg = DEFAULT_FG;
 }
 
 inline fn setTextBgDefault(self: *Context) void {
-    self.text_bg = @enumFromInt(0xffffffff); // TODO ?
+    self.text_bg = @enumFromInt(0xffffffff);
 }
 
 inline fn setTextFgDefaultBright(self: *Context) void {
-    self.text_fg = self.default_fg_bright;
+    self.text_fg = DEFAULT_FG_BRIGHT;
 }
 
 inline fn setTextBgDefaultBright(self: *Context) void {
-    self.text_bg = self.default_bg_bright;
+    self.text_bg = DEFAULT_BG_BRIGHT;
 }
 
 fn drawCursor(self: *Context) void {
-    if (self.cursor_x >= self.cols or self.cursor_y >= self.rows) {
-        return;
-    }
+    if (self.cursor_x >= self.cols or self.cursor_y >= self.rows) return;
 
     const i = self.cursor_x + self.cursor_y * self.cols;
     const queue = self.map[i];
@@ -634,10 +532,10 @@ fn doubleBufferFlush(self: *Context) void {
         self.map[offset] = null;
     }
 
-    // TODO terrible if
-    if ((self.old_cursor_x != self.cursor_x or self.old_cursor_y != self.cursor_y) or self.cursor_enabled == false) {
+    if ((self.old_cursor_x != self.cursor_x or self.old_cursor_y != self.cursor_y) or !self.cursor_enabled) {
         if (self.old_cursor_x < self.cols and self.old_cursor_y < self.rows) {
-            self.plotChar(&self.grid[self.old_cursor_x + self.old_cursor_y * self.cols], self.old_cursor_x, self.old_cursor_y);
+            const c = &self.grid[self.old_cursor_x + self.old_cursor_y * self.cols];
+            self.plotChar(c, self.old_cursor_x, self.old_cursor_y);
         }
     }
 
@@ -665,10 +563,7 @@ fn rawPutChar(self: *Context, c: u8) void {
     self.cursor_x += 1;
 }
 
-// TODO
-///////////////////////////////////////////////////////////////////////////////
-
-fn sgr(self: *Context) void {
+fn selectGraphicRendition(self: *Context) void {
     if (self.esc_values_i == 0) {
         if (self.reverse_video) {
             self.reverse_video = false;
@@ -763,15 +658,14 @@ fn sgr(self: *Context) void {
             const offset = 30;
             self.current_primary = self.esc_values[i] - offset;
 
-            // TODO: ugly
             if (self.reverse_video) {
-                if ((self.bold and self.reverse_video) or (self.bg_bold and !self.reverse_video)) {
+                if (self.bold) {
                     self.setTextBgBright(self.esc_values[i] - offset);
                 } else {
                     self.setTextBg(self.esc_values[i] - offset);
                 }
             } else {
-                if ((self.bold and !self.reverse_video) or (self.bg_bold and self.reverse_video)) {
+                if (self.bold) {
                     self.setTextFgBright(self.esc_values[i] - offset);
                 } else {
                     self.setTextFg(self.esc_values[i] - offset);
@@ -781,15 +675,14 @@ fn sgr(self: *Context) void {
             const offset = 40;
             self.current_bg = self.esc_values[i] - offset;
 
-            // TODO: ugly
             if (self.reverse_video) {
-                if ((self.bold and !self.reverse_video) or (self.bg_bold and self.reverse_video)) {
+                if (self.bg_bold) {
                     self.setTextFgBright(self.esc_values[i] - offset);
                 } else {
                     self.setTextFg(self.esc_values[i] - offset);
                 }
             } else {
-                if ((self.bold and self.reverse_video) or (self.bg_bold and !self.reverse_video)) {
+                if (self.bg_bold) {
                     self.setTextBgBright(self.esc_values[i] - offset);
                 } else {
                     self.setTextBg(self.esc_values[i] - offset);
@@ -993,12 +886,12 @@ fn controlSequenceParse(self: *Context, c: u8) void {
         if (self.esc_values_i == MAX_ESC_VALUES) return;
 
         self.rrr = true;
-        self.esc_values[self.esc_values_i] *= 10;
-        self.esc_values[self.esc_values_i] += c - '0';
+        self.esc_values[self.esc_values_i] *%= 10;
+        self.esc_values[self.esc_values_i] +%= c - '0';
         return;
     }
 
-    if (self.rrr == true) {
+    if (self.rrr) {
         self.esc_values_i += 1;
         self.rrr = false;
         if (c == ';') return;
@@ -1018,15 +911,15 @@ fn controlSequenceParse(self: *Context, c: u8) void {
         self.esc_values[i] = esc_default;
     }
 
-    if (self.dec_private == true) {
+    if (self.dec_private) {
         self.decPrivateParse(c);
         self.control_sequence = false;
         self.escape = false;
         return;
     }
 
-    const r = self.scroll_enabled;
     self.scroll_enabled = false;
+    defer self.scroll_enabled = true;
     var x: usize = undefined;
     var y: usize = undefined;
     self.getCursorPos(&x, &y);
@@ -1038,16 +931,13 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             if (self.esc_values[0] > y) {
                 self.esc_values[0] = @intCast(y);
             }
-            const orig_y = y;
             var dest_y = y - self.esc_values[0];
-            var will_be_in_scroll_region = false;
-            // TODO terrible if
-            if ((self.scroll_top_margin >= dest_y and self.scroll_top_margin <= orig_y) or (self.scroll_bottom_margin >= dest_y and self.scroll_bottom_margin <= orig_y)) {
-                will_be_in_scroll_region = true;
-            }
-
-            if (will_be_in_scroll_region and dest_y < self.scroll_top_margin) {
-                dest_y = self.scroll_top_margin;
+            // zig fmt: off
+            if ((self.scroll_top_margin >= dest_y and self.scroll_top_margin <= y) or
+                (self.scroll_bottom_margin >= dest_y and self.scroll_bottom_margin <= y)) {
+                    if (dest_y < self.scroll_top_margin) {
+                        dest_y = self.scroll_top_margin;
+                    }
             }
             self.setCursorPos(x, dest_y);
         },
@@ -1055,16 +945,14 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             if (y + self.esc_values[0] > self.rows - 1) {
                 self.esc_values[0] = @intCast((self.rows - 1) - y);
             }
-            const orig_y = y;
             var dest_y = y + self.esc_values[0];
-            var will_be_in_scroll_region = false;
-            // TODO terrible if
-            if ((self.scroll_top_margin >= orig_y and self.scroll_top_margin <= dest_y) or (self.scroll_bottom_margin >= orig_y and self.scroll_bottom_margin <= dest_y)) {
-                will_be_in_scroll_region = true;
+            if ((self.scroll_top_margin >= y and self.scroll_top_margin <= dest_y) or
+                (self.scroll_bottom_margin >= y and self.scroll_bottom_margin <= dest_y)) {
+                    if (dest_y >= self.scroll_bottom_margin) {
+                        dest_y = self.scroll_bottom_margin - 1;
+                    }
             }
-            if (will_be_in_scroll_region and dest_y >= self.scroll_bottom_margin) {
-                dest_y = self.scroll_bottom_margin - 1;
-            }
+            // zig fmt: on
             self.setCursorPos(x, dest_y);
         },
         'a', 'C' => {
@@ -1094,8 +982,8 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             self.setCursorPos(self.esc_values[0], y);
         },
         'H', 'f' => {
-                self.esc_values[1] -|= 1;
-                self.esc_values[0] -|= 1;
+            self.esc_values[1] -|= 1;
+            self.esc_values[0] -|= 1;
             if (self.esc_values[1] >= self.cols) {
                 self.esc_values[1] = @intCast(self.cols - 1);
             }
@@ -1104,12 +992,12 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             }
             self.setCursorPos(self.esc_values[1], self.esc_values[0]);
         },
-        'M' => {
+        'T' => {
             for (0..self.esc_values[0]) |_| {
                 self.scroll();
             }
         },
-        'L' => {
+        'S' => {
             const old_scroll_top_margin = self.scroll_top_margin;
             self.scroll_top_margin = y;
             for (0..self.esc_values[0]) |_| {
@@ -1118,9 +1006,9 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             self.scroll_top_margin = old_scroll_top_margin;
         },
         'n' => switch (self.esc_values[0]) {
-                5 => self.callback(self, Callback.status_report, 0, 0, 0),
-                6 => self.callback(self, Callback.pos_report, x + 1, y + 1, 0),
-                else => {},
+            5 => self.callback(self, Callback.status_report, 0, 0, 0),
+            6 => self.callback(self, Callback.pos_report, x + 1, y + 1, 0),
+            else => {},
         },
         'q' => self.callback(self, Callback.kbd_leds, self.esc_values[0], 0, 0),
         'J' => switch (self.esc_values[0]) {
@@ -1174,7 +1062,7 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             }
             self.setCursorPos(x, y);
         },
-        'm' => self.sgr(),
+        'm' => self.selectGraphicRendition(),
         's' => self.getCursorPos(&self.saved_cursor_x, &self.saved_cursor_y),
         'u' => self.setCursorPos(self.saved_cursor_x, self.saved_cursor_y),
         'K' => switch (self.esc_values[0]) {
@@ -1219,11 +1107,14 @@ fn controlSequenceParse(self: *Context, c: u8) void {
                 self.scroll_bottom_margin = self.rows;
             }
 
-            // TODO: terrible if
-            if (self.scroll_top_margin >= self.rows or self.scroll_bottom_margin > self.rows or self.scroll_top_margin >= (self.scroll_bottom_margin - 1)) {
-                self.scroll_top_margin = 0;
-                self.scroll_bottom_margin = self.rows;
+            // zig fmt: off
+            if (self.scroll_top_margin >= self.rows or
+                self.scroll_bottom_margin > self.rows or
+                self.scroll_top_margin >= (self.scroll_bottom_margin - 1)) {
+                    self.scroll_top_margin = 0;
+                    self.scroll_bottom_margin = self.rows;
             }
+            // zig fmt: on
             self.setCursorPos(0, 0);
         },
         'l', 'h' => self.modeToggle(c),
@@ -1231,7 +1122,6 @@ fn controlSequenceParse(self: *Context, c: u8) void {
         else => {},
     }
 
-    self.scroll_enabled = r;
     self.control_sequence = false;
     self.escape = false;
 }
@@ -1556,18 +1446,14 @@ fn putChar(self: *Context, c: u8) void {
         return;
     }
 
-    if (self.unicode_remaining != 0) {
+    if (self.unicode_remaining != 0) blk: {
         if ((c & 0xc0) != 0x80) {
             self.unicode_remaining = 0;
-            // TODO! goto unicode_error;
-            self.rawPutChar(0xfe);
-            self.rawPutChar(0xfe);
-            self.rawPutChar(0xfe);
-            return;
+            break :blk;
         }
 
         self.unicode_remaining -= 1;
-        self.code_point |= (c & 0x3f) << @intCast(6 * self.unicode_remaining);
+        self.code_point |= @as(u64, c & 0x3f) << @intCast(6 * self.unicode_remaining);
         if (self.unicode_remaining != 0) return;
 
         const cc = unicodeToCP437(self.code_point);
@@ -1580,11 +1466,10 @@ fn putChar(self: *Context, c: u8) void {
         return;
     }
 
-    // unicode_error:
     if (c >= 0xc0 and c <= 0xf7) {
         if (c >= 0xc0 and c <= 0xdf) {
             self.unicode_remaining = 1;
-            self.code_point = (c & 0x1f) << 6;
+            self.code_point = @as(u64, c & 0x1f) << 6;
         } else if (c >= 0xe0 and c <= 0xef) {
             self.unicode_remaining = 2;
             self.code_point = @as(u64, c & 0x0f) << (6 * 2);
@@ -1630,22 +1515,19 @@ fn putChar(self: *Context, c: u8) void {
             return;
         },
         control_code.ht => {
-            if ((x / self.tab_size + 1) >= self.cols) {
+            if ((x / TAB_SIZE + 1) >= self.cols) {
                 self.setCursorPos(self.cols - 1, y);
                 return;
             }
-            self.setCursorPos((x / self.tab_size + 1) * self.tab_size, y);
+            self.setCursorPos((x / TAB_SIZE + 1) * TAB_SIZE, y);
             return;
         },
         control_code.vt, control_code.ff, control_code.lf => {
-            if (@intFromEnum(self.oob_output) & @intFromEnum(OobOutput.onlcr) != 0) {
-                x = 0;
-            }
             if (y == self.scroll_bottom_margin - 1) {
                 self.scroll();
-                self.setCursorPos(x, y);
+                self.setCursorPos(0, y);
             } else {
-                self.setCursorPos(x, y + 1);
+                self.setCursorPos(0, y + 1);
             }
             return;
         },
@@ -1672,7 +1554,7 @@ fn putChar(self: *Context, c: u8) void {
         else => {},
     }
 
-    if (self.insert_mode == true) {
+    if (self.insert_mode) {
         var i: usize = self.cols - 1;
         while (true) : (i -= 1) {
             self.moveChar(i + 1, y, i, y);

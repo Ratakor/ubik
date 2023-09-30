@@ -3,7 +3,6 @@ an operating system made with zig using Ubik as its kernel
 
 # TODO
 - use flanterm
-- current font is under GPL
 - support RISC-V64, aarch64 and x86_64
 - replace limine with a custom bootloader
 - add a checklist/roadmap

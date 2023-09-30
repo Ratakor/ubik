@@ -1,125 +1,187 @@
-// TODO: switch to flanterm
-
 const std = @import("std");
 const root = @import("root");
 const Terminal = @import("Terminal.zig");
 
-pub const Color = enum(u32) {
-    black = 0x000000,
-    blue = 0x0000FF,
-    green = 0x00FF00,
-    cyan = 0x00FFFF,
-    red = 0xFF0000,
-    magenta = 0xFF00FF,
-    yellow = 0xFFFF00,
-    white = 0xFFFFFF,
-    _,
+pub const csi = "\x1b[";
+
+pub const Color = enum(u8) {
+    black = 30,
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white,
+    default,
+    bright_black = 90,
+    bright_red,
+    bright_green,
+    bright_yellow,
+    bright_blue,
+    bright_magenta,
+    bright_cyan,
+    bright_white,
+
+    pub inline fn setFg(fg: Color) void {
+        print(csi ++ "{d}m", .{@intFromEnum(fg)});
+    }
+
+    pub inline fn setBg(bg: Color) void {
+        print(csi ++ "{d}m", .{@intFromEnum(bg) + 10});
+    }
 };
 
-const Writer = std.io.Writer(void, error{}, write);
-const Cursor = struct { x: u32 = 0, y: u32 = 0 };
+pub const Color256 = enum {
+    pub inline fn setFg(fg: u8) void {
+        print(csi ++ "38;5;{d}m", .{fg});
+    }
 
-const font = @embedFile("font.psf")[4..]; // ignore header
-const font_height = 16;
-const font_width = 8;
+    pub inline fn setBg(bg: u8) void {
+        print(csi ++ "48;5;{d}m", .{bg + 10});
+    }
+};
+
+pub const ColorRGB = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+
+    pub inline fn setFg(fg: ColorRGB) void {
+        print(csi ++ "38;2;{d};{d};{d}m", .{ fg.r, fg.g, fg.b });
+    }
+
+    pub inline fn setBg(bg: ColorRGB) void {
+        print(csi ++ "48;2;{d};{d};{d}m", .{ bg.r, bg.g, bg.b });
+    }
+
+    pub fn setFgStr(comptime str: []const u8) void {
+        setFg(parse(str));
+    }
+
+    pub fn setBgStr(comptime str: []const u8) void {
+        setBg(parse(str));
+    }
+
+    fn parseInt(buf: []const u8) u8 {
+        return std.fmt.parseInt(u8, buf, 16) catch @compileError("Invalid rgb color");
+    }
+
+    pub fn parse(comptime str: []const u8) ColorRGB {
+        const offset = if (str[0] == '#') 1 else 0;
+        return comptime .{
+            .r = parseInt(str[offset + 0 .. offset + 2]),
+            .g = parseInt(str[offset + 2 .. offset + 4]),
+            .b = parseInt(str[offset + 4 .. offset + 6]),
+        };
+    }
+};
 
 var terminal: *Terminal = undefined;
-var framebuffer: []volatile u32 = undefined;
-var framebuffer_width: u64 = undefined;
-var framebuffer_height: u64 = undefined;
-var cursor: Cursor = .{};
-pub var foreground = Color.white;
-pub var background = Color.black;
-pub const writer: Writer = .{ .context = {} };
+const writer = std.io.Writer(void, error{}, internalWrite){ .context = {} };
 
-/// draw 3 sqares one red, one green and one blue
-pub fn drawSquares() void {
-    cursor.y += 10;
-    for (cursor.y..cursor.y + 20) |y| {
-        for (0..20) |x| {
-            framebuffer[(x + 10) + y * framebuffer_width] = @intFromEnum(Color.red);
-            framebuffer[(x + 40) + y * framebuffer_width] = @intFromEnum(Color.green);
-            framebuffer[(x + 70) + y * framebuffer_width] = @intFromEnum(Color.blue);
-        }
-    }
-    cursor.y += 30;
-}
-
-fn cb(_: *Terminal, _: Terminal.Callback, _: u64, _: u64, _: u64) void {}
-
-pub fn init() void {
+pub fn init() !void {
     const fb = root.framebuffer_request.response.?.framebuffers()[0];
-
-    terminal = Terminal.init(@ptrCast(@alignCast(fb.address)), fb.width, fb.height, fb.pitch, null, 8, 16, 1, 1, &cb) catch unreachable;
-
-    // framebuffer = @as([*]u32, @ptrCast(@alignCast(fb.address)))[0 .. (fb.pitch * fb.height) / 4];
-    // framebuffer_width = fb.width;
-    // framebuffer_height = fb.height;
-    // clear();
+    terminal = try Terminal.init(fb.address, fb.width, fb.height, null);
 }
 
-pub fn clear() void {
-    @memset(framebuffer, 0);
-    cursor.x = 0;
-    cursor.y = 0;
-}
-
-fn writeChar(char: u8) void {
-    const glyph_size = font_height;
-    for (0..font_height) |y| {
-        var glyphs = font[@as(usize, char) * glyph_size + y ..];
-        var mask: u8 = 0x80;
-        for (0..font_width) |x| {
-            const idx = cursor.x + x + (cursor.y + y) * framebuffer_width;
-            if (glyphs[0] & mask != 0) {
-                framebuffer[idx] = @intFromEnum(foreground);
-            } else {
-                framebuffer[idx] = @intFromEnum(background);
-            }
-            mask >>= 1;
-            if (mask == 0) {
-                mask = 0x80;
-                glyphs = glyphs[1..];
-            }
-        }
-    }
-}
-
-fn write(_: void, str: []const u8) error{}!usize {
+fn internalWrite(_: void, str: []const u8) error{}!usize {
     terminal.write(str);
-    // for (str) |char| {
-    //     switch (char) {
-    //         '\n' => {
-    //             cursor.x = 0;
-    //             cursor.y += font_height;
-    //         },
-    //         '\t' => {
-    //             cursor.x += font_width * 8;
-    //         },
-    //         0x08 => { // backspace
-    //             writeChar(' ');
-    //             cursor.x -= font_width;
-    //         },
-    //         else => {
-    //             writeChar(char);
-    //             cursor.x += font_width;
-    //         },
-    //     }
-
-    //     if (cursor.x >= framebuffer_width) {
-    //         cursor.x = 0;
-    //         cursor.y += font_height;
-    //     }
-
-    //     if (cursor.y + font_height > framebuffer_height) {
-    //         cursor.y = 0;
-    //         // TODO: handle scrolling
-    //     }
-    // }
-
     return str.len;
 }
 
-pub fn print(comptime fmt: []const u8, args: anytype) void {
-    std.fmt.format(writer, fmt, args) catch unreachable;
+pub inline fn write(bytes: []const u8) void {
+    writer.writeAll(bytes) catch unreachable;
+}
+
+pub inline fn print(comptime fmt: []const u8, args: anytype) void {
+    writer.print(fmt, args) catch unreachable;
+}
+
+pub inline fn resetColor() void {
+    write(csi ++ "m");
+}
+
+pub inline fn clearCurrentLine() void {
+    write(csi ++ "2K");
+}
+
+pub inline fn clearFromCursorToLineBeginning() void {
+    write(csi ++ "1K");
+}
+
+pub inline fn clearFromCursorToLineEnd() void {
+    write(csi ++ "K");
+}
+
+pub inline fn clearScreen() void {
+    write(csi ++ "2J");
+}
+
+pub inline fn clearFromCursorToScreenBeginning() void {
+    write(csi ++ "1J");
+}
+
+pub inline fn clearFromCursorToScreenEnd() void {
+    write(csi ++ "J");
+}
+
+pub inline fn hideCursor() void {
+    write(csi ++ "?25l");
+}
+
+pub inline fn showCursor() void {
+    write(csi ++ "?25h");
+}
+
+pub inline fn saveCursor() void {
+    write(csi ++ "s");
+}
+
+pub inline fn restoreCursor() void {
+    write(csi ++ "u");
+}
+
+pub inline fn cursorUp(lines: usize) void {
+    print(csi ++ "{}A", .{lines});
+}
+
+pub inline fn cursorDown(lines: usize) void {
+    print(csi ++ "{}B", .{lines});
+}
+
+pub inline fn cursorForward(columns: usize) void {
+    print(csi ++ "{}C", .{columns});
+}
+
+pub inline fn cursorBackward(columns: usize) void {
+    print(csi ++ "{}D", .{columns});
+}
+
+pub inline fn cursorNextLine(lines: usize) void {
+    print(csi ++ "{}E", .{lines});
+}
+
+pub inline fn cursorPreviousLine(lines: usize) void {
+    print(csi ++ "{}F", .{lines});
+}
+
+pub inline fn setCursor(x: usize, y: usize) void {
+    print(csi ++ "{};{}H", .{ y + 1, x + 1 });
+}
+
+pub inline fn setCursorRow(row: usize) void {
+    print(csi ++ "{}H", .{row + 1});
+}
+
+pub inline fn setCursorColumn(column: usize) void {
+    print(csi ++ "{}G", .{column + 1});
+}
+
+pub inline fn scrollUp(lines: usize) void {
+    print(csi ++ "{}S", .{lines});
+}
+
+pub inline fn scrollDown(lines: usize) void {
+    print(csi ++ "{}T", .{lines});
 }
