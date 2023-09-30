@@ -234,7 +234,7 @@ pub fn write(self: *Context, buf: []const u8) void {
         self.putChar(char);
     }
 
-    self.doubleBufferFlush(); // TODO: write directly to framebuffer?
+    self.doubleBufferFlush();
 }
 
 pub fn init(
@@ -519,9 +519,8 @@ fn doubleBufferFlush(self: *Context) void {
     for (0..self.queue_i) |i| {
         const q = &self.queue[i];
         const offset = q.y * self.cols + q.x;
-        if (self.map[offset] == null) {
-            continue;
-        }
+        if (self.map[offset] == null) continue;
+
         const old = &self.grid[offset];
         if (q.c.bg == old.bg and q.c.fg == old.fg) {
             self.plotCharFast(old, &q.c, q.x, q.y);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const root = @import("root");
 const SpinLock = @import("lock.zig").SpinLock;
 const serial = @import("serial.zig");
@@ -132,18 +133,20 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    if (builtin.mode != .Debug) return;
+
     const level_txt = comptime switch (level) {
         .err => "\x1b[31merror\x1b[m",
         .warn => "\x1b[33mwarning\x1b[m",
         .info => "\x1b[32minfo\x1b[m",
-        .debug => "\x1b[34mdebug\x1b[m",
+        .debug => "\x1b[36mdebug\x1b[m",
     };
-    const prefix2 = (if (scope != .default) "@" ++ @tagName(scope)) ++ ": ";
+    const scope_prefix = (if (scope != .default) "@" ++ @tagName(scope) else "") ++ ": ";
+
     log_lock.lock();
     defer log_lock.unlock();
-    const fmt = level_txt ++ prefix2 ++ format ++ "\n";
+    const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
 
-    // TODO: keep nosuspend ? both at the same time ? active based on optimization level ?
     // nosuspend tty.print(fmt, args);
     nosuspend serial.print(fmt, args);
 }

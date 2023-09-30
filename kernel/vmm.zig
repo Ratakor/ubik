@@ -7,6 +7,7 @@ const tty = @import("tty.zig");
 const pmm = @import("pmm.zig");
 
 const page_size = std.mem.page_size;
+pub const higher_half = root.hhdm_request.response.?.offset;
 
 pub const Flags = enum(u64) {
     present = 1 << 0,

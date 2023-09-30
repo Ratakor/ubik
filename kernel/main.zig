@@ -58,13 +58,13 @@ fn main() !void {
     // const rsdp = rsdp_request.response.?;
 
     // TODO: log when init is successful (with serial or tty idk)
-    serial.init();
     tty.init() catch unreachable;
+    serial.init();
 
     tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
 
     debug.init() catch |err| {
-        tty.print("Failed to initialize debug info: {}\n", .{err}); // TODO warning
+        std.log.warn("Failed to initialize debug info: {}\n", .{err});
     };
 
     gdt.init();

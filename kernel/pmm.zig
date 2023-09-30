@@ -41,7 +41,7 @@ pub fn init() !void {
     const bitmap_size = highest_addr / page_size;
     const aligned_size = std.mem.alignForward(u64, bitmap_size / 8, page_size);
 
-    log.info("highest address: {}", .{highest_addr});
+    log.info("highest address: 0x{x}", .{highest_addr});
     log.info("bitmap size: {} bits", .{bitmap_size});
 
     // find a hole in the memory map to fit the bitmap

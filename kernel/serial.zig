@@ -1,5 +1,6 @@
 const std = @import("std");
 const SpinLock = @import("lock.zig").SpinLock;
+const log = std.log.scoped(.serial);
 
 pub const Port = enum(u16) {
     com1 = 0x3f8,
@@ -13,7 +14,11 @@ const com1_writer = std.io.Writer(void, error{}, com1Write){ .context = {} };
 
 pub fn init() void {
     for (std.enums.values(Port)) |port| {
-        _ = initPort(@intFromEnum(port));
+        if (initPort(@intFromEnum(port))) {
+            log.info("init {}: success", .{port});
+        } else {
+            log.warn("init {}: fail", .{port});
+        }
     }
 }
 
@@ -113,5 +118,5 @@ fn com1Write(_: void, str: []const u8) error{}!usize {
 }
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    std.fmt.format(com1_writer, fmt, args) catch unreachable;
+    com1_writer.print(fmt, args) catch unreachable;
 }
