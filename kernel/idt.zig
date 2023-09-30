@@ -114,7 +114,7 @@ pub fn allocateVector() u8 {
     return vector;
 }
 
-pub fn registerHandler(vector: u8, handler: InterruptHandler) void {
+pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
 }
 

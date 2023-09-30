@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const root = @import("root");
+const Terminal = @import("Terminal.zig");
 
 pub const Color = enum(u32) {
     black = 0x000000,
@@ -22,6 +23,7 @@ const font = @embedFile("font.psf")[4..]; // ignore header
 const font_height = 16;
 const font_width = 8;
 
+var terminal: *Terminal = undefined;
 var framebuffer: []volatile u32 = undefined;
 var framebuffer_width: u64 = undefined;
 var framebuffer_height: u64 = undefined;
@@ -43,12 +45,17 @@ pub fn drawSquares() void {
     cursor.y += 30;
 }
 
+fn cb(_: *Terminal, _: Terminal.Callback, _: u64, _: u64, _: u64) void {}
+
 pub fn init() void {
     const fb = root.framebuffer_request.response.?.framebuffers()[0];
-    framebuffer = @as([*]u32, @ptrCast(@alignCast(fb.address)))[0 .. (fb.pitch * fb.height) / 4];
-    framebuffer_width = fb.width;
-    framebuffer_height = fb.height;
-    clear();
+
+    terminal = Terminal.init(@ptrCast(@alignCast(fb.address)), fb.width, fb.height, fb.pitch, null, 8, 16, 1, 1, &cb) catch unreachable;
+
+    // framebuffer = @as([*]u32, @ptrCast(@alignCast(fb.address)))[0 .. (fb.pitch * fb.height) / 4];
+    // framebuffer_width = fb.width;
+    // framebuffer_height = fb.height;
+    // clear();
 }
 
 pub fn clear() void {
@@ -79,35 +86,36 @@ fn writeChar(char: u8) void {
 }
 
 fn write(_: void, str: []const u8) error{}!usize {
-    for (str) |char| {
-        switch (char) {
-            '\n' => {
-                cursor.x = 0;
-                cursor.y += font_height;
-            },
-            '\t' => {
-                cursor.x += font_width * 8;
-            },
-            0x08 => { // backspace
-                writeChar(' ');
-                cursor.x -= font_width;
-            },
-            else => {
-                writeChar(char);
-                cursor.x += font_width;
-            },
-        }
+    terminal.write(str);
+    // for (str) |char| {
+    //     switch (char) {
+    //         '\n' => {
+    //             cursor.x = 0;
+    //             cursor.y += font_height;
+    //         },
+    //         '\t' => {
+    //             cursor.x += font_width * 8;
+    //         },
+    //         0x08 => { // backspace
+    //             writeChar(' ');
+    //             cursor.x -= font_width;
+    //         },
+    //         else => {
+    //             writeChar(char);
+    //             cursor.x += font_width;
+    //         },
+    //     }
 
-        if (cursor.x >= framebuffer_width) {
-            cursor.x = 0;
-            cursor.y += font_height;
-        }
+    //     if (cursor.x >= framebuffer_width) {
+    //         cursor.x = 0;
+    //         cursor.y += font_height;
+    //     }
 
-        if (cursor.y + font_height > framebuffer_height) {
-            cursor.y = 0;
-            // TODO: handle scrolling
-        }
-    }
+    //     if (cursor.y + font_height > framebuffer_height) {
+    //         cursor.y = 0;
+    //         // TODO: handle scrolling
+    //     }
+    // }
 
     return str.len;
 }

@@ -30,13 +30,8 @@ inline fn halt() noreturn {
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
-    tty.foreground = tty.Color.red;
-    tty.print("\nKernel panic: ", .{});
-    tty.foreground = tty.Color.white;
-    tty.print("{s}\n", .{msg});
-
+    tty.print("\n\x1b[31mKernel panic:\x1b[m {s}\n", .{msg});
     debug.printStackIterator(std.debug.StackIterator.init(@returnAddress(), @frameAddress()));
-
     halt();
 }
 
@@ -44,11 +39,7 @@ export fn _start() callconv(.C) noreturn {
     asm volatile ("cli");
 
     main() catch |err| {
-        tty.foreground = tty.Color.red;
-        tty.print("\nKernel error: ", .{});
-        tty.foreground = tty.Color.white;
-        tty.print("{}\n", .{err});
-
+        tty.print("\n\x1b[31mKernel error:\x1b[m {}\n", .{err});
         if (@errorReturnTrace()) |stack_trace| {
             debug.printStackTrace(stack_trace);
         }
@@ -64,22 +55,16 @@ fn main() !void {
 
     // TODO: log when init is successful (with serial or tty idk)
     tty.init();
-
-    tty.drawSquares(); // TODO: draw logo instead
-
-    tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
-
-    ///////////////////////////////////////////////////////////////////////////
-    tty.print("Hello, World!\n", .{});
-    tty.foreground = @enumFromInt(0xBD93F9);
-    tty.print("new color of value {X}\n", .{@intFromEnum(tty.foreground)});
-    tty.foreground = tty.Color.white;
-    ///////////////////////////////////////////////////////////////////////////
-
     serial.init();
     debug.init() catch |err| {
         tty.print("Failed to initialize debug info: {}\n", .{err}); // TODO warning
     };
+
+    // tty.drawSquares(); // TODO: draw logo instead
+
+    // TODO: tty start a row too high
+    tty.print("\nBooting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
+
     gdt.init();
     idt.init();
     // TODO: init events <-- for interrupts
@@ -105,14 +90,13 @@ fn main() !void {
 
     // TODO: start /bin/init <- load elf with std.elf
 
-    ///////////////////////////////////////////////////////////////////////////
-    tty.print("{}\n", .{time.realtime});
+    tty.print("Hello, World!\n", .{});
+    tty.print("realtime: {}\n", .{time.realtime});
 
     const buf = try pmm.alloc(1, false);
     defer pmm.free(buf);
-    tty.print("{*} {}\n", .{ buf.ptr, buf.len });
+    tty.print("allocated a buffer of size {} with addr = {*}\n", .{ buf.len, buf.ptr });
 
     asm volatile ("sti");
     @breakpoint();
-    ///////////////////////////////////////////////////////////////////////////
 }

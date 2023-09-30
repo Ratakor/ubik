@@ -142,6 +142,8 @@ pub fn log(
     log_lock.lock();
     defer log_lock.unlock();
     const fmt = level_txt ++ prefix2 ++ format ++ "\n";
-    nosuspend tty.print(fmt, args);
+
+    // TODO: keep nosuspend ? both at the same time ? active based on optimization level ?
+    // nosuspend tty.print(fmt, args);
     nosuspend serial.print(fmt, args);
 }

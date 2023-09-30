@@ -1,12 +1,12 @@
 const std = @import("std");
 const root = @import("root");
 const SpinLock = @import("lock.zig").SpinLock;
-const tty = @import("tty.zig");
+const log = std.log.scoped(.pmm);
 
 const page_size = std.mem.page_size;
 const free_page = false;
 
-// TODO slab allocator instead of page frame allocator
+// TODO slab allocator instead of page frame allocator ?
 // TODO use u64 and logical operation to speed up the process ?
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
@@ -24,32 +24,25 @@ pub fn init() !void {
 
     // calculate the size of the bitmap
     for (entries) |entry| {
-        // tty.print("base: {x}, length: {x}, kind: {s}\n", .{
-        //     entry.base,
-        //     entry.length,
-        //     @tagName(entry.kind),
-        // });
+        log.info("base: 0x{x}, length: 0x{x}, kind: {s}", .{
+            entry.base,
+            entry.length,
+            @tagName(entry.kind),
+        });
 
-        switch (entry.kind) {
-            .usable => {
-                usable_pages += entry.length / page_size;
-                highest_addr = @max(highest_addr, entry.base + entry.length);
-            },
-            .bad_memory => {
-                tty.print("TODO: bad_memory: {}\n", .{entry});
-            },
-            .framebuffer => {},
-            else => {
-                reserved_pages += entry.length / page_size;
-            },
+        if (entry.kind == .usable) {
+            usable_pages += entry.length / page_size;
+            highest_addr = @max(highest_addr, entry.base + entry.length);
+        } else {
+            reserved_pages += entry.length / page_size;
         }
     }
 
     const bitmap_size = highest_addr / page_size;
     const aligned_size = std.mem.alignForward(u64, bitmap_size / 8, page_size);
 
-    tty.print("highest address: {}\n", .{highest_addr});
-    tty.print("bitmap size: {} bits\n", .{bitmap_size});
+    log.info("highest address: {}", .{highest_addr});
+    log.info("bitmap size: {} bits", .{bitmap_size});
 
     // find a hole in the memory map to fit the bitmap
     var bitmap_ptr: ?[*]bool = null;
@@ -79,8 +72,8 @@ pub fn init() !void {
         }
     }
 
-    tty.print("usable memory: {} MiB\n", .{(usable_pages * page_size) / 1024 / 1024});
-    tty.print("reserved memory: {} MiB\n", .{(reserved_pages * page_size) / 1024 / 1024});
+    log.info("usable memory: {} MiB", .{(usable_pages * page_size) / 1024 / 1024});
+    log.info("reserved memory: {} MiB", .{(reserved_pages * page_size) / 1024 / 1024});
 }
 
 fn innerAlloc(pages: usize, limit: u64) ?u64 {
@@ -105,7 +98,8 @@ fn innerAlloc(pages: usize, limit: u64) ?u64 {
     return null;
 }
 
-// TODO: use many-item pointer instead of slice because div/mul is expensive ?
+// TODO: use many-item pointer or u64 instead of slice because div/mul is expensive ?
+// TODO: add a system to log everything (in this case allocation) in debug mode ?
 
 pub fn alloc(pages: usize, comptime zero: bool) ![]u8 {
     lock.lock();
