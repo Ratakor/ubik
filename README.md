@@ -17,6 +17,6 @@ Make sure to have `xorriso` and run
     zig build image -Doptimize=ReleaseSafe
 
 ### run
-Make sure to have `qemu` and run
+Make sure to have `qemu-system-x86` and run
 
     zig build run

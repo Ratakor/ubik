@@ -1,5 +1,9 @@
 const std = @import("std");
 
+fn concat(b: *std.Build, slices: []const []const u8) []u8 {
+    return std.mem.concat(b.allocator, u8, slices) catch unreachable;
+}
+
 fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     const optimize = b.standardOptimizeOption(.{});
     var target: std.zig.CrossTarget = .{
@@ -38,11 +42,11 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
 }
 
 fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
-    const image_dir = b.cache_root.join(b.allocator, &.{"image_root/"}) catch unreachable;
+    const image_dir = b.cache_root.join(b.allocator, &[_][]const u8{"image_root/"}) catch unreachable;
 
     const image_params = &[_][]const u8{
         "/bin/sh", "-c",
-        std.mem.concat(b.allocator, u8, &.{
+        concat(b, &[_][]const u8{
             "make -C limine && ",
             "mkdir -p ", image_dir, " && ",
             "cp zig-out/bin/kernel.elf limine.cfg limine/limine-bios.sys ",
@@ -57,7 +61,7 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
                 "-efi-boot-part --efi-boot-image --protective-msdos-label ",
                 image_dir, " -o ", image_name, " && ",
             "./limine/limine bios-install ", image_name,
-        }) catch unreachable,
+        })
     };
 
     return b.addSystemCommand(image_params);
@@ -67,23 +71,34 @@ pub fn build(b: *std.Build) void {
     const kernel = buildKernel(b);
     b.installArtifact(kernel);
 
-    const image_name = std.mem.concat(b.allocator, u8, &.{
-        "ubik-", @tagName(kernel.target.cpu_arch.?), ".iso"
-    }) catch unreachable;
+    const arch = @tagName(kernel.target.cpu_arch.?);
+    const image_name = concat(b, &[_][]const u8{ "ubik-", arch, ".iso" });
+
     const image_step = b.step("image", "Build the image");
     const image_cmd = buildImage(b, image_name);
     image_cmd.step.dependOn(b.getInstallStep());
     image_step.dependOn(&image_cmd.step);
 
     const run_step = b.step("run", "Run the image with qemu");
-    const run_cmd = b.addSystemCommand(&.{
-        "qemu-system-x86_64", "-serial", "stdio", "-M", "q35", "-m", "2G", "-cdrom", image_name, "-boot", "d"
-    });
+    const graphics = b.option(bool, "graphics", "Enable graphics on qemu") orelse true;
+    const qemu_cmd = concat(b, &[_][]const u8{ "qemu-system-", arch });
+    const qemu_params = [_][]const u8{
+        "-no-reboot",
+        "-serial", "mon:stdio",
+        "-M", "q35",
+        "-m", "1G",
+        "-boot", "d",
+        "-cdrom", image_name
+    };
+    const run_cmd = if (graphics)
+        b.addSystemCommand(&[_][]const u8{ qemu_cmd, "-vga", "std" } ++ qemu_params)
+    else
+        b.addSystemCommand(&[_][]const u8{ qemu_cmd, "-nographic" } ++ qemu_params);
     run_cmd.step.dependOn(image_step);
     run_step.dependOn(&run_cmd.step);
 
     const fmt_step = b.step("fmt", "Format all source files");
-    fmt_step.dependOn(&b.addFmt(.{ .paths = &.{ "kernel" } }).step);
+    fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{"kernel"} }).step);
 
     const clean_step = b.step("clean", "Delete all artifacts created by zig build");
     clean_step.dependOn(&b.addRemoveDirTree("zig-cache").step);

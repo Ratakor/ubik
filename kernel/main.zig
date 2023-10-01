@@ -37,6 +37,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     tty.resetColor();
     tty.print("{s}\n", .{msg});
     debug.printStackIterator(std.debug.StackIterator.init(@returnAddress(), @frameAddress()));
+    tty.hideCursor();
     halt();
 }
 
@@ -48,6 +49,7 @@ export fn _start() callconv(.C) noreturn {
         if (@errorReturnTrace()) |stack_trace| {
             debug.printStackTrace(stack_trace);
         }
+        tty.hideCursor();
     };
 
     halt();
@@ -103,21 +105,21 @@ fn main() !void {
     defer pmm.free(buf);
     tty.print("allocated a buffer of size {} and address = {*}\n", .{ buf.len, buf.ptr });
 
-    while (true) {
-        const key = keyboard.readKey();
-        switch (key) {
-            .bad => {},
-            .escape => break,
-            .backspace => {
-                tty.write(&[1]u8{std.ascii.control_code.bs});
-                tty.clearFromCursorToLineEnd();
-            },
-            .tab => tty.write(&[1]u8{std.ascii.control_code.ht}),
-            .enter => tty.write(&[1]u8{std.ascii.control_code.lf}),
-            .space => tty.write(" "),
-            else => tty.write(@tagName(key)),
-        }
-    }
+    // while (true) {
+    //     const key = keyboard.readKey();
+    //     switch (key) {
+    //         .bad => {},
+    //         .escape => break,
+    //         .backspace => {
+    //             tty.write(&[1]u8{std.ascii.control_code.bs});
+    //             tty.clearFromCursorToLineEnd();
+    //         },
+    //         .tab => tty.write(&[1]u8{std.ascii.control_code.ht}),
+    //         .enter => tty.write(&[1]u8{std.ascii.control_code.lf}),
+    //         .space => tty.write(" "),
+    //         else => tty.write(@tagName(key)),
+    //     }
+    // }
 
     asm volatile ("sti");
     @breakpoint();
