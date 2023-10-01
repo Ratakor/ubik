@@ -1,8 +1,74 @@
 const std = @import("std");
 const root = @import("root");
+const ps2 = @import("ps2.zig");
+const SpinLock = @import("lock.zig").SpinLock;
 const Terminal = @import("Terminal.zig");
 
-pub const csi = "\x1b[";
+// TODO: termios
+
+const esc = std.ascii.control_code.esc;
+const bs = std.ascii.control_code.bs;
+const csi = "\x1b[";
+
+// zig fmt: off
+const convtab_nomod = [_]u8{
+    0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' ',
+};
+
+const convtab_capslock = [_]u8{
+    0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\n', 0, 'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\'', '`', 0, '\\', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', ',', '.', '/', 0, 0, 0, ' ',
+};
+
+const convtab_shift = [_]u8{
+    0, esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', bs, '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0, 'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' ',
+};
+
+const convtab_shift_capslock = [_]u8{
+    0, esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', bs, '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '{', '}', '\n', 0, 'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ':', '"', '~', 0, '|', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', '<', '>', '?', 0, 0, 0, ' '
+};
+// zig fmt: on
+
+const ScanCode = enum(u8) {
+    ctrl = 0x1d,
+    ctrl_rel = 0x9d,
+    shift_right = 0x36,
+    shift_right_rel = 0xb6,
+    shift_left = 0x2a,
+    shift_left_rel = 0xaa,
+    alt_left = 0x38, // TODO, altGr too
+    alt_left_rel = 0xb8,
+    capslock = 0x3a,
+    numlock = 0x45, // TODO
+
+    keypad_enter = 0x1c,
+    keypad_slash = 0x35,
+    arrow_up = 0x48,
+    arrow_left = 0x4b,
+    arrow_down = 0x50,
+    arrow_right = 0x4d,
+
+    // TODO
+    insert = 0x52,
+    home = 0x47,
+    end = 0x4f,
+    pgup = 0x49,
+    pgdown = 0x51,
+    delete = 0x53,
+
+    _,
+};
 
 pub const Color = enum(u8) {
     black = 30,
@@ -38,7 +104,7 @@ pub const Color256 = enum {
     }
 
     pub inline fn setBg(bg: u8) void {
-        print(csi ++ "48;5;{d}m", .{bg + 10});
+        print(csi ++ "48;5;{d}m", .{bg});
     }
 };
 
@@ -78,6 +144,8 @@ pub const ColorRGB = struct {
 };
 
 var terminal: *Terminal = undefined;
+var read_lock: SpinLock = .{}; // TODO
+var write_lock: SpinLock = .{};
 const writer = std.io.Writer(void, error{}, internalWrite){ .context = {} };
 
 pub fn init() !void {
@@ -86,7 +154,9 @@ pub fn init() !void {
 }
 
 fn internalWrite(_: void, str: []const u8) error{}!usize {
+    write_lock.lock();
     terminal.write(str);
+    write_lock.unlock();
     return str.len;
 }
 
@@ -184,4 +254,114 @@ pub inline fn scrollUp(lines: usize) void {
 
 pub inline fn scrollDown(lines: usize) void {
     print(csi ++ "{}T", .{lines});
+}
+
+pub fn keyboardLoop() void { // TODO noreturn {
+    var extra_scancodes = false;
+    var ctrl_active = false;
+    var shift_active = false;
+    var capslock_active = false;
+
+    while (true) {
+        const input = ps2.read();
+
+        if (input == 0xe0) {
+            extra_scancodes = true;
+            continue;
+        }
+
+        if (extra_scancodes == true) {
+            extra_scancodes = false;
+
+            switch (@as(ScanCode, @enumFromInt(input))) {
+                .ctrl => {
+                    ctrl_active = true;
+                    continue;
+                },
+                .ctrl_rel => {
+                    ctrl_active = false;
+                    continue;
+                },
+                .keypad_enter => {
+                    write("\n");
+                    continue;
+                },
+                .keypad_slash => {
+                    write("/");
+                    continue;
+                },
+                // TODO for arrows we could also output A, B, C or D depending on settings
+                .arrow_up => {
+                    cursorUp(1);
+                    continue;
+                },
+                .arrow_left => {
+                    cursorBackward(1);
+                    continue;
+                },
+                .arrow_down => {
+                    cursorDown(1);
+                    continue;
+                },
+                .arrow_right => {
+                    cursorForward(1);
+                    continue;
+                },
+                .insert, .home, .end, .pgup, .pgdown, .delete => continue,
+                else => {},
+            }
+        }
+
+        switch (@as(ScanCode, @enumFromInt(input))) {
+            .shift_left, .shift_right => {
+                shift_active = true;
+                continue;
+            },
+            .shift_left_rel, .shift_right_rel => {
+                shift_active = false;
+                continue;
+            },
+            .ctrl => {
+                ctrl_active = true;
+                continue;
+            },
+            .ctrl_rel => {
+                ctrl_active = false;
+                continue;
+            },
+            .capslock => {
+                capslock_active = !capslock_active;
+                continue;
+            },
+            else => {},
+        }
+
+        var c: u8 = undefined;
+
+        if (input >= 0x3b) continue; // TODO F1-F12 + keypad pressed
+
+        if (!capslock_active) {
+            if (!shift_active) {
+                c = convtab_nomod[input];
+            } else {
+                c = convtab_shift[input];
+            }
+        } else {
+            if (!shift_active) {
+                c = convtab_capslock[input];
+            } else {
+                c = convtab_shift_capslock[input];
+            }
+        }
+
+        if (ctrl_active) {
+            c = std.ascii.toUpper(c) -% 0x40;
+        }
+
+        // TODO: for backspace remove character under cursor?
+
+        if (c == esc) return; // TODO: this is just to have a way to exit
+
+        write(&[1]u8{c});
+    }
 }

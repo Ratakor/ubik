@@ -1,5 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
+const arch = @import("arch.zig");
 const debug = @import("debug.zig");
 const serial = @import("serial.zig");
 const tty = @import("tty.zig");
@@ -9,7 +10,6 @@ const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const mem = @import("mem.zig");
 const time = @import("time.zig");
-const keyboard = @import("keyboard.zig");
 
 pub const std_options = struct {
     pub const logFn = debug.log;
@@ -25,10 +25,6 @@ pub export var kernel_file_request: limine.KernelFileRequest = .{};
 pub export var kernel_address_request: limine.KernelAddressRequest = .{};
 pub export var boot_time_request: limine.BootTimeRequest = .{};
 
-inline fn halt() noreturn {
-    while (true) asm volatile ("hlt");
-}
-
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
     tty.resetColor();
@@ -38,11 +34,11 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     tty.print("{s}\n", .{msg});
     debug.printStackIterator(std.debug.StackIterator.init(@returnAddress(), @frameAddress()));
     tty.hideCursor();
-    halt();
+    arch.halt();
 }
 
 export fn _start() callconv(.C) noreturn {
-    asm volatile ("cli");
+    arch.disableInterrupts();
 
     main() catch |err| {
         tty.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {s}\n", .{@errorName(err)});
@@ -52,7 +48,7 @@ export fn _start() callconv(.C) noreturn {
         tty.hideCursor();
     };
 
-    halt();
+    arch.halt();
 }
 
 fn main() !void {
@@ -105,22 +101,8 @@ fn main() !void {
     defer pmm.free(buf);
     tty.print("allocated a buffer of size {} and address = {*}\n", .{ buf.len, buf.ptr });
 
-    // while (true) {
-    //     const key = keyboard.readKey();
-    //     switch (key) {
-    //         .bad => {},
-    //         .escape => break,
-    //         .backspace => {
-    //             tty.write(&[1]u8{std.ascii.control_code.bs});
-    //             tty.clearFromCursorToLineEnd();
-    //         },
-    //         .tab => tty.write(&[1]u8{std.ascii.control_code.ht}),
-    //         .enter => tty.write(&[1]u8{std.ascii.control_code.lf}),
-    //         .space => tty.write(" "),
-    //         else => tty.write(@tagName(key)),
-    //     }
-    // }
+    tty.keyboardLoop();
 
-    asm volatile ("sti");
+    arch.enableInterrupts();
     @breakpoint();
 }

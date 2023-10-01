@@ -118,6 +118,7 @@ const QueueItem = struct {
 const maxInt = std.math.maxInt;
 const control_code = std.ascii.control_code;
 
+// TODO: use kernel allocator instead
 var fba_buffer: [8 * 1024 * 1024]u8 = undefined; // 8MB
 var fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const allocator = fba.allocator();
