@@ -1,5 +1,5 @@
-# Système 9
-an operating system made with zig using Ubik as its kernel
+# Ubik
+a kernel made with zig
 
 # TODO
 - use flanterm
@@ -9,7 +9,7 @@ an operating system made with zig using Ubik as its kernel
 
 ### clone
 
-    git clone https://github.com/ratakor/os --recursive
+    git clone https://github.com/ratakor/ubik --recursive
 
 ### build
 Make sure to have `xorriso` and run

@@ -1531,7 +1531,7 @@ fn putChar(self: *Context, c: u8) void {
             return;
         },
         control_code.bs => {
-            self.setCursorPos(x - 1, y);
+            self.setCursorPos(x -| 1, y);
             return;
         },
         control_code.cr => {

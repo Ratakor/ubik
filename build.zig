@@ -68,7 +68,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(kernel);
 
     const image_name = std.mem.concat(b.allocator, u8, &.{
-        "système-9-", @tagName(kernel.target.cpu_arch.?), ".iso"
+        "ubik-", @tagName(kernel.target.cpu_arch.?), ".iso"
     }) catch unreachable;
     const image_step = b.step("image", "Build the image");
     const image_cmd = buildImage(b, image_name);

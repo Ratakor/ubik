@@ -9,6 +9,7 @@ const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const mem = @import("mem.zig");
 const time = @import("time.zig");
+const keyboard = @import("keyboard.zig");
 
 pub const std_options = struct {
     pub const logFn = debug.log;
@@ -101,6 +102,22 @@ fn main() !void {
     const buf = try pmm.alloc(1, false);
     defer pmm.free(buf);
     tty.print("allocated a buffer of size {} and address = {*}\n", .{ buf.len, buf.ptr });
+
+    while (true) {
+        const key = keyboard.readKey();
+        switch (key) {
+            .bad => {},
+            .escape => break,
+            .backspace => {
+                tty.write(&[1]u8{std.ascii.control_code.bs});
+                tty.clearFromCursorToLineEnd();
+            },
+            .tab => tty.write(&[1]u8{std.ascii.control_code.ht}),
+            .enter => tty.write(&[1]u8{std.ascii.control_code.lf}),
+            .space => tty.write(" "),
+            else => tty.write(@tagName(key)),
+        }
+    }
 
     asm volatile ("sti");
     @breakpoint();
