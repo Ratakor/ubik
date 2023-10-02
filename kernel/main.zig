@@ -9,6 +9,7 @@ const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const mem = @import("mem.zig");
+const ps2 = @import("ps2.zig");
 const time = @import("time.zig");
 
 pub const std_options = struct {
@@ -69,8 +70,8 @@ fn main() !void {
     gdt.init();
     idt.init();
     // TODO: init events <-- for interrupts
-    // TODO: interrupt controller (pic or apic)
-    // TODO: PS/2 -> handle keyboard/mouse <-- extern
+    // TODO: apic: interrupt controller
+    // TODO: ps2.init();
 
     try pmm.init();
     try vmm.init(); // TODO

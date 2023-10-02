@@ -1,3 +1,4 @@
+const log = @import("std").log.scoped(.gdt);
 const SpinLock = @import("lock.zig").SpinLock;
 const TSS = @import("cpu.zig").TSS;
 
@@ -66,6 +67,7 @@ var lock: SpinLock = .{};
 pub fn init() void {
     gdtr.base = @intFromPtr(&gdt);
     reloadGDT();
+    log.info("init: successfully reloaded GDT", .{});
 }
 
 pub fn reloadGDT() void {

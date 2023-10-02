@@ -48,7 +48,6 @@ pub const SpinLock = struct {
 
     pub fn unlock(self: *Self) void {
         const state = self.state.swap(unlocked, .Release);
-        std.debug.assert(state != unlocked);
-        std.debug.assert(state != contended);
+        std.debug.assert(state == locked);
     }
 };

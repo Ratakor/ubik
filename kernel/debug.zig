@@ -133,7 +133,7 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (builtin.mode != .Debug) return;
+    comptime if (builtin.mode != .Debug) return;
 
     const level_txt = comptime switch (level) {
         .err => "\x1b[31merror\x1b[m",

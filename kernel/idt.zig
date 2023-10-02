@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.idt);
 const cpu = @import("cpu.zig");
 
 // TODO
@@ -88,6 +89,7 @@ pub fn init() void {
 
     inline for (0..256) |i| {
         const handler = comptime makeStubHandler(i);
+        // log.info("init idt[{}] with {}", .{ i, handler });
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
     }
 
@@ -96,10 +98,12 @@ pub fn init() void {
     // idt[syscall_vector].type_attributes = 0xee;
 
     reloadIDT();
+    log.info("init: successfully reloaded IDT", .{});
 }
 
 pub fn reloadIDT() void {
-    asm volatile ("lidt (%[idtr])"
+    asm volatile (
+        \\lidt (%[idtr])
         :
         : [idtr] "r" (&idtr),
         : "memory"
@@ -108,7 +112,7 @@ pub fn reloadIDT() void {
 
 pub fn allocateVector() u8 {
     const vector = @atomicRmw(u8, &next_vector, .Add, 1, .AcqRel);
-    if (vector >= 256 - 16) {
+    if (vector >= 256 - 16) { // TODO - 16 ? also u8 so care about overflows
         @panic("IDT exhausted");
     }
     return vector;

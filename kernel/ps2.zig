@@ -1,7 +1,7 @@
 const arch = @import("arch.zig");
 const idt = @import("idt.zig");
 
-pub var keyboard_vector = undefined;
+pub var keyboard_vector: u8 = undefined;
 
 // TODO: too complicated ?
 pub fn init() void {
@@ -28,7 +28,7 @@ pub fn init() void {
     keyboard_vector = idt.allocateVector();
     // TODO
     // ioapic.setIRQRedirect(bsp_lapic_id, keyboard_vector, 1, true);
-    arch.in(u8, 0x60);
+    _ = arch.in(u8, 0x60);
 }
 
 pub fn read() u8 {

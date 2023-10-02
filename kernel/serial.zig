@@ -10,7 +10,6 @@ pub const Port = enum(u16) {
     com4 = 0x2e8,
 };
 
-var com1_lock: SpinLock = .{};
 const com1_writer = std.io.Writer(void, error{}, com1Write){ .context = {} };
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
@@ -55,18 +54,14 @@ inline fn transmitterIsEmpty(port: Port) bool {
 
 inline fn transmitData(port: Port, value: u8) void {
     while (!transmitterIsEmpty(port)) {
-        asm volatile ("pause");
+        std.atomic.spinLoopHint();
     }
     arch.out(u8, @intFromEnum(port), value);
 }
 
 fn com1Write(_: void, str: []const u8) error{}!usize {
-    com1_lock.lock();
-    defer com1_lock.unlock();
-
     for (str) |char| {
         transmitData(Port.com1, char);
     }
-
     return str.len;
 }
