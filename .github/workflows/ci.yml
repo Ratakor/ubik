@@ -27,7 +27,7 @@ jobs:
         run: sudo apt update && sudo apt install -yq xorriso qemu-system-x86
 
       - name: Build
-        run: zig build -Doptimize=ReleaseFast
+        run: zig build
 
       - name: Make image
         run: zig build image

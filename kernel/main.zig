@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const limine = @import("limine");
 const arch = @import("arch.zig");
 const debug = @import("debug.zig");
@@ -8,13 +9,26 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
-const mem = @import("mem.zig");
 const ps2 = @import("ps2.zig");
-const time = @import("time.zig");
+const SpinLock = @import("lock.zig").SpinLock;
 
 pub const std_options = struct {
     pub const logFn = debug.log;
 };
+
+pub const os = struct {
+    pub const system = struct {};
+    pub const heap = struct {
+        pub const page_allocator = vmm.page_allocator;
+    };
+};
+
+var gpa = std.heap.GeneralPurposeAllocator(.{
+    .thread_safe = false,
+    // .MutexType = SpinLock, // TODO
+    .verbose_log = if (builtin.mode == .Debug) true else false,
+}){};
+pub const allocator = gpa.allocator();
 
 export var boot_info_request: limine.BootloaderInfoRequest = .{};
 pub export var hhdm_request: limine.HhdmRequest = .{};
@@ -57,9 +71,8 @@ fn main() !void {
     // const module = module_request.response.?;
     // const rsdp = rsdp_request.response.?;
 
-    // TODO: log when init is successful (with serial or tty idk)
-    tty.init() catch unreachable;
     serial.init();
+    tty.init() catch unreachable;
 
     tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
 
@@ -70,17 +83,13 @@ fn main() !void {
     gdt.init();
     idt.init();
     // TODO: init events <-- for interrupts
-    // TODO: apic: interrupt controller
+    // TODO: ioapic: interrupt controller
     // TODO: ps2.init();
+    // TODO: local apic (timers)
+    // TODO: acpi, pci
 
     try pmm.init();
-    try vmm.init(); // TODO
-    // try mem.init(); // TODO: heap allocator -> use gpa
-
-    // TODO: apic
-    // TODO: acpi
-    // TODO: pci
-    time.init(); // TODO: timers (pit ?)
+    vmm.init(); // TODO
 
     // TODO: proc
     // TODO: scheduler
@@ -92,15 +101,15 @@ fn main() !void {
 
     // TODO: start /bin/init <- load elf with std.elf
 
+    // TESTS
     tty.ColorRGB.setFgStr("#bd93f9");
     tty.print("Hello, World!\n", .{});
-    tty.Color256.setBg(69);
-    tty.Color.setFg(.bright_black);
-    tty.print("realtime: {}\n", .{time.realtime});
     tty.resetColor();
-    const buf = try pmm.alloc(1, false);
-    defer pmm.free(buf);
-    tty.print("allocated a buffer of size {} and address = {*}\n", .{ buf.len, buf.ptr });
+
+    var buf = try allocator.alloc(u8, 6000);
+    buf = try allocator.realloc(buf, 5000);
+    buf = try allocator.realloc(buf, 3000);
+    allocator.free(buf);
 
     tty.keyboardLoop();
 

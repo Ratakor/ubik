@@ -279,7 +279,6 @@ pub fn init(
     self.reinit();
     @memset(self.framebuffer, @intFromEnum(DEFAULT_BG));
     self.drawCursor();
-    self.cursor_y = 1;
 
     return self;
 }
@@ -307,7 +306,7 @@ pub fn reinit(self: *Context) void {
     self.escape_offset = 0;
     self.esc_values_i = 0;
     self.saved_cursor_x = 0;
-    self.saved_cursor_y = 1;
+    self.saved_cursor_y = 0;
     self.current_primary = maxInt(usize);
     self.current_bg = maxInt(usize);
     self.scroll_top_margin = 0;
@@ -420,7 +419,7 @@ fn clear(self: *Context, move: bool) void {
 
     if (move) {
         self.cursor_x = 0;
-        self.cursor_y = 1;
+        self.cursor_y = 0;
     }
 }
 

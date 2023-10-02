@@ -6,14 +6,15 @@ const log = std.log.scoped(.pmm);
 const page_size = std.mem.page_size;
 const free_page = false;
 
-// TODO slab allocator instead of page frame allocator ?
-// TODO use u64 and logical operation to speed up the process ?
+// TODO: grap reusable entries
+// TODO: use u64 and bitwise operation to speed up the process?
+// TODO: useless stuff
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
-var usable_pages: u64 = 0;
-var used_pages: u64 = 0;
-var reserved_pages: u64 = 0;
-var lock: SpinLock = .{};
+var usable_pages: u64 = 0; // useless?
+var used_pages: u64 = 0; // useless?
+var reserved_pages: u64 = 0; // useless?
+var lock: SpinLock = .{}; // useless?
 
 pub fn init() !void {
     const memory_map = root.memory_map_request.response.?;
@@ -98,31 +99,30 @@ fn innerAlloc(pages: usize, limit: u64) ?u64 {
     return null;
 }
 
-// TODO: use many-item pointer or u64 instead of slice because div/mul is expensive ?
-// TODO: add a system to log everything (in this case allocation) in debug mode ?
-
-pub fn alloc(pages: usize, comptime zero: bool) ![]u8 {
+pub fn alloc(pages: usize, comptime zero: bool) ?u64 {
     lock.lock();
     defer lock.unlock();
 
     const last = last_idx;
     const address = innerAlloc(pages, bitmap.len) orelse
-        innerAlloc(pages, last) orelse return error.OutOfMemory;
+        innerAlloc(pages, last) orelse return null;
 
     used_pages += pages;
-    const ptr: [*]u8 = @ptrFromInt(address);
-    const slice = ptr[0 .. pages * page_size];
-    comptime if (zero) @memset(slice, 0);
 
-    return slice;
+    comptime if (zero) {
+        const ptr: [*]u8 = @ptrFromInt(address);
+        const slice = ptr[0 .. pages * page_size];
+        @memset(slice, 0);
+    };
+
+    return address;
 }
 
-pub fn free(slice: []u8) void {
+pub fn free(address: u64, pages: usize) void {
     lock.lock();
     defer lock.unlock();
 
-    const pages = @divExact(slice.len, page_size);
-    const page = @intFromPtr(slice.ptr) / page_size;
+    const page = address / page_size;
     for (page..page + pages) |i| {
         bitmap[i] = free_page;
     }

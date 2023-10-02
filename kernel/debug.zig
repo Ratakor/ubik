@@ -146,7 +146,5 @@ pub fn log(
     log_lock.lock();
     defer log_lock.unlock();
     const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
-
-    // nosuspend tty.print(fmt, args);
     nosuspend serial.print(fmt, args);
 }
