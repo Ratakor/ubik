@@ -110,9 +110,10 @@ pub fn alloc(pages: usize, comptime zero: bool) ?u64 {
     used_pages += pages;
 
     comptime if (zero) {
-        const ptr: [*]u8 = @ptrFromInt(address);
-        const slice = ptr[0 .. pages * page_size];
-        @memset(slice, 0);
+        @compileError("calloc is not implemented yet");
+        // const ptr: [*]u8 = @ptrFromInt(address + vmm.higher_half);
+        // const slice = ptr[0 .. pages * page_size];
+        // @memset(slice, 0);
     };
 
     return address;

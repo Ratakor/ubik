@@ -2,11 +2,6 @@ const std = @import("std");
 const log = std.log.scoped(.idt);
 const cpu = @import("cpu.zig");
 
-// TODO
-// const syscall_vector = 0xfd;
-// const sched_call_vector = 0xfe;
-// const spurious_vector = 0xff;
-
 pub const page_fault_vector = 0x0e;
 
 const interrupt_gate = 0b1000_1110;
@@ -118,6 +113,10 @@ pub fn allocateVector() u8 {
     return vector;
 }
 
+pub inline fn setIST(vector: u8, ist: u8) void {
+    idt[vector].ist = ist;
+}
+
 pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
 }
@@ -126,18 +125,18 @@ fn exceptionHandler(ctx: *cpu.Context) void {
     const vector = ctx.isr_vector;
     std.debug.panic(
         \\Unhandled exception "{?s}" triggered, dumping context
-        \\vector: 0x{x}, error code: 0x{x}
-        \\ds: 0x{x}, es: 0x{x}
-        \\rax: 0x{x}, rbx: 0x{x}
-        \\rcx: 0x{x}, rdx: 0x{x}
-        \\rsi: 0x{x}, rdi: 0x{x}
-        \\rbp: 0x{x}, r8: 0x{x}
-        \\r9: 0x{x}, r10: 0x{x}
-        \\r11: 0x{x}, r12: 0x{x}
-        \\r13: 0x{x}, r14: 0x{x}
-        \\r15: 0x{x}, rip: 0x{x}
-        \\cs: 0x{x}, rflags: 0x{x}
-        \\rsp: 0x{x}, ss: 0x{x}
+        \\vector: 0x{x:0>2}               error code: 0x{x}
+        \\ds:  0x{x:0>16}    es:     0x{x:0>16}
+        \\rax: 0x{x:0>16}    rbx:    0x{x:0>16}
+        \\rcx: 0x{x:0>16}    rdx:    0x{x:0>16}
+        \\rsi: 0x{x:0>16}    rdi:    0x{x:0>16}
+        \\rbp: 0x{x:0>16}    r8:     0x{x:0>16}
+        \\r9:  0x{x:0>16}    r10:    0x{x:0>16}
+        \\r11: 0x{x:0>16}    r12:    0x{x:0>16}
+        \\r13: 0x{x:0>16}    r14:    0x{x:0>16}
+        \\r15: 0x{x:0>16}    rip:    0x{x:0>16}
+        \\cs:  0x{x:0>16}    rflags: 0x{x:0>16}
+        \\rsp: 0x{x:0>16}    ss:     0x{x:0>16}
     , .{
         if (vector < exceptions.len) exceptions[vector] else null,
         vector,

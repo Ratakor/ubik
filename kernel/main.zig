@@ -9,6 +9,8 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
+const acpi = @import("acpi.zig");
+const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 
@@ -35,13 +37,14 @@ pub export var hhdm_request: limine.HhdmRequest = .{};
 pub export var framebuffer_request: limine.FramebufferRequest = .{};
 pub export var memory_map_request: limine.MemoryMapRequest = .{};
 pub export var kernel_file_request: limine.KernelFileRequest = .{};
-// export var module_request: limine.ModuleRequest = .{};
-// export var rsdp_request: limine.RsdpRequest = .{};
 pub export var kernel_address_request: limine.KernelAddressRequest = .{};
-pub export var boot_time_request: limine.BootTimeRequest = .{};
+pub export var rsdp_request: limine.RsdpRequest = .{};
+// pub export var module_request: limine.ModuleRequest = .{};
+// pub export var boot_time_request: limine.BootTimeRequest = .{};
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
+    arch.disableInterrupts();
     tty.resetColor();
     tty.Color.setFg(.red);
     tty.write("\nKernel panic: ");
@@ -53,8 +56,6 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 }
 
 export fn _start() callconv(.C) noreturn {
-    arch.disableInterrupts();
-
     main() catch |err| {
         tty.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {s}\n", .{@errorName(err)});
         if (@errorReturnTrace()) |stack_trace| {
@@ -67,9 +68,12 @@ export fn _start() callconv(.C) noreturn {
 }
 
 fn main() !void {
+    arch.disableInterrupts();
+    defer arch.enableInterrupts();
+
     const boot_info = boot_info_request.response.?;
     // const module = module_request.response.?;
-    // const rsdp = rsdp_request.response.?;
+    // const boot_time = boot_time_request.?;
 
     serial.init();
     tty.init() catch unreachable;
@@ -81,21 +85,23 @@ fn main() !void {
     };
 
     gdt.init();
+    // TODO: TSS
     idt.init();
-    // TODO: init events <-- for interrupts
-    // TODO: ioapic: interrupt controller
-    // TODO: ps2.init();
-    // TODO: local apic (timers)
-    // TODO: acpi, pci
+    // TODO: event.init();
 
     try pmm.init();
     vmm.init(); // TODO
 
     // TODO: proc
-    // TODO: scheduler
+    // TODO: sched
     // TODO: cpu
     // TODO: threads <-- with priority level ? <- have a list of thread based
     // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
+
+    acpi.init();
+    apic.init(); // TODO: local apic
+    // TODO: time (pit)
+    ps2.init();
 
     // TODO: filesystem <-- extern
 
@@ -110,9 +116,4 @@ fn main() !void {
     buf = try allocator.realloc(buf, 5000);
     buf = try allocator.realloc(buf, 3000);
     allocator.free(buf);
-
-    tty.keyboardLoop();
-
-    arch.enableInterrupts();
-    @breakpoint();
 }

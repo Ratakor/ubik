@@ -138,7 +138,7 @@ const DEFAULT_BG_BRIGHT = Color.bright_black;
 const DEFAULT_FG_BRIGHT = Color.bright_grey;
 
 const font = blk: {
-    @setEvalBranchQuota(100000);
+    @setEvalBranchQuota(100_000);
 
     // Builtin font originally taken from:
     // https://github.com/viler-int10h/vga-text-mode-fonts

@@ -34,6 +34,7 @@ pub fn init() void {
     const kernel_address = root.kernel_address_request.response.?;
     _ = kernel_address;
 
+    // idt.setIST(idt.page_fault_vector, 2);
     idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
 }
 
@@ -82,3 +83,8 @@ fn free(_: *anyopaque, buf: []u8, _: u8, _: usize) void {
     const pages = @divExact(aligned_buf_len, page_size);
     pmm.free(@intFromPtr(buf.ptr) - higher_half, pages);
 }
+
+// TODO: idk
+// pub fn toHigherHalf(addr: u64) u64 {
+//     return addr + hhdm_offset;
+// }
