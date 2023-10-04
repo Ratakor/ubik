@@ -9,6 +9,7 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
+const cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
@@ -27,18 +28,19 @@ pub const os = struct {
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
     .thread_safe = false,
-    // .MutexType = SpinLock, // TODO
+    .MutexType = SpinLock,
     .verbose_log = if (builtin.mode == .Debug) true else false,
 }){};
 pub const allocator = gpa.allocator();
 
-export var boot_info_request: limine.BootloaderInfoRequest = .{};
+pub export var boot_info_request: limine.BootloaderInfoRequest = .{};
 pub export var hhdm_request: limine.HhdmRequest = .{};
 pub export var framebuffer_request: limine.FramebufferRequest = .{};
 pub export var memory_map_request: limine.MemoryMapRequest = .{};
 pub export var kernel_file_request: limine.KernelFileRequest = .{};
 pub export var kernel_address_request: limine.KernelAddressRequest = .{};
 pub export var rsdp_request: limine.RsdpRequest = .{};
+pub export var smp_request: limine.SmpRequest = .{};
 // pub export var module_request: limine.ModuleRequest = .{};
 // pub export var boot_time_request: limine.BootTimeRequest = .{};
 
@@ -94,7 +96,7 @@ fn main() !void {
 
     // TODO: proc
     // TODO: sched
-    // TODO: cpu
+    cpu.init(); // TODO
     // TODO: threads <-- with priority level ? <- have a list of thread based
     // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
 

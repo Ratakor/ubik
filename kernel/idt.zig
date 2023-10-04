@@ -11,14 +11,15 @@ const trap_gate = 0b1000_1111;
 const InterruptStub = *const fn () callconv(.Naked) void;
 pub const InterruptHandler = *const fn (ctx: *cpu.Context) void;
 
-const IDTEntry = packed struct {
-    offset_low: u16,
-    selector: u16,
-    ist: u8,
-    type_attributes: u8,
-    offset_mid: u16,
-    offset_high: u32,
-    reserved: u32,
+/// Interrupt Descriptor Table Entry
+const IDTEntry = extern struct {
+    offset_low: u16 align(1),
+    selector: u16 align(1),
+    ist: u8 align(1),
+    type_attributes: u8 align(1),
+    offset_mid: u16 align(1),
+    offset_high: u32 align(1),
+    reserved: u32 align(1),
 
     fn init(handler: u64, ist: u8, attributes: u8) IDTEntry {
         return .{

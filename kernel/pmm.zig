@@ -6,9 +6,8 @@ const log = std.log.scoped(.pmm);
 const page_size = std.mem.page_size;
 const free_page = false;
 
-// TODO: grap reusable entries
 // TODO: use u64 and bitwise operation to speed up the process?
-// TODO: useless stuff
+// TODO: decide what to do with "useless" stuff
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
 var usable_pages: u64 = 0; // useless?

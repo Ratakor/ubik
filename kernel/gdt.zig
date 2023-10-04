@@ -24,6 +24,7 @@ const TSSDescriptor = packed struct {
     reserved: u32 = 0,
 };
 
+/// Global Descriptor Table
 const GDT = extern struct {
     null_entry: GDTEntry align(8),
     kernel_code: GDTEntry align(8),

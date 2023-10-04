@@ -1,4 +1,5 @@
 const std = @import("std");
+const root = @import("root");
 const vmm = @import("vmm.zig");
 const cpu = @import("cpu.zig");
 const idt = @import("idt.zig");
@@ -18,9 +19,12 @@ const Register = enum(u64) {
     timer_divide = 0x3e0,
 };
 
-const IOAPIC = struct {
-    addr: u32,
-    base_gsi: u32,
+/// Input/Output Advanced Programmable Interrupt Controller
+const IOAPIC = extern struct {
+    apic_id: u8 align(1),
+    reserved: u8 align(1),
+    addr: u32 align(1),
+    base_gsi: u32 align(1),
 
     const Self = @This();
 
@@ -39,37 +43,18 @@ const IOAPIC = struct {
     fn gsiCount(self: Self) u32 {
         return (self.read(1) & 0xff0000) >> 16;
     }
-
-    fn setGSIRedirect(self: Self, gsi: u32, lapic_id: u32, vector: u8, flags: u16) void {
-        var redirect: u64 = vector;
-        if ((flags & (1 << 1)) != 0) {
-            redirect |= (1 << 13);
-        }
-
-        if ((flags & (1 << 3)) != 0) {
-            redirect |= (1 << 15);
-        }
-
-        // redirect |= @as(u64, @intCast(flags & 0b1010)) << 12;
-        redirect |= @as(u64, @intCast(lapic_id)) << 56;
-
-        const io_redirect_table = 0x10 + (gsi - self.base_gsi) * 2;
-        self.write(io_redirect_table, @truncate(redirect));
-        self.write(io_redirect_table + 1, @truncate(redirect >> 32));
-    }
 };
 
-// TODO
-const SourceOverride = struct {
-    ioapic_id: u8,
-    gsi: u32,
-    flags: u16,
+/// Interrupt Source Override
+const ISO = extern struct {
+    bus_source: u8 align(1),
+    irq_source: u8 align(1),
+    gsi: u32 align(1),
+    flags: u16 align(1),
 };
 
-// var time_vector: u8 = undefined;
-// var one_shot_vector: u8 = undefined;
-var io_apics = [1]?IOAPIC{null} ** 16;
-var source_overrides = [1]?SourceOverride{null} ** 256;
+pub var io_apics = std.ArrayList(*const IOAPIC).init(root.allocator);
+pub var isos = std.ArrayList(*const ISO).init(root.allocator);
 
 pub fn init() void {
     // timerCalibrate();
@@ -96,10 +81,6 @@ pub fn eoi() void {
     writeRegister(.eoi, 0);
 }
 
-pub fn localApicId() u32 {
-    return readRegister(.lapic_id);
-}
-
 // TODO
 // pub fn timerOneShot(us: u64, vector: u8) void {
 //     _ = us;
@@ -115,15 +96,15 @@ pub fn localApicId() u32 {
 //     // interrupt_toggle(old_int_state);
 // }
 
-// pub fn timerStop() void {
-//     writeRegister(.timer_initial_count, 0);
-//     writeRegister(.lvt_timer, 1 << 16);
-// }
+pub fn timerStop() void {
+    writeRegister(.timer_initial_count, 0);
+    writeRegister(.lvt_timer, 1 << 16);
+}
 
-// pub fn sendIPI(lapic_id: u32, vec: u32) void {
-//     writeRegister(.icr1, lapic_id << 24);
-//     writeRegister(.icr0, vec);
-// }
+pub fn sendIPI(lapic_id: u32, vec: u32) void {
+    writeRegister(.icr1, lapic_id << 24);
+    writeRegister(.icr0, vec);
+}
 
 // pub fn timerCalibrate() void {
 //     timerStop();
@@ -132,7 +113,7 @@ pub fn localApicId() u32 {
 //     writeRegister(.lvt_timer, (1 << 16) | 0xff); // vector 0xff, masked
 //     writeRegister(.timer_divide, 0);
 
-//     // pit_set_reload_value(0xffff); // Reset PIT
+//     // pit.setReloadValue(0xffff); // reset PIT
 
 //     const samples = 0xfffff;
 //     // const initial_tick = pit_get_current_count();
@@ -140,7 +121,7 @@ pub fn localApicId() u32 {
 //     writeRegister(.timer_initial_count, samples);
 //     while (readRegister(.timer_current_count) != 0) {}
 
-//     // const final_tick = pit_get_current_count();
+//     // const final_tick = pit.getCurrentCount();
 
 //     // const total_ticks = initial_tick - final_tick;
 //     // this_cpu().lapic_freq = (samples / total_ticks) * PIT_DIVIDEND;
@@ -159,49 +140,38 @@ fn writeRegister(register: Register, val: u32) void {
     ptr.* = val;
 }
 
-pub fn handleIOAPIC(id: u8, addr: u32, base_gsi: u32) void {
-    std.debug.assert(io_apics[id] == null);
-
-    io_apics[id] = .{
-        .addr = addr,
-        .base_gsi = base_gsi,
-    };
-}
-
-pub fn handleIOAPICISO(ioapic_id: u8, irq_source: u8, gsi: u32, flags: u16) void {
-    std.debug.assert(source_overrides[irq_source] == null);
-
-    source_overrides[irq_source] = .{
-        .ioapic_id = ioapic_id,
-        .gsi = gsi,
-        .flags = flags,
-    };
-}
-
-fn mapIRQtoGSI(irq: u8) SourceOverride {
-    return source_overrides[irq] orelse .{
-        .ioapic_id = mapGSItoIOAPIC(irq),
-        .gsi = irq,
-        .flags = 0,
-    };
-}
-
-fn mapGSItoIOAPIC(gsi: u32) u8 {
-    for (io_apics, 0..) |io_apic, i| {
-        if (io_apic) |ioa| {
-            if (gsi >= ioa.base_gsi and gsi < ioa.base_gsi + ioa.gsiCount()) {
-                return @intCast(i);
-            }
+fn setGSIRedirect(lapic_id: u32, vector: u8, gsi: u8, flags: u16) void {
+    const io_apic = for (io_apics.items) |io_apic| {
+        if (gsi >= io_apic.base_gsi and gsi < io_apic.base_gsi + io_apic.gsiCount()) {
+            break io_apic;
         }
+    } else {
+        std.debug.panic("could not find an IOAPIC for GSI {}", .{gsi});
+    };
+
+    var redirect: u64 = vector;
+    if ((flags & (1 << 1)) != 0) {
+        redirect |= (1 << 13);
     }
 
-    std.debug.panic("could not find an IOAPIC for GSI {}", .{gsi});
+    if ((flags & (1 << 3)) != 0) {
+        redirect |= (1 << 15);
+    }
+
+    redirect |= @as(u64, @intCast(lapic_id)) << 56;
+
+    const io_redirect_table = 0x10 + (gsi - io_apic.base_gsi) * 2;
+    io_apic.write(io_redirect_table, @truncate(redirect));
+    io_apic.write(io_redirect_table + 1, @truncate(redirect >> 32));
 }
 
 pub fn setIRQRedirect(lapic_id: u32, vector: u8, irq: u8) void {
-    const gsi = mapIRQtoGSI(irq);
-    const ioapic_id = mapGSItoIOAPIC(gsi.gsi);
-    const ioapic = io_apics[ioapic_id].?;
+    for (isos.items) |iso| {
+        if (iso.irq_source == irq) {
+            setGSIRedirect(lapic_id, vector, @intCast(iso.gsi), iso.flags);
+            return;
+        }
+    }
 
-    ioapic.setGSIRedirect(gsi.gsi, lapic_id, vector, gsi.flags);
+    setGSIRedirect(lapic_id, vector, irq, 0);
 }

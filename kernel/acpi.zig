@@ -3,9 +3,9 @@ const root = @import("root");
 const vmm = @import("vmm.zig");
 const apic = @import("apic.zig");
 const log = std.log.scoped(.acpi);
-
 const readIntNative = std.mem.readIntNative;
 
+/// System Description Table
 const SDT = extern struct {
     signature: [4]u8,
     length: u32,
@@ -23,6 +23,7 @@ const SDT = extern struct {
     }
 };
 
+/// Root System Description Pointer
 const RSDP = extern struct {
     signature: [8]u8,
     checksum: u8,
@@ -45,66 +46,58 @@ pub fn init() void {
     log.info("revision: {}", .{rsdp.revision});
     log.info("uses XSDT: {}", .{rsdp.useXSDT()});
 
-    switch (rsdp.revision) {
-        0 => parse(u32, @intCast(rsdp.rsdt_addr)),
-        2 => parse(u64, rsdp.xsdt_addr),
-        else => unreachable,
+    if (rsdp.useXSDT()) {
+        parse(u64, rsdp.xsdt_addr);
+    } else {
+        parse(u32, @intCast(rsdp.rsdt_addr));
     }
 }
 
 fn parse(comptime T: type, addr: u64) void {
-    const sdt: *SDT = @ptrFromInt(addr + vmm.higher_half);
-    const entries = std.mem.bytesAsSlice(T, sdt.data());
+    const rsdt: *SDT = @ptrFromInt(addr + vmm.higher_half);
 
-    log.info("RSDT is at 0x{x}", .{@intFromPtr(sdt)});
+    var sum: u8 = 0;
+    for (0..rsdt.length) |i| {
+        sum +%= @as([*]u8, @ptrCast(rsdt))[i];
+    }
+    if (sum != 0) {
+        std.debug.panic("RSDT is invalid: sum = {}", .{sum});
+    }
 
+    log.info("RSDT is at 0x{x}", .{@intFromPtr(rsdt)});
+
+    const entries = std.mem.bytesAsSlice(T, rsdt.data());
     for (entries) |entry| {
-        handleTable(@ptrFromInt(entry + vmm.higher_half));
+        const sdt: *const SDT = @ptrFromInt(entry + vmm.higher_half);
+
+        switch (readIntNative(u32, &sdt.signature)) {
+            readIntNative(u32, "APIC") => handleMADT(sdt),
+            else => log.warn("unhandled ACPI table: {s}", .{sdt.signature}),
+        }
     }
 }
 
-fn handleTable(sdt: *const SDT) void {
-    switch (readIntNative(u32, sdt.signature[0..4])) {
-        readIntNative(u32, "APIC") => {
-            var data = sdt.data()[8..];
+fn handleMADT(madt: *const SDT) void {
+    var data = madt.data()[8..]; // discard madt header
 
-            while (data.len >= 2) {
-                const kind = data[0];
-                const size = data[1];
+    while (data.len > 2) {
+        const kind = data[0];
+        const size = data[1];
 
-                if (size >= data.len) break;
+        if (size >= data.len) break;
 
-                const record_data = data[2..size];
-                switch (kind) {
-                    0 => {}, // TODO: find about this
-                    1 => apic.handleIOAPIC(
-                        record_data[0],
-                        readIntNative(u32, record_data[2..6]),
-                        readIntNative(u32, record_data[6..10]),
-                    ),
-                    2 => apic.handleIOAPICISO(
-                        record_data[0],
-                        record_data[1],
-                        readIntNative(u32, record_data[2..6]),
-                        readIntNative(u16, record_data[6..8]),
-                    ),
-                    3 => log.debug("unhandled IO/APIC NMI source: {any}", .{record_data}),
-                    4 => log.debug("unhandled LAPIC NMI: {any}", .{record_data}),
-                    5 => log.debug("unhandled LAPIC Address Override: {any}", .{record_data}),
-                    9 => log.debug("unhandled x2LAPIC: {any}", .{record_data}),
-                    else => log.warn("unknown MADT record 0x{x}: {any}", .{ kind, record_data }),
-                }
+        const entry = data[2..size];
+        switch (kind) {
+            0 => log.warn("unhandled LAPIC: {any}", .{entry}),
+            1 => apic.io_apics.append(@ptrCast(entry)) catch unreachable,
+            2 => apic.isos.append(@ptrCast(entry)) catch unreachable,
+            3 => log.warn("unhandled IO/APIC NMI source: {any}", .{entry}),
+            4 => log.warn("unhandled LAPIC NMI: {any}", .{entry}),
+            5 => log.warn("unhandled LAPIC Address Override: {any}", .{entry}),
+            9 => log.warn("unhandled x2LAPIC: {any}", .{entry}),
+            else => unreachable,
+        }
 
-                data = data[@max(2, size)..];
-            }
-        },
-        // TODO:
-        // readIntNative(u32, "FACP") => {
-        //     const fadt_flags = @as([*]const u32, @ptrCast(sdt))[28];
-        //     if (fadt_flags & (1 << 20) != 0) {
-        //         @panic("Ubik does not support HW reduced ACPI systems");
-        //     }
-        // },
-        else => log.debug("unhandled ACPI table: {s}", .{sdt.signature}),
+        data = data[@max(2, size)..];
     }
 }

@@ -1,5 +1,7 @@
 const std = @import("std");
+const root = @import("root");
 const SpinLock = @import("lock.zig").SpinLock;
+const log = std.log.scoped(.cpu);
 
 // TODO: defined elsewhere
 pub const Thread = struct {};
@@ -31,6 +33,7 @@ pub const Context = extern struct {
     ss: u64,
 };
 
+/// Task State Segment
 pub const TSS = extern struct {
     reserved0: u32 align(1) = 0,
     rsp: [3]u64 align(1),
@@ -56,7 +59,7 @@ pub const CpuLocal = struct {
 };
 
 pub var sysenter: bool = false;
-pub var bsp_lapic_id: u32 = undefined;
+pub var bsp_lapic_id: u32 = undefined; // TODO: x86 specific
 pub var smp_started: bool = undefined;
 
 pub var cpus: []CpuLocal = undefined;
@@ -67,6 +70,11 @@ pub var fpu_storage_size: usize = 0;
 
 pub var cpu_count: usize = undefined;
 
-pub fn init() void {}
+pub fn init() void {
+    const smp = root.smp_request.response.?;
+    bsp_lapic_id = smp.bsp_lapic_id;
+    cpu_count = smp.cpu_count;
+    log.info("{} processors detected", .{cpu_count});
+}
 
 // TODO: a lot of functions with inline assembly

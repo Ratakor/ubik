@@ -7,7 +7,6 @@ const tty = @import("tty.zig");
 
 // TODO: termios <- in tty/Terminal ?
 // TODO: user_write_lock -> user write on buffer + framebuffer, log user write ???
-// TODO: handle ESC, and other stuff
 
 const ScanCode = enum(u8) {
     ctrl = 0x1d,
@@ -100,7 +99,7 @@ pub fn init() void {
 
     const keyboard_vector = idt.allocateVector();
     idt.registerHandler(keyboard_vector, keyboardHandler);
-    apic.setIRQRedirect(apic.localApicId(), keyboard_vector, 1);
+    apic.setIRQRedirect(cpu.bsp_lapic_id, keyboard_vector, 1);
 
     _ = arch.in(u8, 0x60);
 }
