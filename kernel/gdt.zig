@@ -64,11 +64,11 @@ var tss_lock: SpinLock = .{};
 
 pub fn init() void {
     gdtr.base = @intFromPtr(&gdt);
-    reloadGDT();
+    reload();
     log.info("init: successfully reloaded GDT", .{});
 }
 
-pub fn reloadGDT() void {
+pub fn reload() void {
     asm volatile (
         \\lgdt (%[gdtr])
         // reload CS register, 0x08 = kernel_code

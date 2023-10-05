@@ -62,7 +62,7 @@ pub const CpuLocal = struct {
     tlb_shootdown_cr3: usize, // TODO: volatile
 };
 
-const CPU_STACK_SIZE = 0x10000;
+const cpu_stack_size = 0x10000;
 
 pub var sysenter: bool = false;
 pub var bsp_lapic_id: u32 = undefined; // TODO: x86 specific
@@ -112,8 +112,8 @@ fn singleCpuInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
 
     cpu_local.lapic_id = smp_info.lapic_id;
 
-    gdt.reloadGDT();
-    idt.reloadIDT();
+    gdt.reload();
+    idt.reload();
     gdt.loadTSS(&cpu_local.tss);
 
     // TODO

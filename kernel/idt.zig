@@ -85,19 +85,15 @@ pub fn init() void {
 
     inline for (0..256) |i| {
         const handler = comptime makeStubHandler(i);
-        // log.info("init idt[{}] with {}", .{ i, handler });
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
+        // log.info("init idt[{}] with {}", .{ i, handler });
     }
 
-    // TODO
-    // idt[sched_call_vector].ist = 1;
-    // idt[syscall_vector].type_attributes = 0xee;
-
-    reloadIDT();
+    reload();
     log.info("init: successfully reloaded IDT", .{});
 }
 
-pub fn reloadIDT() void {
+pub fn reload() void {
     asm volatile (
         \\lidt (%[idtr])
         :

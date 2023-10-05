@@ -2,6 +2,7 @@ const std = @import("std");
 const root = @import("root");
 const SpinLock = @import("lock.zig").SpinLock;
 const cpu = @import("cpu.zig");
+const arch = @import("arch.zig");
 const idt = @import("idt.zig");
 const tty = @import("tty.zig");
 const pmm = @import("pmm.zig");
@@ -39,12 +40,7 @@ pub fn init() void {
 }
 
 fn switchPageTable(cr3: u64) void {
-    asm volatile (
-        \\mov %[cr3], %%cr3
-        :
-        : [cr3] "r" (cr3),
-        : "memory"
-    );
+    arch.writeRegister("cr3", cr3);
 }
 
 fn pageFaultHandler(ctx: *cpu.Context) void {

@@ -92,7 +92,7 @@ fn callback(ctx: *Terminal, cb: Terminal.Callback, arg1: u64, arg2: u64, arg3: u
     _ = ctx;
     // TODO: https://github.com/limine-bootloader/limine/blob/v5.x-branch/PROTOCOL.md#terminal-callback
     switch (cb) {
-        else => std.log.debug("unhandled callback `{}` with args: {}, {}, {}", .{ cb, arg1, arg2, arg3 }),
+        else => std.log.debug("unhandled callback: `{}` with args: {}, {}, {}", .{ cb, arg1, arg2, arg3 }),
     }
 }
 

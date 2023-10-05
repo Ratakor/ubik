@@ -84,35 +84,25 @@ fn main() !void {
     };
 
     gdt.init();
-    // TODO: TSS
     idt.init();
     // TODO: event.init();
 
     pmm.init();
-    vmm.init(); // TODO
+    vmm.init(); // TODO: next step I swear
 
-    // TODO: proc
+    // TODO: proc + TSS
     // TODO: sched
-    cpu.init(); // TODO
     // TODO: threads <-- with priority level ? <- have a list of thread based
     // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
+    cpu.init(); // TODO
 
     acpi.init();
     apic.init(); // TODO: local apic
     // TODO: time (pit)
     ps2.init();
+    // TODO: pci
 
     // TODO: filesystem <-- extern
 
     // TODO: start /bin/init <- load elf with std.elf
-
-    // TESTS
-    tty.ColorRGB.setFgStr("#bd93f9");
-    tty.print("Hello, World!\n", .{});
-    tty.resetColor();
-
-    var buf = try allocator.alloc(u8, 6000);
-    buf = try allocator.realloc(buf, 5000);
-    buf = try allocator.realloc(buf, 3000);
-    allocator.free(buf);
 }

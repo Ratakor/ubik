@@ -4,7 +4,7 @@ const vmm = @import("vmm.zig");
 const cpu = @import("cpu.zig");
 const idt = @import("idt.zig");
 
-const lapic_base = 0xfee00000; // TODO: I am no sure about that but it seems to work
+const lapic_base = 0xfee00000; // TODO: use lapic_base from cpu.this()
 
 const Register = enum(u64) {
     lapic_id = 0x020,
