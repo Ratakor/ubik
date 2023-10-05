@@ -58,12 +58,9 @@ var gdt: GDT = .{
         .access = 0b1111_0010,
         .flags = 0b1100,
     },
-    .tss = .{
-        .access = 0b1000_1001,
-        .flags = 0,
-    },
+    .tss = .{},
 };
-var lock: SpinLock = .{};
+var tss_lock: SpinLock = .{};
 
 pub fn init() void {
     gdtr.base = @intFromPtr(&gdt);
@@ -94,19 +91,20 @@ pub fn reloadGDT() void {
 }
 
 pub fn loadTSS(tss: *TSS) void {
-    lock.lock();
-    defer lock.unlock();
+    tss_lock.lock();
+    defer tss_lock.unlock();
 
     const tss_int = @intFromPtr(tss);
 
-    gdt.tss.base_low = tss_int;
+    gdt.tss.base_low = @truncate(tss_int);
     gdt.tss.base_mid = @truncate(tss_int >> 16);
     gdt.tss.base_high = @truncate(tss_int >> 24);
     gdt.tss.base_upper = @truncate(tss_int >> 32);
 
-    asm volatile ("ltr %[tss]"
+    asm volatile (
+        \\ltr %[tss]
         :
-        : [tss] "r" (0x28),
+        : [tss] "r" (0x28), // 0x28 = address of tss descriptor in gdt
         : "memory"
     );
 }

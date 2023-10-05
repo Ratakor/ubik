@@ -41,8 +41,8 @@ pub export var kernel_file_request: limine.KernelFileRequest = .{};
 pub export var kernel_address_request: limine.KernelAddressRequest = .{};
 pub export var rsdp_request: limine.RsdpRequest = .{};
 pub export var smp_request: limine.SmpRequest = .{};
-// pub export var module_request: limine.ModuleRequest = .{};
-// pub export var boot_time_request: limine.BootTimeRequest = .{};
+pub export var boot_time_request: limine.BootTimeRequest = .{};
+pub export var module_request: limine.ModuleRequest = .{};
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
@@ -73,13 +73,10 @@ fn main() !void {
     arch.disableInterrupts();
     defer arch.enableInterrupts();
 
-    const boot_info = boot_info_request.response.?;
-    // const module = module_request.response.?;
-    // const boot_time = boot_time_request.?;
-
     serial.init();
     tty.init() catch unreachable;
 
+    const boot_info = boot_info_request.response.?;
     tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
 
     debug.init() catch |err| {

@@ -1,5 +1,9 @@
 const std = @import("std");
+const limine = @import("limine");
 const root = @import("root");
+const arch = @import("arch.zig");
+const gdt = @import("gdt.zig");
+const idt = @import("idt.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.cpu);
 
@@ -45,7 +49,7 @@ pub const TSS = extern struct {
 };
 
 pub const CpuLocal = struct {
-    cpu_number: u32,
+    cpu_number: usize,
     bsp: bool,
     active: bool,
     last_run_queue_index: u32,
@@ -55,8 +59,10 @@ pub const CpuLocal = struct {
     idle_thread: *Thread,
     tlb_shootdown_lock: SpinLock,
     tlb_shootdown_done: SpinLock,
-    tlb_shootdown_cr3: usize,
+    tlb_shootdown_cr3: usize, // TODO: volatile
 };
+
+const CPU_STACK_SIZE = 0x10000;
 
 pub var sysenter: bool = false;
 pub var bsp_lapic_id: u32 = undefined; // TODO: x86 specific
@@ -64,17 +70,53 @@ pub var smp_started: bool = undefined;
 
 pub var cpus: []CpuLocal = undefined;
 
-pub var fpu_storage_size: usize = 0;
-// extern void (*fpu_save)(void *ctx);
-// extern void (*fpu_restore)(void *ctx);
+var cpus_started_i: usize = 0;
 
-pub var cpu_count: usize = undefined;
+pub var fpu_storage_size: usize = 0;
+pub var fpu_save: *const fn (*Context) void = undefined;
+pub var fpu_restore: *const fn (*Context) void = undefined;
 
 pub fn init() void {
+    // TODO: is_amd...
+
     const smp = root.smp_request.response.?;
     bsp_lapic_id = smp.bsp_lapic_id;
-    cpu_count = smp.cpu_count;
-    log.info("{} processors detected", .{cpu_count});
+    cpus = root.allocator.alloc(CpuLocal, smp.cpu_count) catch unreachable;
+    log.info("{} processors detected", .{cpus.len});
+
+    for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, i| {
+        cpu.extra_argument = @intFromPtr(cpu_local);
+        cpu_local.cpu_number = i;
+
+        if (cpu.lapic_id != bsp_lapic_id) {
+            // cpu.goto_address = singleCpuInit;
+        } else {
+            cpu_local.bsp = true;
+            // singleCpuInit(cpu);
+        }
+
+        // while (cpus_started_i != cpus.len) {
+        //     std.atomic.spinLoopHint();
+        // }
+    }
+
+    smp_started = true;
 }
 
-// TODO: a lot of functions with inline assembly
+pub fn this() *CpuLocal {}
+
+fn singleCpuInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
+    const cpu_local: *CpuLocal = @ptrFromInt(smp_info.extra_argument);
+    const cpu_number = cpu_local.cpu_number;
+    _ = cpu_number;
+
+    cpu_local.lapic_id = smp_info.lapic_id;
+
+    gdt.reloadGDT();
+    idt.reloadIDT();
+    gdt.loadTSS(&cpu_local.tss);
+
+    // TODO
+
+    arch.halt();
+}

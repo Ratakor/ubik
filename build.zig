@@ -87,7 +87,7 @@ pub fn build(b: *std.Build) void {
         "-serial", "mon:stdio",
         "-M", "q35",
         "-m", "1G",
-        "-smp", "1",
+        "-smp", "2",
         "-boot", "d",
         "-cdrom", image_name
     };

@@ -60,3 +60,19 @@ pub inline fn in(comptime T: type, port: u16) T {
         else => @compileError("No port in instruction available for type " ++ @typeName(T)),
     };
 }
+
+pub inline fn readRegister(comptime reg: []const u8) u64 {
+    return asm volatile ("mov %%" ++ reg ++ ", %[res]"
+        : [res] "=r" (-> u64),
+        :
+        : "memory"
+    );
+}
+
+pub inline fn writeRegister(comptime reg: []const u8, value: u64) void {
+    asm volatile ("mov %[val], %%" ++ reg
+        :
+        : [val] "r" (value),
+        : "memory"
+    );
+}
