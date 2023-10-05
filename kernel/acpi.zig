@@ -7,15 +7,15 @@ const readIntNative = std.mem.readIntNative;
 
 /// System Description Table
 const SDT = extern struct {
-    signature: [4]u8,
-    length: u32,
-    revision: u8,
-    checksum: u8,
-    oem_id: [6]u8,
-    oem_table_id: [6]u8,
-    oem_revision: u32,
-    creator_id: u32,
-    creator_revision: u32,
+    signature: [4]u8 align(1),
+    length: u32 align(1),
+    revision: u8 align(1),
+    checksum: u8 align(1),
+    oem_id: [6]u8 align(1),
+    oem_table_id: [8]u8 align(1),
+    oem_revision: u32 align(1),
+    creator_id: u32 align(1),
+    creator_revision: u32 align(1),
 
     pub inline fn data(self: *const @This()) []const u8 {
         const ptr: [*]const u8 = @ptrCast(@alignCast(self));
@@ -25,15 +25,16 @@ const SDT = extern struct {
 
 /// Root System Description Pointer
 const RSDP = extern struct {
-    signature: [8]u8,
-    checksum: u8,
-    oem_id: [6]u8,
-    revision: u8,
-    rsdt_addr: u32,
-    length: u32,
-    xsdt_addr: u64,
-    extended_checksum: u8,
-    reserved: [3]u8,
+    signature: [8]u8 align(1),
+    checksum: u8 align(1),
+    oem_id: [6]u8 align(1),
+    revision: u8 align(1),
+    rsdt_addr: u32 align(1),
+
+    length: u32 align(1),
+    xsdt_addr: u64 align(1),
+    extended_checksum: u8 align(1),
+    reserved: [3]u8 align(1),
 
     inline fn useXSDT(self: RSDP) bool {
         return self.revision >= 2 and self.xsdt_addr != 0;
@@ -54,11 +55,11 @@ pub fn init() void {
 }
 
 fn parse(comptime T: type, addr: u64) void {
-    const rsdt: *SDT = @ptrFromInt(addr + vmm.higher_half);
+    const rsdt: *const SDT = @ptrFromInt(addr + vmm.higher_half);
 
     var sum: u8 = 0;
     for (0..rsdt.length) |i| {
-        sum +%= @as([*]u8, @ptrCast(rsdt))[i];
+        sum +%= @as([*]const u8, @ptrCast(rsdt))[i];
     }
     if (sum != 0) {
         std.debug.panic("RSDT is invalid: sum = {}", .{sum});

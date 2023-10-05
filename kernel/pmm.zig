@@ -15,7 +15,7 @@ var used_pages: u64 = 0; // useless?
 var reserved_pages: u64 = 0; // useless?
 var lock: SpinLock = .{}; // useless?
 
-pub fn init() !void {
+pub fn init() void {
     const memory_map = root.memory_map_request.response.?;
     const hhdm = root.hhdm_request.response.?.offset;
     const entries = memory_map.entries();
@@ -45,22 +45,15 @@ pub fn init() !void {
     log.info("bitmap size: {} bits", .{bitmap_size});
 
     // find a hole in the memory map to fit the bitmap
-    var bitmap_ptr: ?[*]bool = null;
-    for (entries) |entry| {
+    bitmap = for (entries) |entry| {
         if (entry.kind == .usable and entry.length >= aligned_size) {
-            bitmap_ptr = @as([*]bool, @ptrFromInt(entry.base + hhdm));
+            const ptr = @as([*]bool, @ptrFromInt(entry.base + hhdm));
             entry.length -= aligned_size;
             entry.base += aligned_size;
-            break;
+            break ptr[0..bitmap_size];
         }
-    }
-
-    if (bitmap_ptr) |ptr| {
-        bitmap = ptr[0..bitmap_size];
-        @memset(bitmap, !free_page);
-    } else {
-        return error.BitMapTooBig;
-    }
+    } else unreachable;
+    @memset(bitmap, !free_page);
 
     for (entries) |entry| {
         if (entry.kind != .usable) continue;

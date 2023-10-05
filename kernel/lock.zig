@@ -43,7 +43,7 @@ pub const SpinLock = struct {
             std.atomic.spinLoopHint();
         }
 
-        @panic("deadlock");
+        @panic("Deadlock");
     }
 
     pub fn unlock(self: *Self) void {

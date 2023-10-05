@@ -91,7 +91,7 @@ fn main() !void {
     idt.init();
     // TODO: event.init();
 
-    try pmm.init();
+    pmm.init();
     vmm.init(); // TODO
 
     // TODO: proc

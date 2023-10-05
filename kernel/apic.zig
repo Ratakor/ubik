@@ -146,7 +146,7 @@ fn setGSIRedirect(lapic_id: u32, vector: u8, gsi: u8, flags: u16) void {
             break io_apic;
         }
     } else {
-        std.debug.panic("could not find an IOAPIC for GSI {}", .{gsi});
+        std.debug.panic("Could not find an IOAPIC for GSI {}", .{gsi});
     };
 
     var redirect: u64 = vector;

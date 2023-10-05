@@ -37,6 +37,7 @@ pub fn init() !void {
         .is_macho = false,
     };
 
+    // this is slow
     try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
 }
 
