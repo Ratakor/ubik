@@ -66,6 +66,8 @@ export fn _start() callconv(.C) noreturn {
         tty.hideCursor();
     };
 
+    pit.nanosleep(3 * pit.ns_per_s); // TODO: testing
+
     arch.halt();
 }
 
@@ -102,7 +104,13 @@ fn main() !void {
     ps2.init();
     // TODO: pci
 
+    // TODO: process
+    // TODO: basic syscalls + lib for them (zig + C)
+    // TODO: server with more syscall for compat with Linux
+
     // TODO: filesystem <- extern
+
+    // TODO: socket -> TCP/IP
 
     // TODO: start /bin/init <- load elf with std.elf
 }
