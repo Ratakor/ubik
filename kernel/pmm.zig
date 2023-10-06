@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("root");
+const vmm = @import("vmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.pmm);
 
@@ -17,9 +18,10 @@ var lock: SpinLock = .{}; // useless?
 
 pub fn init() void {
     const memory_map = root.memory_map_request.response.?;
-    const hhdm = root.hhdm_request.response.?.offset;
-    const entries = memory_map.entries();
+    const hhdm_offset = root.hhdm_request.response.?.offset;
 
+    vmm.hhdm_offset = hhdm_offset;
+    const entries = memory_map.entries();
     var highest_addr: u64 = 0;
 
     // calculate the size of the bitmap
@@ -47,7 +49,7 @@ pub fn init() void {
     // find a hole in the memory map to fit the bitmap
     bitmap = for (entries) |entry| {
         if (entry.kind == .usable and entry.length >= aligned_size) {
-            const ptr = @as([*]bool, @ptrFromInt(entry.base + hhdm));
+            const ptr = @as([*]bool, @ptrFromInt(entry.base + hhdm_offset));
             entry.length -= aligned_size;
             entry.base += aligned_size;
             break ptr[0..bitmap_size];
@@ -102,10 +104,9 @@ pub fn alloc(pages: usize, comptime zero: bool) ?u64 {
     used_pages += pages;
 
     comptime if (zero) {
-        @compileError("calloc is not implemented yet");
-        // const ptr: [*]u8 = @ptrFromInt(address + vmm.higher_half);
-        // const slice = ptr[0 .. pages * page_size];
-        // @memset(slice, 0);
+        const ptr: [*]u8 = @ptrFromInt(address + vmm.hhdm_offset);
+        const slice = ptr[0 .. pages * page_size];
+        @memset(slice, 0);
     };
 
     return address;

@@ -29,13 +29,13 @@ const IOAPIC = extern struct {
     const Self = @This();
 
     fn read(self: Self, reg: u32) u32 {
-        const base: [*]volatile u32 = @ptrFromInt(self.addr + vmm.higher_half);
+        const base: [*]volatile u32 = @ptrFromInt(self.addr + vmm.hhdm_offset);
         base[0] = reg;
         return base[4];
     }
 
     fn write(self: Self, reg: u32, value: u32) void {
-        const base: [*]volatile u32 = @ptrFromInt(self.addr + vmm.higher_half);
+        const base: [*]volatile u32 = @ptrFromInt(self.addr + vmm.hhdm_offset);
         base[0] = reg;
         base[4] = value;
     }
@@ -124,19 +124,19 @@ pub fn sendIPI(lapic_id: u32, vec: u32) void {
 //     // const final_tick = pit.getCurrentCount();
 
 //     // const total_ticks = initial_tick - final_tick;
-//     // this_cpu().lapic_freq = (samples / total_ticks) * PIT_DIVIDEND;
+//     // cpu.this().lapic_freq = (samples / total_ticks) * pit.dividend;
 
 //     timerStop();
 // }
 
 fn readRegister(register: Register) u32 {
     const reg = @intFromEnum(register);
-    return @as(*volatile u32, @ptrFromInt(lapic_base + vmm.higher_half + reg)).*;
+    return @as(*volatile u32, @ptrFromInt(lapic_base + vmm.hhdm_offset + reg)).*;
 }
 
 fn writeRegister(register: Register, val: u32) void {
     const reg = @intFromEnum(register);
-    const ptr: *volatile u32 = @ptrFromInt(lapic_base + vmm.higher_half + reg);
+    const ptr: *volatile u32 = @ptrFromInt(lapic_base + vmm.hhdm_offset + reg);
     ptr.* = val;
 }
 

@@ -50,16 +50,16 @@ pub const TSS = extern struct {
 
 pub const CpuLocal = struct {
     cpu_number: usize,
-    bsp: bool,
-    active: bool,
-    last_run_queue_index: u32,
+    // bsp: bool,
+    // active: bool,
+    // last_run_queue_index: u32,
     lapic_id: u32,
     lapic_freq: u64,
     tss: TSS,
-    idle_thread: *Thread,
-    tlb_shootdown_lock: SpinLock,
-    tlb_shootdown_done: SpinLock,
-    tlb_shootdown_cr3: usize, // TODO: volatile
+    // idle_thread: *Thread,
+    // tlb_shootdown_lock: SpinLock,
+    // tlb_shootdown_done: SpinLock,
+    // tlb_shootdown_cr3: usize, // TODO: volatile
 };
 
 const cpu_stack_size = 0x10000;
@@ -91,7 +91,7 @@ pub fn init() void {
         if (cpu.lapic_id != bsp_lapic_id) {
             // cpu.goto_address = singleCpuInit;
         } else {
-            cpu_local.bsp = true;
+            // cpu_local.bsp = true;
             // singleCpuInit(cpu);
         }
 

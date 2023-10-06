@@ -13,6 +13,7 @@ const cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
+const pit = @import("pit.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 
 pub const std_options = struct {
@@ -27,7 +28,6 @@ pub const os = struct {
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
-    .thread_safe = false,
     .MutexType = SpinLock,
     .verbose_log = if (builtin.mode == .Debug) true else false,
 }){};
@@ -92,17 +92,17 @@ fn main() !void {
 
     // TODO: proc + TSS
     // TODO: sched
-    // TODO: threads <-- with priority level ? <- have a list of thread based
+    // TODO: threads <- with priority level ? <- have a list of thread based
     // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
     cpu.init(); // TODO
 
     acpi.init();
-    apic.init(); // TODO: local apic
-    // TODO: time (pit)
+    apic.init(); // TODO: local apic timers for sched
+    pit.init();
     ps2.init();
     // TODO: pci
 
-    // TODO: filesystem <-- extern
+    // TODO: filesystem <- extern
 
     // TODO: start /bin/init <- load elf with std.elf
 }

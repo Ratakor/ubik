@@ -55,7 +55,7 @@ pub fn init() void {
 }
 
 fn parse(comptime T: type, addr: u64) void {
-    const rsdt: *const SDT = @ptrFromInt(addr + vmm.higher_half);
+    const rsdt: *const SDT = @ptrFromInt(addr + vmm.hhdm_offset);
 
     var sum: u8 = 0;
     for (0..rsdt.length) |i| {
@@ -69,7 +69,7 @@ fn parse(comptime T: type, addr: u64) void {
 
     const entries = std.mem.bytesAsSlice(T, rsdt.data());
     for (entries) |entry| {
-        const sdt: *const SDT = @ptrFromInt(entry + vmm.higher_half);
+        const sdt: *const SDT = @ptrFromInt(entry + vmm.hhdm_offset);
 
         switch (readIntNative(u32, &sdt.signature)) {
             readIntNative(u32, "APIC") => handleMADT(sdt),

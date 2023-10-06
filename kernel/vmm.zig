@@ -10,7 +10,7 @@ const log = std.log.scoped(.vmm);
 
 const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
-pub var higher_half: u64 = undefined;
+pub var hhdm_offset: u64 = undefined; // set in pmm.zig
 
 pub const page_allocator = std.mem.Allocator{
     .ptr = undefined,
@@ -19,6 +19,25 @@ pub const page_allocator = std.mem.Allocator{
         .resize = resize,
         .free = free,
     },
+};
+
+// TODO
+const PageTableEntry = packed struct {
+    p: u1, // present
+    rw: u1, // read/write
+    us: u1, // user/supervisor
+    pwt: u1, // write-through
+    pcd: u1, // cache disable
+    a: u1, // accessed
+    d: u1, // dirty
+    pat: u1, // page attribute table
+    g: u1, // global
+    avl: u3, // available
+    address: u20,
+    // reserved
+    // avl
+    // pk
+    // xd
 };
 
 pub const Flags = enum(u64) {
@@ -30,8 +49,8 @@ pub const Flags = enum(u64) {
 };
 
 pub fn init() void {
-    log.info("init", .{});
-    higher_half = root.hhdm_request.response.?.offset;
+    log.info("hhdm offset = 0x{x}", .{hhdm_offset});
+
     const kernel_address = root.kernel_address_request.response.?;
     _ = kernel_address;
 
@@ -55,7 +74,7 @@ fn alloc(_: *anyopaque, size: usize, _: u8, _: usize) ?[*]u8 {
     const aligned_size = alignForward(usize, size, page_size);
     const pages = @divExact(aligned_size, page_size);
     const address = pmm.alloc(pages, false) orelse return null;
-    return @ptrFromInt(address + higher_half);
+    return @ptrFromInt(address + hhdm_offset);
 }
 
 fn resize(_: *anyopaque, buf: []u8, _: u8, new_size: usize, _: usize) bool {
@@ -67,7 +86,7 @@ fn resize(_: *anyopaque, buf: []u8, _: u8, new_size: usize, _: usize) bool {
     if (aligned_new_size < aligned_buf_len) {
         const address = @intFromPtr(buf.ptr + aligned_new_size);
         const pages = @divExact((aligned_buf_len - aligned_new_size), page_size);
-        pmm.free(address - higher_half, pages);
+        pmm.free(address - hhdm_offset, pages);
         return true;
     }
 
@@ -77,7 +96,7 @@ fn resize(_: *anyopaque, buf: []u8, _: u8, new_size: usize, _: usize) bool {
 fn free(_: *anyopaque, buf: []u8, _: u8, _: usize) void {
     const aligned_buf_len = alignForward(usize, buf.len, page_size);
     const pages = @divExact(aligned_buf_len, page_size);
-    pmm.free(@intFromPtr(buf.ptr) - higher_half, pages);
+    pmm.free(@intFromPtr(buf.ptr) - hhdm_offset, pages);
 }
 
 // TODO: idk
