@@ -31,7 +31,9 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     });
     kernel.code_model = .kernel;
     kernel.addModule("limine", limine.module("limine"));
-    kernel.setLinkerScriptPath(.{ .path = "kernel/linker.ld" });
+    kernel.setLinkerScriptPath(.{
+        .path = concat(b, &[_][]const u8{ "kernel/linker-", @tagName(target.cpu_arch.?), ".ld" }),
+    });
     kernel.pie = true;
     kernel.strip = b.option(bool, "strip", "Strip the kernel") orelse switch (optimize) {
         .Debug, .ReleaseSafe => false,

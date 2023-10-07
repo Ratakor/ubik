@@ -103,11 +103,11 @@ pub fn alloc(pages: usize, comptime zero: bool) ?u64 {
 
     used_pages += pages;
 
-    comptime if (zero) {
+    if (comptime zero) {
         const ptr: [*]u8 = @ptrFromInt(address + vmm.hhdm_offset);
         const slice = ptr[0 .. pages * page_size];
         @memset(slice, 0);
-    };
+    }
 
     return address;
 }

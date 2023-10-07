@@ -1,13 +1,18 @@
 const std = @import("std");
 const root = @import("root");
-const SpinLock = @import("lock.zig").SpinLock;
 const cpu = @import("cpu.zig");
 const arch = @import("arch.zig");
 const idt = @import("idt.zig");
 const tty = @import("tty.zig");
 const pmm = @import("pmm.zig");
+const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.vmm);
 
+// TODO: init is slow
+// TODO: save page_table in global scope
+// TODO: TLB
+
+const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
@@ -21,8 +26,8 @@ pub const page_allocator = std.mem.Allocator{
     },
 };
 
-// TODO
-const PageTableEntry = packed struct {
+// TODO: use a simple u64 instead ?
+pub const PageTableEntry = packed struct {
     p: u1, // present
     rw: u1, // read/write
     us: u1, // user/supervisor
@@ -32,40 +37,133 @@ const PageTableEntry = packed struct {
     d: u1, // dirty
     pat: u1, // page attribute table
     g: u1, // global
-    avl: u3, // available
-    address: u20,
-    // reserved
-    // avl
-    // pk
-    // xd
+    avl1: u3, // available
+    address: u40,
+    avl2: u7, // available
+    pk: u4, // protection key
+    xd: u1, // execute disable
 };
 
-pub const Flags = enum(u64) {
-    present = 1 << 0,
-    write = 1 << 1,
-    user = 1 << 2,
-    large = 1 << 7,
-    noexec = 1 << 63,
+// TODO: add a spinlock ?
+pub const PageTable = struct {
+    entries: [512]PageTableEntry,
+
+    const Self = @This();
+
+    inline fn getEntry(self: *Self, vaddr: u64, allocate: bool) ?*PageTableEntry {
+        const pml4_idx = (vaddr & (0x1ff << 39)) >> 39;
+        const pml3_idx = (vaddr & (0x1ff << 30)) >> 30;
+        const pml2_idx = (vaddr & (0x1ff << 21)) >> 21;
+        const pml1_idx = (vaddr & (0x1ff << 12)) >> 12;
+
+        const pml4 = self;
+        const pml3 = getNextLevel(pml4, pml4_idx, allocate) orelse return null;
+        const pml2 = getNextLevel(pml3, pml3_idx, allocate) orelse return null;
+        const pml1 = getNextLevel(pml2, pml2_idx, allocate) orelse return null;
+
+        return &pml1.entries[pml1_idx];
+    }
+
+    pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) !void {
+        const entry = self.getEntry(vaddr, true) orelse return error.OutOfMemory;
+        if (entry.p != 0) return error.AlreadyMapped;
+        entry.* = @bitCast(paddr | flags);
+    }
+
+    pub fn unmapPage(self: *Self, vaddr: u64) !void {
+        const entry = self.getEntry(vaddr, false) orelse return error.OutOfMemory;
+        if (entry.p == 0) return error.NotMapped;
+        entry.* = @bitCast(0);
+    }
 };
 
-pub fn init() void {
+const pte_present: u64 = 1 << 0;
+const pte_writable: u64 = 1 << 1;
+const pte_user: u64 = 1 << 2;
+const pte_large: u64 = 1 << 7; // TODO: support page directory entry
+const pte_noexec: u64 = 1 << 63;
+
+var cr3: u64 = undefined;
+
+pub fn init() !void {
     log.info("hhdm offset = 0x{x}", .{hhdm_offset});
 
-    const kernel_address = root.kernel_address_request.response.?;
-    _ = kernel_address;
+    const page_table_addr = pmm.alloc(1, true) orelse unreachable;
+    const page_table: *PageTable = @ptrFromInt(page_table_addr + hhdm_offset);
+
+    for (256..512) |i| {
+        std.debug.assert(getNextLevel(page_table, i, true) != null);
+    }
+
+    try mapSection("text", page_table, pte_present);
+    try mapSection("rodata", page_table, pte_present | pte_noexec);
+    try mapSection("data", page_table, pte_present | pte_noexec | pte_writable);
+
+    var addr: u64 = 0x1000;
+    while (addr < 0x100000000) : (addr += page_size) {
+        try page_table.mapPage(addr, addr, pte_present | pte_writable);
+        try page_table.mapPage(addr + hhdm_offset, addr, pte_present | pte_writable | pte_noexec);
+    }
+
+    const memory_map = root.memory_map_request.response.?;
+    for (memory_map.entries()) |entry| {
+        const base = alignBackward(u64, entry.base, page_size);
+        const top = alignForward(u64, entry.base + entry.length, page_size);
+        if (top <= 0x100000000) continue;
+
+        var i: usize = base;
+        while (i < top) : (i += page_size) {
+            if (i < 0x100000000) continue;
+
+            try page_table.mapPage(i, i, pte_present | pte_writable);
+            try page_table.mapPage(i + hhdm_offset, i, pte_present | pte_writable | pte_noexec);
+        }
+    }
 
     // idt.setIST(idt.page_fault_vector, 2);
     idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
-}
 
-fn switchPageTable(cr3: u64) void {
-    arch.writeRegister("cr3", cr3);
+    // switch page table
+    cr3 = page_table_addr;
+    // arch.writeRegister("cr3", cr3); // FIXME: crash qemu
 }
 
 fn pageFaultHandler(ctx: *cpu.Context) void {
     _ = ctx;
     tty.print("TODO: handle Page fault\n", .{});
 }
+
+inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) !void {
+    const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
+    const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
+    const start_addr = alignBackward(u64, start, page_size);
+    const end_addr = alignForward(u64, end, page_size);
+    const kaddr = root.kernel_address_request.response.?;
+
+    var addr = start_addr;
+    while (addr < end_addr) : (addr += page_size) {
+        const paddr = addr - kaddr.virtual_base + kaddr.physical_base;
+        try page_table.mapPage(addr, paddr, flags);
+    }
+}
+
+fn getNextLevel(page_table: *PageTable, idx: usize, allocate: bool) ?*PageTable {
+    const entry = &page_table.entries[idx];
+
+    if (entry.p != 0) {
+        return @ptrFromInt((@as(u64, entry.address) << 12) + hhdm_offset);
+    }
+
+    if (!allocate) {
+        return null;
+    }
+
+    const new_page_table = pmm.alloc(1, true) orelse return null; // errno = ENOMEM
+    entry.* = @bitCast(new_page_table | pte_present | pte_writable | pte_user);
+    return @ptrFromInt(new_page_table + hhdm_offset);
+}
+
+// kernel page allocator functions
 
 fn alloc(_: *anyopaque, size: usize, _: u8, _: usize) ?[*]u8 {
     std.debug.assert(size > 0);
@@ -98,8 +196,3 @@ fn free(_: *anyopaque, buf: []u8, _: u8, _: usize) void {
     const pages = @divExact(aligned_buf_len, page_size);
     pmm.free(@intFromPtr(buf.ptr) - hhdm_offset, pages);
 }
-
-// TODO: idk
-// pub fn toHigherHalf(addr: u64) u64 {
-//     return addr + hhdm_offset;
-// }

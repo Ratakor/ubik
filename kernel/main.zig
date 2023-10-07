@@ -66,8 +66,6 @@ export fn _start() callconv(.C) noreturn {
         tty.hideCursor();
     };
 
-    pit.nanosleep(3 * pit.ns_per_s); // TODO: testing
-
     arch.halt();
 }
 
@@ -90,7 +88,7 @@ fn main() !void {
     // TODO: event.init();
 
     pmm.init();
-    vmm.init(); // TODO: next step I swear
+    try vmm.init(); // TODO
 
     // TODO: proc + TSS
     // TODO: sched

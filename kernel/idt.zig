@@ -1,6 +1,7 @@
 const std = @import("std");
-const log = std.log.scoped(.idt);
+const arch = @import("arch.zig");
 const cpu = @import("cpu.zig");
+const log = std.log.scoped(.idt);
 
 pub const page_fault_vector = 0x0e;
 
@@ -120,6 +121,9 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
 
 fn exceptionHandler(ctx: *cpu.Context) void {
     const vector = ctx.isr_vector;
+    const cr2 = arch.readRegister("cr2");
+    const cr3 = arch.readRegister("cr3");
+
     std.debug.panic(
         \\Unhandled exception "{?s}" triggered, dumping context
         \\vector: 0x{x:0>2}               error code: 0x{x}
@@ -134,6 +138,7 @@ fn exceptionHandler(ctx: *cpu.Context) void {
         \\r15: 0x{x:0>16}    rip:    0x{x:0>16}
         \\cs:  0x{x:0>16}    rflags: 0x{x:0>16}
         \\rsp: 0x{x:0>16}    ss:     0x{x:0>16}
+        \\cr2: 0x{x:0>16}    cr3:    0x{x:0>16}
     , .{
         if (vector < exceptions.len) exceptions[vector] else null,
         vector,
@@ -160,6 +165,8 @@ fn exceptionHandler(ctx: *cpu.Context) void {
         ctx.rflags,
         ctx.rsp,
         ctx.ss,
+        cr2,
+        cr3,
     });
 }
 

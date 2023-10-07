@@ -136,6 +136,11 @@ fn timerHandler(ctx: *cpu.Context) void {
 
     defer apic.eoi();
 
+    // TODO
+    if (monotonic.tv_nsec == 0) {
+        @import("tty.zig").write(".");
+    }
+
     const interval: timespec = .{ .tv_nsec = ns_per_s / timer_freq };
     monotonic.add(interval);
     realtime.add(interval);
@@ -157,15 +162,13 @@ fn timerHandler(ctx: *cpu.Context) void {
 pub fn nanosleep(ns: u64) void {
     const duration: timespec = .{
         .tv_sec = @intCast(ns / ns_per_s),
-        .tv_nsec = @intCast(ns),
+        .tv_nsec = @intCast(ns % ns_per_s),
     };
     const timer = Timer.init(duration) catch return;
     defer timer.deinit();
     // const events: []*ev.Event = .{ &timer.event };
     // ev.await(events, true);
 
-    // TODO: testing
-    log.debug("sleep for {}s", .{duration.tv_sec});
+    // TODO
     while (!timer.done) asm volatile ("hlt");
-    log.debug("done", .{});
 }
