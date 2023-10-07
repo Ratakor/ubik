@@ -59,7 +59,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 
 export fn _start() callconv(.C) noreturn {
     main() catch |err| {
-        tty.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {s}\n", .{@errorName(err)});
+        tty.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {any}\n", .{err});
         if (@errorReturnTrace()) |stack_trace| {
             debug.printStackTrace(stack_trace);
         }

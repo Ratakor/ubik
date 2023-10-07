@@ -90,6 +90,7 @@ pub fn build(b: *std.Build) void {
         "-M", "q35",
         "-m", "1G",
         "-smp", "2",
+        // "-d", "int,guest_errors",
         "-boot", "d",
         "-cdrom", image_name
     };

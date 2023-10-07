@@ -10,7 +10,7 @@ const log = std.log.scoped(.vmm);
 
 // TODO: init is slow
 // TODO: save page_table in global scope
-// TODO: TLB
+// TODO: TLB, PAT
 
 const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
@@ -24,6 +24,12 @@ pub const page_allocator = std.mem.Allocator{
         .resize = resize,
         .free = free,
     },
+};
+
+const MapError = error{
+    OutOfMemory,
+    AlreadyMapped,
+    NotMapped,
 };
 
 // TODO: use a simple u64 instead ?
@@ -64,13 +70,13 @@ pub const PageTable = struct {
         return &pml1.entries[pml1_idx];
     }
 
-    pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) !void {
+    pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) MapError!void {
         const entry = self.getEntry(vaddr, true) orelse return error.OutOfMemory;
         if (entry.p != 0) return error.AlreadyMapped;
         entry.* = @bitCast(paddr | flags);
     }
 
-    pub fn unmapPage(self: *Self, vaddr: u64) !void {
+    pub fn unmapPage(self: *Self, vaddr: u64) MapError!void {
         const entry = self.getEntry(vaddr, false) orelse return error.OutOfMemory;
         if (entry.p == 0) return error.NotMapped;
         entry.* = @bitCast(0);
@@ -83,10 +89,8 @@ const pte_user: u64 = 1 << 2;
 const pte_large: u64 = 1 << 7; // TODO: support page directory entry
 const pte_noexec: u64 = 1 << 63;
 
-var cr3: u64 = undefined;
-
-pub fn init() !void {
-    log.info("hhdm offset = 0x{x}", .{hhdm_offset});
+pub fn init() MapError!void {
+    log.info("hhdm offset: 0x{x}", .{hhdm_offset});
 
     const page_table_addr = pmm.alloc(1, true) orelse unreachable;
     const page_table: *PageTable = @ptrFromInt(page_table_addr + hhdm_offset);
@@ -97,7 +101,7 @@ pub fn init() !void {
 
     try mapSection("text", page_table, pte_present);
     try mapSection("rodata", page_table, pte_present | pte_noexec);
-    try mapSection("data", page_table, pte_present | pte_noexec | pte_writable);
+    try mapSection("data", page_table, pte_present | pte_writable | pte_noexec);
 
     var addr: u64 = 0x1000;
     while (addr < 0x100000000) : (addr += page_size) {
@@ -111,7 +115,7 @@ pub fn init() !void {
         const top = alignForward(u64, entry.base + entry.length, page_size);
         if (top <= 0x100000000) continue;
 
-        var i: usize = base;
+        var i = base;
         while (i < top) : (i += page_size) {
             if (i < 0x100000000) continue;
 
@@ -124,8 +128,7 @@ pub fn init() !void {
     idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
 
     // switch page table
-    cr3 = page_table_addr;
-    // arch.writeRegister("cr3", cr3); // FIXME: crash qemu
+    arch.writeRegister("cr3", page_table_addr);
 }
 
 fn pageFaultHandler(ctx: *cpu.Context) void {
@@ -133,7 +136,7 @@ fn pageFaultHandler(ctx: *cpu.Context) void {
     tty.print("TODO: handle Page fault\n", .{});
 }
 
-inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) !void {
+inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) MapError!void {
     const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
     const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
     const start_addr = alignBackward(u64, start, page_size);
