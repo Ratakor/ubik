@@ -10,6 +10,18 @@ pub inline fn enableInterrupts() void {
     asm volatile ("sti");
 }
 
+pub inline fn toggleInterrupts(state: bool) bool {
+    const old_state = asm volatile (
+        \\pushfq
+        \\pop %[ret]
+        : [ret] "=r" (-> u64),
+        :
+        : "memory"
+    ) & (1 << 9) != 0;
+    if (state) enableInterrupts() else disableInterrupts();
+    return old_state;
+}
+
 pub inline fn out(comptime T: type, port: u16, value: T) void {
     switch (T) {
         u8 => asm volatile (

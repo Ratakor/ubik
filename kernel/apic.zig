@@ -1,10 +1,12 @@
 const std = @import("std");
 const root = @import("root");
+const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
 const cpu = @import("cpu.zig");
 const idt = @import("idt.zig");
+const pit = @import("pit.zig");
 
-const lapic_base = 0xfee00000; // TODO: use lapic_base from cpu.this()
+const lapic_base = 0xfee00000; // TODO: use lapic_base from cpu.this() <- ???
 
 const Register = enum(u64) {
     lapic_id = 0x020,
@@ -57,77 +59,63 @@ pub var io_apics = std.ArrayList(*const IOAPIC).init(root.allocator);
 pub var isos = std.ArrayList(*const ISO).init(root.allocator);
 
 pub fn init() void {
-    // timerCalibrate();
-
-    // time_vector = idt.allocateVector();
-    // one_shot_vector = idt.allocateVector();
-    // idt.registerHandler(time_vector, timerHandler);
-    // idt.registerHandler(one_shot_vector, oneShotHandler);
-    // writeRegister(.timer_divide, 3);
-    // writeRegister(.lvt_timer, @as(u32, time_vector) | 0x20000);
-    // writeRegister(.timer_initial_count, 0x5000);
-
+    timerCalibrate();
     // configure spurious IRQ
     writeRegister(.spurious, readRegister(.spurious) | (1 << 8) | 0xff);
 }
-
-// TODO
-// fn timerHandler(ctx: *cpu.Context) void {
-//     sched.reschedule(ctx);
-//     eoi();
-// }
 
 pub fn eoi() void {
     writeRegister(.eoi, 0);
 }
 
-// TODO
-// pub fn timerOneShot(us: u64, vector: u8) void {
-//     _ = us;
-//     // const old_int_state = interrupt_toggle(false);
-//     timerStop();
+pub fn timerOneShot(us: u64, vector: u8) void {
+    const old_state = arch.toggleInterrupts(false);
+    defer _ = arch.toggleInterrupts(old_state);
 
-//     // const ticks = us * (this_cpu().lapic_freq / 1000000);
+    timerStop();
 
-//     writeRegister(.lvt_timer, vector);
-//     writeRegister(.timer_divide, 0);
-//     // write(REG_TIMER_INITCNT, ticks);
+    // TODO
+    const ticks = us; //* (cpu.this().lapic_freq / 1000000);
 
-//     // interrupt_toggle(old_int_state);
-// }
+    writeRegister(.lvt_timer, vector);
+    writeRegister(.timer_divide, 0);
+    writeRegister(.timer_initial_count, ticks);
+}
 
 pub fn timerStop() void {
     writeRegister(.timer_initial_count, 0);
     writeRegister(.lvt_timer, 1 << 16);
 }
 
+// TODO: ?
 pub fn sendIPI(lapic_id: u32, vec: u32) void {
     writeRegister(.icr1, lapic_id << 24);
     writeRegister(.icr0, vec);
 }
 
-// pub fn timerCalibrate() void {
-//     timerStop();
+pub fn timerCalibrate() void {
+    timerStop();
 
-//     // init PIT
-//     writeRegister(.lvt_timer, (1 << 16) | 0xff); // vector 0xff, masked
-//     writeRegister(.timer_divide, 0);
+    // init PIT
+    writeRegister(.lvt_timer, (1 << 16) | 0xff); // vector 0xff, masked
+    writeRegister(.timer_divide, 0);
 
-//     // pit.setReloadValue(0xffff); // reset PIT
+    pit.setReloadValue(0xffff); // reset PIT
 
-//     const samples = 0xfffff;
-//     // const initial_tick = pit_get_current_count();
+    const samples = 0xfffff;
+    const initial_tick = pit.getCurrentCount();
 
-//     writeRegister(.timer_initial_count, samples);
-//     while (readRegister(.timer_current_count) != 0) {}
+    writeRegister(.timer_initial_count, samples);
+    while (readRegister(.timer_current_count) != 0) {}
 
-//     // const final_tick = pit.getCurrentCount();
+    const final_tick = pit.getCurrentCount();
 
-//     // const total_ticks = initial_tick - final_tick;
-//     // cpu.this().lapic_freq = (samples / total_ticks) * pit.dividend;
+    const total_ticks: u64 = initial_tick - final_tick;
+    _ = total_ticks;
+    // cpu.this().lapic_freq = (samples / total_ticks) * pit.dividend;
 
-//     timerStop();
-// }
+    timerStop();
+}
 
 fn readRegister(register: Register) u32 {
     const reg = @intFromEnum(register);

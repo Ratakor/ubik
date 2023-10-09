@@ -117,7 +117,10 @@ fn setFrequency(divisor: u64) void {
     if (dividend % divisor > divisor / 2) {
         count += 1;
     }
+    setReloadValue(count);
+}
 
+pub fn setReloadValue(count: u16) void {
     // channel 0, lo/hi access mode, mode 2 (rate generator)
     arch.out(u8, 0x43, 0b00_11_010_0);
     arch.out(u8, 0x40, @truncate(count));
@@ -135,11 +138,6 @@ fn timerHandler(ctx: *cpu.Context) void {
     _ = ctx;
 
     defer apic.eoi();
-
-    // TODO
-    if (monotonic.tv_nsec == 0) {
-        @import("tty.zig").write(".");
-    }
 
     const interval: timespec = .{ .tv_nsec = ns_per_s / timer_freq };
     monotonic.add(interval);

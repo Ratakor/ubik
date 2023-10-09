@@ -8,8 +8,8 @@ const pmm = @import("pmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.vmm);
 
-// TODO: init is slow
 // TODO: save page_table in global scope
+// TODO: flag, unmap, fork
 // TODO: TLB, PAT
 
 const alignBackward = std.mem.alignBackward;

@@ -7,8 +7,11 @@ const serial = @import("serial.zig");
 const tty = @import("tty.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const event = @import("event.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
+const proc = @import("proc.zig");
+const sched = @import("sched.zig");
 const cpu = @import("cpu.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
@@ -66,6 +69,11 @@ export fn _start() callconv(.C) noreturn {
         tty.hideCursor();
     };
 
+    while (true) {
+        pit.nanosleep(pit.ns_per_s);
+        tty.write(".");
+    }
+
     arch.halt();
 }
 
@@ -85,13 +93,13 @@ fn main() !void {
 
     gdt.init();
     idt.init();
-    // TODO: event.init();
+    event.init(); // TODO
 
     pmm.init();
     try vmm.init(); // TODO
 
-    // TODO: proc + TSS
-    // TODO: sched
+    proc.init(); // TODO + TSS
+    sched.init(); // TODO
     // TODO: threads <- with priority level ? <- have a list of thread based
     // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
     cpu.init(); // TODO

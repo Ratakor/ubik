@@ -7,9 +7,6 @@ const idt = @import("idt.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.cpu);
 
-// TODO: defined elsewhere
-pub const Thread = struct {};
-
 pub const Context = extern struct {
     ds: u64,
     es: u64,
@@ -48,7 +45,7 @@ pub const TSS = extern struct {
     iopb: u16 align(1),
 };
 
-pub const CpuLocal = struct {
+pub const Cpu = struct {
     cpu_number: usize,
     // bsp: bool,
     // active: bool,
@@ -68,7 +65,7 @@ pub var sysenter: bool = false;
 pub var bsp_lapic_id: u32 = undefined; // TODO: x86 specific
 pub var smp_started: bool = undefined;
 
-pub var cpus: []CpuLocal = undefined;
+pub var cpus: []Cpu = undefined;
 
 var cpus_started_i: usize = 0;
 
@@ -81,7 +78,7 @@ pub fn init() void {
 
     const smp = root.smp_request.response.?;
     bsp_lapic_id = smp.bsp_lapic_id;
-    cpus = root.allocator.alloc(CpuLocal, smp.cpu_count) catch unreachable;
+    cpus = root.allocator.alloc(Cpu, smp.cpu_count) catch unreachable;
     log.info("{} processors detected", .{cpus.len});
 
     for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, i| {
@@ -103,10 +100,10 @@ pub fn init() void {
     smp_started = true;
 }
 
-pub fn this() *CpuLocal {}
+pub fn this() *Cpu {}
 
 fn singleCpuInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
-    const cpu_local: *CpuLocal = @ptrFromInt(smp_info.extra_argument);
+    const cpu_local: *Cpu = @ptrFromInt(smp_info.extra_argument);
     const cpu_number = cpu_local.cpu_number;
     _ = cpu_number;
 
