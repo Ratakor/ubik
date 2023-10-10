@@ -1,5 +1,8 @@
+//! https://uefi.org/specs/ACPI/6.5/
+
 const std = @import("std");
 const root = @import("root");
+const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
 const apic = @import("apic.zig");
 const log = std.log.scoped(.acpi);
@@ -63,11 +66,11 @@ const GAS = extern struct {
 
 /// Fixed ACPI Description Table
 const FADT = extern struct {
-    header: SDT align(1),
+    header: SDT align(1), // revision is fadt major version
     firmware_ctrl: u32 align(1),
     dsdt: u32 align(1),
     reserved1: u8 align(1), // ACPI 1 only
-    preferred_power_management_profile: u8 align(1),
+    ppmp: u8 align(1), // preferred power management profile
     sci_interrupt: u16 align(1),
     smi_command_port: u32 align(1),
     acpi_enable: u8 align(1),
@@ -104,7 +107,8 @@ const FADT = extern struct {
     flags: u32 align(1),
     reset_reg: GAS align(1),
     reset_value: u8 align(1),
-    reserved3: [3]u8 align(1),
+    arm_boot_arch: u16 align(1),
+    fadt_minor_version: u8 align(1),
     x_firmware_control: u64 align(1), // ACPI 2 only
     x_dsdt: u64 align(1), // ACPI 2 only
     x_pm1a_event_block: GAS align(1),
@@ -117,10 +121,11 @@ const FADT = extern struct {
     x_gpe1_block: GAS align(1),
 };
 
+var use_xsdt: bool = undefined;
 var fadt: *const FADT = undefined;
 
 pub fn init() void {
-    const rsdp: *RSDP = @ptrCast(@alignCast(root.rsdp_request.response.?.address));
+    const rsdp: *RSDP = @ptrCast(root.rsdp_request.response.?.address);
 
     log.info("revision: {}", .{rsdp.revision});
     log.info("uses XSDT: {}", .{rsdp.useXSDT()});
@@ -177,4 +182,84 @@ fn handleMADT(madt: *const SDT) void {
 
 fn handleFADT(sdt: *const SDT) void {
     fadt = @ptrCast(sdt);
+}
+
+// https://github.com/mintsuki/acpi-shutdown-hack
+pub fn shutdown() noreturn {
+    const dsdt: *const SDT = @ptrFromInt(fadt.dsdt + vmm.hhdm_offset);
+    const definition_block = dsdt.data();
+
+    var s5_addr = blk: for (0..definition_block.len) |i| {
+        if (std.mem.eql(u8, definition_block[i .. i + 4], &[_]u8{ '_', 'S', '5', '_' })) {
+            break :blk definition_block[i + 4 ..];
+        }
+    } else unreachable;
+
+    std.debug.assert(s5_addr[0] == 0x12);
+    s5_addr = s5_addr[((s5_addr[1] & 0xc0) >> 6) + 2 ..];
+    std.debug.assert(s5_addr[0] >= 2);
+    s5_addr = s5_addr[1..];
+
+    var value: u64 = undefined;
+    var size = parseInt(s5_addr, &value);
+    const slp_typa: u16 = @truncate(value << 10);
+    s5_addr = s5_addr[size..];
+
+    size = parseInt(s5_addr, &value);
+    const slp_typb: u16 = @truncate(value << 10);
+    s5_addr = s5_addr[size..];
+
+    if (fadt.smi_command_port != 0 and fadt.acpi_enable != 0) {
+        arch.out(u8, @intCast(fadt.smi_command_port), fadt.acpi_enable);
+        for (0..100) |_| {
+            _ = arch.in(u8, 0x80);
+        }
+        while (arch.in(u16, @intCast(fadt.pm1a_control_block)) & (1 << 0) == 0) {}
+    }
+
+    arch.out(u16, @intCast(fadt.pm1a_control_block), slp_typa | (1 << 13));
+    if (fadt.pm1b_event_block != 0) {
+        arch.out(u16, @intCast(fadt.pm1b_control_block), slp_typb | (1 << 13));
+    }
+
+    for (0..100) |_| {
+        _ = arch.in(u8, 0x80);
+    }
+
+    unreachable;
+}
+
+// TODO: does this get optimized away correctly?
+inline fn parseInt(s5_addr: []const u8, value: *u64) usize {
+    switch (s5_addr[0]) {
+        0x0 => {
+            value.* = 0;
+            return 1;
+        },
+        0x1 => {
+            value.* = 1;
+            return 1;
+        },
+        0xff => {
+            value.* = ~@as(u64, 0);
+            return 1;
+        },
+        0xa => {
+            value.* = s5_addr[1];
+            return 2;
+        },
+        0xb => {
+            value.* = readIntNative(u16, s5_addr[1..3]);
+            return 3;
+        },
+        0xc => {
+            value.* = readIntNative(u32, s5_addr[1..5]);
+            return 5;
+        },
+        0xe => {
+            value.* = readIntNative(u64, s5_addr[1..9]);
+            return 9;
+        },
+        else => unreachable,
+    }
 }
