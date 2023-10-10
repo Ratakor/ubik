@@ -157,6 +157,8 @@ fn parse(comptime T: type, addr: u64) void {
 }
 
 fn handleMADT(madt: *const SDT) void {
+    apic.lapic_base = readIntNative(u32, madt.data()[0..4]);
+    log.info("lapic base: 0x{x}", .{apic.lapic_base});
     var data = madt.data()[8..]; // discard madt header
 
     while (data.len > 2) {
@@ -193,9 +195,9 @@ pub fn shutdown() noreturn {
         @ptrFromInt(fadt.dsdt + vmm.hhdm_offset);
     const definition_block = dsdt.data();
 
-    var s5_addr = blk: for (0..definition_block.len) |i| {
+    var s5_addr = for (0..definition_block.len) |i| {
         if (std.mem.eql(u8, definition_block[i .. i + 4], &[_]u8{ '_', 'S', '5', '_' })) {
-            break :blk definition_block[i + 4 ..];
+            break definition_block[i + 4 ..];
         }
     } else unreachable;
 
@@ -214,16 +216,16 @@ pub fn shutdown() noreturn {
     s5_addr = s5_addr[size..];
 
     if (fadt.smi_command_port != 0 and fadt.acpi_enable != 0) {
-        arch.out(u8, @intCast(fadt.smi_command_port), fadt.acpi_enable);
+        arch.out(u8, @truncate(fadt.smi_command_port), fadt.acpi_enable);
         for (0..100) |_| {
             _ = arch.in(u8, 0x80);
         }
-        while (arch.in(u16, @intCast(fadt.pm1a_control_block)) & (1 << 0) == 0) {}
+        while (arch.in(u16, @truncate(fadt.pm1a_control_block)) & (1 << 0) == 0) {}
     }
 
-    arch.out(u16, @intCast(fadt.pm1a_control_block), slp_typa | (1 << 13));
+    arch.out(u16, @truncate(fadt.pm1a_control_block), slp_typa | (1 << 13));
     if (fadt.pm1b_event_block != 0) {
-        arch.out(u16, @intCast(fadt.pm1b_control_block), slp_typb | (1 << 13));
+        arch.out(u16, @truncate(fadt.pm1b_control_block), slp_typb | (1 << 13));
     }
 
     for (0..100) |_| {

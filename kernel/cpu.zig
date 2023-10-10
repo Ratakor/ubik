@@ -60,6 +60,34 @@ pub const Cpu = struct {
     // tlb_shootdown_cr3: usize, // TODO: volatile
 };
 
+const PAT = packed struct {
+    pa0: u3,
+    reserved0: u5,
+    pa1: u3,
+    reserved1: u5,
+    pa2: u3,
+    reserved2: u5,
+    pa3: u3,
+    reserved3: u5,
+    pa4: u3,
+    reserved4: u5,
+    pa5: u3,
+    reserved5: u5,
+    pa6: u3,
+    reserved6: u5,
+    pa7: u3,
+    reserved7: u5,
+
+    const Flags = enum(u64) {
+        uncacheable = 0,
+        write_combining = 1,
+        write_through = 4,
+        write_protected = 5,
+        write_back = 6,
+        uncached = 7,
+    };
+};
+
 const cpu_stack_size = 0x10000;
 
 pub var sysenter: bool = false;
@@ -74,7 +102,7 @@ pub var fpu_save: *const fn (*Context) void = undefined;
 pub var fpu_restore: *const fn (*Context) void = undefined;
 
 pub fn init() void {
-    // TODO: is_amd...
+    initFeatures();
 
     const smp = root.smp_request.response.?;
     bsp_lapic_id = smp.bsp_lapic_id;
@@ -99,6 +127,29 @@ pub fn init() void {
 }
 
 pub fn this() *Cpu {}
+
+// TODO: move to singleCpuInit()
+fn initFeatures() void {
+    // enable SSE/SSE2
+    var cr0: u64 = arch.readRegister("cr0");
+    cr0 &= ~@as(u64, (1 << 2));
+    cr0 |= (1 << 1);
+    arch.writeRegister("cr0", cr0);
+
+    var cr4: u64 = arch.readRegister("cr4");
+    cr4 |= (1 << 9);
+    cr4 |= (1 << 10);
+    arch.writeRegister("cr4", cr4);
+
+    // init PAT (write-protect / write-combining)
+    var pat_msr = arch.rdmsr(0x277);
+    pat_msr &= 0xffffffff;
+    pat_msr |= @as(u64, 0x0105) << 32;
+    arch.wrmsr(0x277, pat_msr);
+
+    // TODO
+    // use cpuid
+}
 
 fn singleCpuInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     const cpu_local: *Cpu = @ptrFromInt(smp_info.extra_argument);

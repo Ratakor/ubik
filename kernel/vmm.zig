@@ -10,23 +10,8 @@ const pmm = @import("pmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.vmm);
 
-// TODO: save page_table in global scope
-// TODO: flag, unmap, fork
-// TODO: TLB, PAT
-
-const alignBackward = std.mem.alignBackward;
-const alignForward = std.mem.alignForward;
-const page_size = std.mem.page_size;
-pub var hhdm_offset: u64 = undefined; // set in pmm.zig
-
-pub const page_allocator = std.mem.Allocator{
-    .ptr = undefined,
-    .vtable = &.{
-        .alloc = alloc,
-        .resize = resize,
-        .free = free,
-    },
-};
+// TODO: flag, remap, fork
+// TODO: TLB
 
 const MapError = error{
     OutOfMemory,
@@ -52,7 +37,6 @@ pub const PageTableEntry = packed struct {
     xd: u1, // execute disable
 };
 
-// TODO: add a spinlock ?
 pub const PageTable = struct {
     entries: [512]PageTableEntry,
 
@@ -85,10 +69,31 @@ pub const PageTable = struct {
     }
 };
 
+pub const AddressSpace = struct {
+    lock: SpinLock = .{},
+    page_table: *PageTable,
+    // TODO
+};
+
+pub const page_allocator = std.mem.Allocator{
+    .ptr = undefined,
+    .vtable = &.{
+        .alloc = alloc,
+        .resize = resize,
+        .free = free,
+    },
+};
+
+const alignBackward = std.mem.alignBackward;
+const alignForward = std.mem.alignForward;
+const page_size = std.mem.page_size;
 const pte_present: u64 = 1 << 0;
 const pte_writable: u64 = 1 << 1;
 const pte_user: u64 = 1 << 2;
 const pte_noexec: u64 = 1 << 63;
+
+pub var hhdm_offset: u64 = undefined; // set in pmm.zig
+pub var kernel_address_space: AddressSpace = .{ .page_table = undefined };
 
 pub fn init() MapError!void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
@@ -104,12 +109,14 @@ pub fn init() MapError!void {
     try mapSection("rodata", page_table, pte_present | pte_noexec);
     try mapSection("data", page_table, pte_present | pte_writable | pte_noexec);
 
+    // map the first 4 GiB
     var addr: u64 = 0x1000;
     while (addr < 0x100000000) : (addr += page_size) {
         try page_table.mapPage(addr, addr, pte_present | pte_writable);
         try page_table.mapPage(addr + hhdm_offset, addr, pte_present | pte_writable | pte_noexec);
     }
 
+    // map the rest of the memory map
     const memory_map = root.memory_map_request.response.?;
     for (memory_map.entries()) |entry| {
         const base = alignBackward(u64, entry.base, page_size);
@@ -124,6 +131,8 @@ pub fn init() MapError!void {
             try page_table.mapPage(i + hhdm_offset, i, pte_present | pte_writable | pte_noexec);
         }
     }
+
+    kernel_address_space.page_table = page_table;
 
     // idt.setIST(idt.page_fault_vector, 2);
     idt.registerHandler(idt.page_fault_vector, pageFaultHandler);

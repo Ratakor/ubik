@@ -6,7 +6,7 @@ const cpu = @import("cpu.zig");
 const idt = @import("idt.zig");
 const pit = @import("pit.zig");
 
-const lapic_base = 0xfee00000; // TODO: use lapic_base from cpu.this() <- ???
+pub var lapic_base: u32 = undefined; // set in acpi.zig with handleMADT()
 
 const Register = enum(u64) {
     lapic_id = 0x020,
@@ -87,7 +87,7 @@ pub fn timerStop() void {
     writeRegister(.lvt_timer, 1 << 16);
 }
 
-// TODO: ?
+// TODO: setup Inter-Processor Interrupts
 pub fn sendIPI(lapic_id: u32, vec: u32) void {
     writeRegister(.icr1, lapic_id << 24);
     writeRegister(.icr0, vec);

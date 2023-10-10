@@ -114,3 +114,25 @@ pub inline fn cpuid(leaf: u32, subleaf: u32) CPUID {
 
     return CPUID{ .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx };
 }
+
+pub inline fn rdmsr(msr: u32) u64 {
+    var low: u32 = undefined;
+    var high: u32 = undefined;
+    asm volatile (
+        \\rdmsr
+        : [_] "={eax}" (low),
+          [_] "={edx}" (high),
+        : [_] "{ecx}" (msr),
+    );
+    return @as(u64, low) | (@as(u64, high) << 32);
+}
+
+pub inline fn wrmsr(msr: u32, value: u64) void {
+    asm volatile (
+        \\wrmsr
+        :
+        : [_] "{eax}" (value),
+          [_] "{edx}" (value >> 32),
+          [_] "{ecx}" (msr),
+    );
+}
