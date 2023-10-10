@@ -69,10 +69,12 @@ export fn _start() callconv(.C) noreturn {
         tty.hideCursor();
     };
 
-    while (true) {
-        pit.nanosleep(pit.ns_per_s);
-        tty.write(".");
-    }
+    const regs = arch.cpuid(0, 0);
+    std.log.debug("vendor string: {s}{s}{s}", .{
+        @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+        @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+    });
 
     arch.halt();
 }

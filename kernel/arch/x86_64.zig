@@ -1,3 +1,10 @@
+pub const CPUID = struct {
+    eax: u32,
+    ebx: u32,
+    ecx: u32,
+    edx: u32,
+};
+
 pub inline fn halt() noreturn {
     while (true) asm volatile ("hlt");
 }
@@ -87,4 +94,23 @@ pub inline fn writeRegister(comptime reg: []const u8, value: u64) void {
         : [val] "r" (value),
         : "memory"
     );
+}
+
+pub inline fn cpuid(leaf: u32, subleaf: u32) CPUID {
+    var eax: u32 = undefined;
+    var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
+    var edx: u32 = undefined;
+
+    asm volatile (
+        \\cpuid
+        : [_] "={eax}" (eax),
+          [_] "={ebx}" (ebx),
+          [_] "={ecx}" (ecx),
+          [_] "={edx}" (edx),
+        : [_] "{eax}" (leaf),
+          [_] "{ecx}" (subleaf),
+    );
+
+    return CPUID{ .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx };
 }

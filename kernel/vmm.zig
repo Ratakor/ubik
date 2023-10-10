@@ -1,3 +1,5 @@
+//! Intel Manual 3A: https://cdrdv2.intel.com/v1/dl/getContent/671190
+
 const std = @import("std");
 const root = @import("root");
 const cpu = @import("cpu.zig");
@@ -43,9 +45,9 @@ pub const PageTableEntry = packed struct {
     d: u1, // dirty
     pat: u1, // page attribute table
     g: u1, // global
-    avl1: u3, // available
-    address: u40,
-    avl2: u7, // available
+    ignored1: u3,
+    address: u40, // between u24 and u39 based on MAXPHYADDR from cpuid, the rest must be 0s
+    ignored2: u7,
     pk: u4, // protection key
     xd: u1, // execute disable
 };
@@ -86,7 +88,6 @@ pub const PageTable = struct {
 const pte_present: u64 = 1 << 0;
 const pte_writable: u64 = 1 << 1;
 const pte_user: u64 = 1 << 2;
-const pte_large: u64 = 1 << 7; // TODO: support page directory entry
 const pte_noexec: u64 = 1 << 63;
 
 pub fn init() MapError!void {
@@ -127,8 +128,14 @@ pub fn init() MapError!void {
     // idt.setIST(idt.page_fault_vector, 2);
     idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
 
-    // switch page table
-    arch.writeRegister("cr3", page_table_addr);
+    switchPageTable(page_table_addr);
+}
+
+pub inline fn switchPageTable(addr: u64) void {
+    switch (arch.arch) {
+        .x86_64 => arch.writeRegister("cr3", addr),
+        else => unreachable, // TODO
+    }
 }
 
 fn pageFaultHandler(ctx: *cpu.Context) void {

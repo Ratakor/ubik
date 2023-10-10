@@ -127,10 +127,11 @@ var fadt: *const FADT = undefined;
 pub fn init() void {
     const rsdp: *RSDP = @ptrCast(root.rsdp_request.response.?.address);
 
+    use_xsdt = rsdp.useXSDT();
     log.info("revision: {}", .{rsdp.revision});
-    log.info("uses XSDT: {}", .{rsdp.useXSDT()});
+    log.info("uses XSDT: {}", .{use_xsdt});
 
-    if (rsdp.useXSDT()) {
+    if (use_xsdt) {
         parse(u64, rsdp.xsdt_addr);
     } else {
         parse(u32, @intCast(rsdp.rsdt_addr));
@@ -186,7 +187,10 @@ fn handleFADT(sdt: *const SDT) void {
 
 // https://github.com/mintsuki/acpi-shutdown-hack
 pub fn shutdown() noreturn {
-    const dsdt: *const SDT = @ptrFromInt(fadt.dsdt + vmm.hhdm_offset);
+    const dsdt: *const SDT = if (use_xsdt)
+        @ptrFromInt(fadt.x_dsdt + vmm.hhdm_offset)
+    else
+        @ptrFromInt(fadt.dsdt + vmm.hhdm_offset);
     const definition_block = dsdt.data();
 
     var s5_addr = blk: for (0..definition_block.len) |i| {

@@ -4,6 +4,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const vmm = @import("vmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.cpu);
 
@@ -47,7 +48,7 @@ pub const TSS = extern struct {
 
 pub const Cpu = struct {
     cpu_number: usize,
-    // bsp: bool,
+    bsp: bool,
     // active: bool,
     // last_run_queue_index: u32,
     lapic_id: u32,
@@ -62,8 +63,7 @@ pub const Cpu = struct {
 const cpu_stack_size = 0x10000;
 
 pub var sysenter: bool = false;
-pub var bsp_lapic_id: u32 = undefined; // TODO: x86 specific
-pub var smp_started: bool = undefined;
+pub var bsp_lapic_id: u32 = undefined;
 
 pub var cpus: []Cpu = undefined;
 
@@ -96,8 +96,6 @@ pub fn init() void {
         //     std.atomic.spinLoopHint();
         // }
     }
-
-    smp_started = true;
 }
 
 pub fn this() *Cpu {}
@@ -113,7 +111,9 @@ fn singleCpuInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     idt.reload();
     gdt.loadTSS(&cpu_local.tss);
 
-    // TODO
+    // vmm.switchPageTable(...);
+
+    // TODO threads
 
     arch.halt();
 }
