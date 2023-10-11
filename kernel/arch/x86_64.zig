@@ -136,3 +136,17 @@ pub inline fn wrmsr(msr: u32, value: u64) void {
           [_] "{ecx}" (msr),
     );
 }
+
+pub inline fn rdseed() u64 {
+    return asm volatile (
+        \\rdseed %[res]
+        : [res] "=r" (-> u64),
+    );
+}
+
+pub inline fn rdrand() u64 {
+    return asm volatile (
+        \\rdrand %[res]
+        : [res] "=r" (-> u64),
+    );
+}
