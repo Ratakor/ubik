@@ -1,10 +1,10 @@
 # Ubik
-A kernel
+A microkernel
 
 # TODO
 - Add a checklist/roadmap
+- Move tty and drivers out of kernel space
 - Provide compatibility with Linux ABI
-- Don't make a monolithic kernel
 - Support RISC-V64, aarch64 and x86_64
 - Replace limine with a custom bootloader?
 

@@ -59,6 +59,7 @@ pub var io_apics = std.ArrayList(*const IOAPIC).init(root.allocator);
 pub var isos = std.ArrayList(*const ISO).init(root.allocator);
 
 pub fn init() void {
+    // TODO: this is done by all cpu not just bsp, change that >:(
     // disable PIC
     arch.out(u8, 0xa1, 0xff);
     arch.out(u8, 0x21, 0xff);
@@ -78,8 +79,7 @@ pub fn timerOneShot(us: u64, vector: u8) void {
 
     timerStop();
 
-    // TODO
-    const ticks = us; //* (cpu.this().lapic_freq / 1000000);
+    const ticks = us * (cpu.this().lapic_freq / 1000000);
 
     writeRegister(.lvt_timer, vector);
     writeRegister(.timer_divide, 0);
@@ -115,8 +115,7 @@ pub fn timerCalibrate() void {
     const final_tick = pit.getCurrentCount();
 
     const total_ticks: u64 = initial_tick - final_tick;
-    _ = total_ticks;
-    // cpu.this().lapic_freq = (samples / total_ticks) * pit.dividend;
+    cpu.this().lapic_freq = (samples / total_ticks) * pit.dividend;
 
     timerStop();
 }

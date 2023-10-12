@@ -56,6 +56,8 @@ fn writeConfig(value: u8) void {
 fn keyboardHandler(ctx: *cpu.Context) void {
     _ = ctx;
     // TODO
-    root.tty0.readKey(read());
+    if (root.tty0) |tty| {
+        tty.readKey(read());
+    }
     apic.eoi();
 }

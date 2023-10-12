@@ -97,8 +97,8 @@ pub var kernel_address_space: AddressSpace = .{ .page_table = undefined };
 pub fn init() MapError!void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
 
-    const page_table_addr = pmm.alloc(1, true) orelse unreachable;
-    const page_table: *PageTable = @ptrFromInt(page_table_addr + hhdm_offset);
+    const page_table_phys = pmm.alloc(1, true) orelse unreachable;
+    const page_table: *PageTable = @ptrFromInt(page_table_phys + hhdm_offset);
 
     for (256..512) |i| {
         std.debug.assert(getNextLevel(page_table, i, true) != null);
@@ -133,22 +133,22 @@ pub fn init() MapError!void {
 
     kernel_address_space.page_table = page_table;
 
-    // idt.setIST(idt.page_fault_vector, 2);
-    idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
+    // TODO
+    // idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
+    // idt.setIST(idt.page_fault_vector, 2); // ?
 
-    switchPageTable(page_table_addr);
+    switchPageTable(page_table);
 }
 
-pub inline fn switchPageTable(addr: u64) void {
+pub inline fn switchPageTable(page_table: *PageTable) void {
     switch (arch.arch) {
-        .x86_64 => arch.writeRegister("cr3", addr),
+        .x86_64 => arch.writeRegister("cr3", @intFromPtr(page_table) - hhdm_offset),
         else => unreachable, // TODO
     }
 }
 
 fn pageFaultHandler(ctx: *cpu.Context) void {
     _ = ctx;
-    log.debug("TODO: handle Page fault", .{});
 }
 
 inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) MapError!void {

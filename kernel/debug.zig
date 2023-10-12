@@ -6,7 +6,7 @@ const serial = @import("serial.zig");
 
 var log_lock: SpinLock = .{};
 
-var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MB
+var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MiB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.dwarf.DwarfInfo = null;
@@ -39,29 +39,29 @@ pub fn init() !void {
     try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
 }
 
-pub fn printStackIterator(stack_iter: std.debug.StackIterator) void {
+pub fn printStackIterator(writer: anytype, stack_iter: std.debug.StackIterator) void {
     var iter = stack_iter;
 
-    root.writer.print("Stack trace:\n", .{}) catch unreachable;
+    writer.print("Stack trace:\n", .{}) catch unreachable;
     while (iter.next()) |addr| {
-        printSymbol(addr);
+        printSymbol(writer, addr);
     }
 }
 
-pub fn printStackTrace(stack_trace: *std.builtin.StackTrace) void {
+pub fn printStackTrace(writer: anytype, stack_trace: *std.builtin.StackTrace) void {
     var frame_index: usize = 0;
     var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
 
-    root.writer.print("Stack trace:\n", .{}) catch unreachable;
+    writer.print("Stack trace:\n", .{}) catch unreachable;
     while (frames_left != 0) {
         const return_address = stack_trace.instruction_addresses[frame_index];
-        printSymbol(return_address);
+        printSymbol(writer, return_address);
         frames_left -= 1;
         frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len;
     }
 }
 
-fn printSymbol(address: u64) void {
+fn printSymbol(writer: anytype, address: u64) void {
     var symbol_name: []const u8 = "<no symbol info>";
     var file_name: []const u8 = "??";
     var line: usize = 0;
@@ -78,7 +78,7 @@ fn printSymbol(address: u64) void {
         line = line_info.line;
     }
 
-    root.writer.print("0x{x:0>16}: {s} at {s}:{d}\n", .{
+    writer.print("0x{x:0>16}: {s} at {s}:{d}\n", .{
         address,
         symbol_name,
         file_name,

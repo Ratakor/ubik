@@ -96,10 +96,12 @@ pub fn loadTSS(tss: *TSS) void {
 
     const tss_int = @intFromPtr(tss);
 
-    gdt.tss.base_low = @truncate(tss_int);
-    gdt.tss.base_mid = @truncate(tss_int >> 16);
-    gdt.tss.base_high = @truncate(tss_int >> 24);
-    gdt.tss.base_upper = @truncate(tss_int >> 32);
+    gdt.tss = .{
+        .base_low = @truncate(tss_int),
+        .base_mid = @truncate(tss_int >> 16),
+        .base_high = @truncate(tss_int >> 24),
+        .base_upper = @truncate(tss_int >> 32),
+    };
 
     asm volatile (
         \\ltr %[tss]

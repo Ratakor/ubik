@@ -17,10 +17,10 @@ pub const Port = enum(u16) {
     // com8 = 0x4e8,
 };
 
-const com1_writer = std.io.Writer(void, error{}, com1Write){ .context = {} };
+pub const writer = std.io.Writer(void, error{}, com1Write){ .context = {} };
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
-    com1_writer.print(fmt, args) catch unreachable;
+    writer.print(fmt, args) catch unreachable;
 }
 
 pub fn init() void {

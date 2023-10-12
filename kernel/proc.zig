@@ -12,29 +12,26 @@ pub const fd_t = std.os.linux.fd_t;
 
 pub const Process = struct {
     pid: pid_t,
+    name: []u8,
+    parent: ?*Process,
     // ...
 };
+
+pub const Thread = struct {
+    self: *Thread, // TODO
+    errno: usize,
+
+    tid: u32,
+    lock: SpinLock,
+    this_cpu: *cpu.CpuLocal,
+    process: *Process,
+    // ...
+};
+
+pub fn init() void {}
 
 // pub fn getErrno(r: usize) E {
 //     const signed_r = @as(isize, @bitCast(r));
 //     const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
 //     return @as(E, @enumFromInt(int));
 // }
-
-pub const Thread = struct {
-    errno: usize,
-
-    tid: u32,
-    lock: SpinLock,
-    this_cpu: *cpu.Local,
-    // ...
-};
-
-pub fn init() void {}
-
-pub inline fn currentThread() *Thread {
-    return asm volatile (
-        \\mov %%gs:0x0, %[thr]
-        : [thr] "=r" (-> *Thread),
-    );
-}
