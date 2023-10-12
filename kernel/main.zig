@@ -81,12 +81,40 @@ export fn _start() callconv(.C) noreturn {
         term.hideCursor(writer) catch unreachable;
     };
 
-    const regs = arch.cpuid(0, 0);
+    var regs = arch.cpuid(0, 0);
     std.log.debug("vendor string: {s}{s}{s}", .{
         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
     });
+
+    regs = arch.cpuid(0x80000000, 0);
+    if (regs.eax >= 0x80000004) {
+        regs = arch.cpuid(0x80000002, 0);
+        writer.print("cpu name: {s}{s}{s}{s}", .{
+            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        }) catch unreachable;
+        regs = arch.cpuid(0x80000003, 0);
+        writer.print("{s}{s}{s}{s}", .{
+            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        }) catch unreachable;
+        regs = arch.cpuid(0x80000004, 0);
+        writer.print("{s}{s}{s}{s}\n", .{
+            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        }) catch unreachable;
+    }
+
+    regs = arch.cpuid(1, 0);
+    std.log.debug("feature: edx:ecx for leaf = 1: 0b{b:0>64}", .{@as(u64, (@as(u64, regs.edx) << 32) | regs.ecx)});
 
     arch.halt();
 }

@@ -1,5 +1,5 @@
 # Ubik
-A kernel made with zig
+A kernel
 
 # TODO
 - Add a checklist/roadmap
@@ -9,7 +9,7 @@ A kernel made with zig
 - Replace limine with a custom bootloader?
 
 # Clone, build and run
-Make sure to have `xorriso` and `qemu-system-x86` then run
+Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
 
 ```console
 % git clone https://github.com/ratakor/ubik --recursive

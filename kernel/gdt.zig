@@ -104,7 +104,7 @@ pub fn loadTSS(tss: *TSS) void {
     asm volatile (
         \\ltr %[tss]
         :
-        : [tss] "r" (0x28), // 0x28 = address of tss descriptor in gdt
+        : [tss] "{ax}" (@as(u16, 0x28)), // 0x28 = address of tss descriptor in gdt
         : "memory"
     );
 }

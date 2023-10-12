@@ -148,7 +148,7 @@ pub inline fn switchPageTable(addr: u64) void {
 
 fn pageFaultHandler(ctx: *cpu.Context) void {
     _ = ctx;
-    log.debug("TODO: handle Page fault\n", .{});
+    log.debug("TODO: handle Page fault", .{});
 }
 
 inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) MapError!void {

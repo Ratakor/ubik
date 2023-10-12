@@ -48,7 +48,7 @@ pub const TSS = extern struct {
     iopb: u16 align(1),
 };
 
-pub const Cpu = struct {
+pub const CpuLocal = struct {
     cpu_number: usize,
     bsp: bool, // is bootstrap processor
     // active: bool,
@@ -63,22 +63,16 @@ pub const Cpu = struct {
 };
 
 const PAT = packed struct {
-    pa0: u3,
-    reserved0: u5,
-    pa1: u3,
-    reserved1: u5,
-    pa2: u3,
-    reserved2: u5,
-    pa3: u3,
-    reserved3: u5,
-    pa4: u3,
-    reserved4: u5,
-    pa5: u3,
-    reserved5: u5,
-    pa6: u3,
-    reserved6: u5,
-    pa7: u3,
-    reserved7: u5,
+    // zig fmt: off
+    pa0: u3, reserved0: u5,
+    pa1: u3, reserved1: u5,
+    pa2: u3, reserved2: u5,
+    pa3: u3, reserved3: u5,
+    pa4: u3, reserved4: u5,
+    pa5: u3, reserved5: u5,
+    pa6: u3, reserved6: u5,
+    pa7: u3, reserved7: u5,
+    // zig fmt: on
 
     const Flags = enum(u64) {
         uncacheable = 0,
@@ -90,47 +84,68 @@ const PAT = packed struct {
     };
 };
 
-const cpu_stack_size = 0x10000;
-
-pub var sysenter: bool = false;
 pub var bsp_lapic_id: u32 = undefined;
+pub var cpus_local: []CpuLocal = undefined;
+var cpus_started: usize = 0;
 
-pub var cpus: []Cpu = undefined;
-
-var cpus_started_i: usize = 0;
-
-pub var fpu_storage_size: usize = 0;
-pub var fpu_save: *const fn (*Context) void = undefined;
-pub var fpu_restore: *const fn (*Context) void = undefined;
+// TODO
+// pub var sysenter: bool = false;
+// const cpu_stack_size = 0x10000;
+// pub var fpu_storage_size: usize = 0;
+// pub var fpu_save: *const fn (*Context) void = undefined;
+// pub var fpu_restore: *const fn (*Context) void = undefined;
 
 pub fn init() void {
-    initFeatures();
-
     const smp = root.smp_request.response.?;
     bsp_lapic_id = smp.bsp_lapic_id;
-    cpus = root.allocator.alloc(Cpu, smp.cpu_count) catch unreachable;
-    log.info("{} processors detected", .{cpus.len});
+    cpus_local = root.allocator.alloc(CpuLocal, smp.cpu_count) catch unreachable;
+    @memset(cpus_local, std.mem.zeroes(CpuLocal));
+    log.info("{} processors detected", .{cpus_local.len});
 
-    for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, i| {
+    // TODO: lapic irq handler
+
+    for (smp.cpus(), cpus_local, 0..) |cpu, *cpu_local, i| {
         cpu.extra_argument = @intFromPtr(cpu_local);
         cpu_local.cpu_number = i;
 
         if (cpu.lapic_id != bsp_lapic_id) {
-            // cpu.goto_address = trampoline;
+            cpu.goto_address = @ptrCast(&trampoline);
         } else {
-            // cpu_local.bsp = true;
-            // tranpoline(cpu);
+            cpu_local.bsp = true;
+            trampoline(cpu);
         }
+    }
 
-        // while (cpus_started_i != cpus.len) {
-        //     std.atomic.spinLoopHint();
-        // }
+    while (cpus_started != cpus_local.len) {
+        std.atomic.spinLoopHint();
     }
 }
 
-pub fn this() *Cpu {}
+pub fn this() *CpuLocal {}
 
-// TODO: move to trampoline
+fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) void {
+    const cpu_local: *CpuLocal = @ptrFromInt(smp_info.extra_argument);
+    cpu_local.lapic_id = smp_info.lapic_id;
+
+    initFeatures();
+
+    gdt.reload();
+    idt.reload();
+    // gdt.loadTSS(&cpu_local.tss); // TODO: cause page fault
+
+    // TODO: save cr3 or add a cr3 func to AddressSpace?
+    vmm.switchPageTable(@intFromPtr(vmm.kernel_address_space.page_table) - vmm.hhdm_offset);
+
+    // TODO threads + lapic
+
+    log.info("processor {} is online", .{cpu_local.lapic_id});
+    cpus_started += 1;
+
+    if (!cpu_local.bsp) {
+        arch.halt();
+    }
+}
+
 fn initFeatures() void {
     // enable SSE/SSE2
     var cr0: u64 = arch.readRegister("cr0");
@@ -151,22 +166,4 @@ fn initFeatures() void {
 
     // TODO
     // use cpuid
-}
-
-fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
-    const cpu_local: *Cpu = @ptrFromInt(smp_info.extra_argument);
-    const cpu_number = cpu_local.cpu_number;
-    _ = cpu_number;
-
-    cpu_local.lapic_id = smp_info.lapic_id;
-
-    gdt.reload();
-    idt.reload();
-    gdt.loadTSS(&cpu_local.tss);
-
-    // vmm.switchPageTable(...);
-
-    // TODO threads
-
-    arch.halt();
 }
