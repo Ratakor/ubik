@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const fmt_step = b.step("fmt", "Format all source files");
-    fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{"kernel"} }).step);
+    fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{ "kernel", "lib" } }).step);
 
     const clean_step = b.step("clean", "Delete all artifacts created by zig build");
     clean_step.dependOn(&b.addRemoveDirTree("zig-cache").step);

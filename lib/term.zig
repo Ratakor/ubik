@@ -74,7 +74,6 @@ pub const ColorRGB = struct {
     }
 };
 
-
 pub inline fn resetColor(writer: anytype) !void {
     try writer.writeAll(csi ++ "m");
 }
