@@ -59,6 +59,10 @@ pub var io_apics = std.ArrayList(*const IOAPIC).init(root.allocator);
 pub var isos = std.ArrayList(*const ISO).init(root.allocator);
 
 pub fn init() void {
+    // disable PIC
+    arch.out(u8, 0xa1, 0xff);
+    arch.out(u8, 0x21, 0xff);
+
     timerCalibrate();
     // configure spurious IRQ
     writeRegister(.spurious, readRegister(.spurious) | (1 << 8) | 0xff);

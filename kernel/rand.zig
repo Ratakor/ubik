@@ -17,7 +17,7 @@ pub fn init() void {
         log.info("getting seed from rdrand: {}", .{seed});
     } else {
         seed = @as(u64, @intCast(pit.realtime.tv_sec)) ^ 0x91217df9814032ab;
-        log.info("getting seed from current time: {}", .{seed});
+        log.info("getting seed from time: {}", .{seed});
     }
 
     pcg = Pcg.init(seed);

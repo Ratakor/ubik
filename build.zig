@@ -31,6 +31,7 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     });
     kernel.code_model = .kernel;
     kernel.addModule("limine", limine.module("limine"));
+    kernel.addModule("ubik", b.createModule(.{ .source_file = .{ .path = "lib/ubik.zig" } }));
     kernel.setLinkerScriptPath(.{
         .path = concat(b, &[_][]const u8{ "kernel/linker-", @tagName(target.cpu_arch.?), ".ld" }),
     });

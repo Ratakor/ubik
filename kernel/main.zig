@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const limine = @import("limine");
+const ubik = @import("ubik");
 const arch = @import("arch.zig");
 const debug = @import("debug.zig");
 const serial = @import("serial.zig");
@@ -24,7 +25,7 @@ pub const std_options = struct {
 };
 
 pub const os = struct {
-    pub const system = struct {};
+    pub const system = ubik;
     pub const heap = struct {
         pub const page_allocator = vmm.page_allocator;
     };
@@ -50,13 +51,13 @@ pub export var module_request: limine.ModuleRequest = .{};
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
     arch.disableInterrupts();
-    tty.resetColor();
-    tty.Color.setFg(.red);
+    // tty.resetColor();
+    // tty.Color.setFg(.red);
     tty.write("\nKernel panic: ");
-    tty.resetColor();
+    // tty.resetColor();
     tty.print("{s}\n", .{msg});
     debug.printStackIterator(std.debug.StackIterator.init(@returnAddress(), @frameAddress()));
-    tty.hideCursor();
+    // tty.hideCursor();
     arch.halt();
 }
 
@@ -66,7 +67,7 @@ export fn _start() callconv(.C) noreturn {
         if (@errorReturnTrace()) |stack_trace| {
             debug.printStackTrace(stack_trace);
         }
-        tty.hideCursor();
+        // tty.hideCursor();
     };
 
     const regs = arch.cpuid(0, 0);
