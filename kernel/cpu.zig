@@ -8,6 +8,8 @@ const vmm = @import("vmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.cpu);
 
+// TODO: move smp stuff to smp.zig
+
 pub const Context = extern struct {
     ds: u64,
     es: u64,
@@ -48,7 +50,7 @@ pub const TSS = extern struct {
 
 pub const Cpu = struct {
     cpu_number: usize,
-    bsp: bool,
+    bsp: bool, // is bootstrap processor
     // active: bool,
     // last_run_queue_index: u32,
     lapic_id: u32,
@@ -114,10 +116,10 @@ pub fn init() void {
         cpu_local.cpu_number = i;
 
         if (cpu.lapic_id != bsp_lapic_id) {
-            // cpu.goto_address = singleCpuInit;
+            // cpu.goto_address = trampoline;
         } else {
             // cpu_local.bsp = true;
-            // singleCpuInit(cpu);
+            // tranpoline(cpu);
         }
 
         // while (cpus_started_i != cpus.len) {
@@ -128,7 +130,7 @@ pub fn init() void {
 
 pub fn this() *Cpu {}
 
-// TODO: move to singleCpuInit()
+// TODO: move to trampoline
 fn initFeatures() void {
     // enable SSE/SSE2
     var cr0: u64 = arch.readRegister("cr0");
@@ -151,7 +153,7 @@ fn initFeatures() void {
     // use cpuid
 }
 
-fn singleCpuInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
+fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     const cpu_local: *Cpu = @ptrFromInt(smp_info.extra_argument);
     const cpu_number = cpu_local.cpu_number;
     _ = cpu_number;

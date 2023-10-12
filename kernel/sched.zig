@@ -5,7 +5,7 @@ const rand = @import("rand.zig");
 const log = std.log.scoped(.sched);
 
 pub fn init() void {
-    const sched_vector = idt.allocateVector();
+    const sched_vector = idt.allocVector();
     log.info("scheduler interrupt vector is 0x{x}", .{sched_vector});
 
     rand.init();

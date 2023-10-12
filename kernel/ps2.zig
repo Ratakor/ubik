@@ -26,7 +26,7 @@ pub fn init() void {
     //     write(0x64, 0xa8);
     // }
 
-    const keyboard_vector = idt.allocateVector();
+    const keyboard_vector = idt.allocVector();
     idt.registerHandler(keyboard_vector, keyboardHandler);
     apic.setIRQRedirect(cpu.bsp_lapic_id, keyboard_vector, 1);
 

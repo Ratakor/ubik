@@ -68,7 +68,7 @@ pub fn init() void {
     writeRegister(.spurious, readRegister(.spurious) | (1 << 8) | 0xff);
 }
 
-pub fn eoi() void {
+pub inline fn eoi() void {
     writeRegister(.eoi, 0);
 }
 

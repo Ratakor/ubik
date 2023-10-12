@@ -103,7 +103,7 @@ pub fn reload() void {
     );
 }
 
-pub fn allocateVector() u8 {
+pub fn allocVector() u8 {
     const vector = @atomicRmw(u8, &next_vector, .Add, 1, .AcqRel);
     if (vector >= 256 - 16) { // TODO - 16 ? also u8 so care about overflows
         @panic("IDT exhausted");

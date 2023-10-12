@@ -105,7 +105,7 @@ pub fn init() void {
     realtime.tv_sec = boot_time;
 
     setFrequency(timer_freq);
-    const timer_vector = idt.allocateVector();
+    const timer_vector = idt.allocVector();
     idt.registerHandler(timer_vector, timerHandler);
     apic.setIRQRedirect(cpu.bsp_lapic_id, timer_vector, 0);
 
