@@ -1,9 +1,9 @@
 const std = @import("std");
+const root = @import("root");
 const arch = @import("arch.zig");
 const idt = @import("idt.zig");
 const cpu = @import("cpu.zig");
 const apic = @import("apic.zig");
-const tty = @import("tty.zig");
 
 pub fn init() void {
     // // disable primary and secondary PS/2 ports
@@ -55,6 +55,7 @@ fn writeConfig(value: u8) void {
 
 fn keyboardHandler(ctx: *cpu.Context) void {
     _ = ctx;
-    tty.readKey(read());
+    // TODO
+    root.tty0.readKey(read());
     apic.eoi();
 }

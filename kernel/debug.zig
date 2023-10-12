@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const root = @import("root");
 const SpinLock = @import("lock.zig").SpinLock;
 const serial = @import("serial.zig");
-const tty = @import("tty.zig");
 
 var log_lock: SpinLock = .{};
 
@@ -43,7 +42,7 @@ pub fn init() !void {
 pub fn printStackIterator(stack_iter: std.debug.StackIterator) void {
     var iter = stack_iter;
 
-    tty.print("Stack trace:\n", .{});
+    root.writer.print("Stack trace:\n", .{}) catch unreachable;
     while (iter.next()) |addr| {
         printSymbol(addr);
     }
@@ -53,7 +52,7 @@ pub fn printStackTrace(stack_trace: *std.builtin.StackTrace) void {
     var frame_index: usize = 0;
     var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
 
-    tty.print("Stack trace:\n", .{});
+    root.writer.print("Stack trace:\n", .{}) catch unreachable;
     while (frames_left != 0) {
         const return_address = stack_trace.instruction_addresses[frame_index];
         printSymbol(return_address);
@@ -79,7 +78,12 @@ fn printSymbol(address: u64) void {
         line = line_info.line;
     }
 
-    tty.print("0x{x:0>16}: {s} at {s}:{d}\n", .{ address, symbol_name, file_name, line });
+    root.writer.print("0x{x:0>16}: {s} at {s}:{d}\n", .{
+        address,
+        symbol_name,
+        file_name,
+        line,
+    }) catch unreachable;
 }
 
 fn getSectionData(elf: [*]const u8, shdr: []const u8) []const u8 {

@@ -1,11 +1,14 @@
-//! Tries to implement this standard for terminfo with some exceptions
-//! https://man7.org/linux/man-pages/man4/console_codes.4.html
-//! Based on https://github.com/mintsuki/flanterm.git
+//! Some part are based on https://github.com/mintsuki/flanterm.git
 
 const std = @import("std");
+const root = @import("root");
+const SpinLock = @import("lock.zig").SpinLock;
 
-pub const Terminal = @This();
-const Context = Terminal;
+// TODO: termios
+// TODO: user_write_lock -> user write on buffer + framebuffer, log user write?
+
+pub const TTY = @This();
+const Context = TTY;
 
 cursor_enabled: bool,
 scroll_enabled: bool,
@@ -68,9 +71,20 @@ saved_state_current_charset: usize,
 saved_state_current_primary: usize,
 saved_state_current_bg: usize,
 
+// TODO: lock? also don't forget to init it
+// read_lock: SpinLock,
+// write_lock: SpinLock,
+
+extra_scancodes: bool,
+ctrl_active: bool,
+shift_active: bool,
+capslock_active: bool,
+
 callback: *const CallbackFn,
 
-pub const CallbackFn = fn (*Context, Callback, u64, u64, u64) void;
+pub const Reader = std.io.Reader(*TTY, error{}, read);
+pub const Writer = std.io.Writer(*TTY, error{}, write);
+pub const CallbackFn = fn (*TTY, Callback, u64, u64, u64) void;
 
 pub const Callback = enum(u64) {
     dec = 10,
@@ -103,6 +117,36 @@ const Color = enum(u32) {
     _,
 };
 
+const ScanCode = enum(u8) {
+    ctrl = 0x1d,
+    ctrl_rel = 0x9d,
+    shift_right = 0x36,
+    shift_right_rel = 0xb6,
+    shift_left = 0x2a,
+    shift_left_rel = 0xaa,
+    alt_left = 0x38, // TODO, altGr too
+    alt_left_rel = 0xb8,
+    capslock = 0x3a,
+    numlock = 0x45, // TODO
+
+    keypad_enter = 0x1c,
+    keypad_slash = 0x35,
+    arrow_up = 0x48,
+    arrow_left = 0x4b,
+    arrow_down = 0x50,
+    arrow_right = 0x4d,
+
+    // TODO
+    insert = 0x52,
+    home = 0x47,
+    end = 0x4f,
+    pgup = 0x49,
+    pgdown = 0x51,
+    delete = 0x53,
+
+    _,
+};
+
 const Char = struct {
     c: u32,
     fg: Color,
@@ -117,11 +161,6 @@ const QueueItem = struct {
 
 const maxInt = std.math.maxInt;
 const control_code = std.ascii.control_code;
-
-// TODO: use kernel allocator instead
-var fba_buffer: [8 * 1024 * 1024]u8 = undefined; // 8MB
-var fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
-const allocator = fba.allocator();
 
 const MAX_ESC_VALUES = 16;
 const FONT_GLYPHS = 256;
@@ -230,21 +269,46 @@ const col256 = [_]u32{
 };
 // zig fmt: on
 
-pub fn write(self: *Context, buf: []const u8) void {
-    for (buf) |char| {
-        self.putChar(char);
-    }
+const esc = std.ascii.control_code.esc;
+const bs = std.ascii.control_code.bs;
 
-    self.doubleBufferFlush();
-}
+// zig fmt: off
+const convtab_nomod = [_]u8{
+    0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' ',
+};
+
+const convtab_capslock = [_]u8{
+    0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\n', 0, 'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\'', '`', 0, '\\', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', ',', '.', '/', 0, 0, 0, ' ',
+};
+
+const convtab_shift = [_]u8{
+    0, esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', bs, '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0, 'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' ',
+};
+
+const convtab_shift_capslock = [_]u8{
+    0, esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', bs, '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '{', '}', '\n', 0, 'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ':', '"', '~', 0, '|', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', '<', '>', '?', 0, 0, 0, ' '
+};
+// zig fmt: on
 
 pub fn init(
     framebuffer: [*]u8,
     width: usize,
     height: usize,
     callback: ?*const CallbackFn,
-) !*Context {
-    var self = try allocator.create(Context);
+) !*TTY {
+    var self = try root.allocator.create(Context);
     @memset(std.mem.asBytes(self), 0);
 
     self.text_fg = DEFAULT_FG;
@@ -260,9 +324,9 @@ pub fn init(
     self.offset_y = (self.height % FONT_HEIGHT) / 2;
 
     const screen_size = self.rows * self.cols;
-    self.grid = try allocator.alloc(Char, screen_size);
-    self.queue = try allocator.alloc(QueueItem, screen_size);
-    self.map = try allocator.alloc(?*QueueItem, screen_size);
+    self.grid = try root.allocator.alloc(Char, screen_size);
+    self.queue = try root.allocator.alloc(QueueItem, screen_size);
+    self.map = try root.allocator.alloc(?*QueueItem, screen_size);
 
     const default_c: Char = .{ .c = ' ', .fg = self.text_fg, .bg = self.text_bg };
     @memset(self.grid, default_c);
@@ -313,7 +377,32 @@ pub fn reinit(self: *Context) void {
     self.scroll_bottom_margin = self.rows;
 }
 
-fn dummyCallBack(_: *Context, _: Callback, _: u64, _: u64, _: u64) void {}
+// TODO
+pub fn read(self: *Context, buf: []u8) error{}!usize {
+    _ = buf;
+    _ = self;
+    return 0;
+}
+
+// TODO: useless error union + catch unreachable everywhere is really ugly :)
+pub fn write(self: *Context, buf: []const u8) error{}!usize {
+    for (buf) |char| {
+        self.putChar(char);
+    }
+
+    self.doubleBufferFlush();
+    return buf.len;
+}
+
+pub fn reader(tty: *TTY) Reader {
+    return .{ .context = tty };
+}
+
+pub fn writer(tty: *TTY) Writer {
+    return .{ .context = tty };
+}
+
+fn dummyCallBack(_: *TTY, _: Callback, _: u64, _: u64, _: u64) void {}
 
 inline fn swapPalette(self: *Context) void {
     const tmp = self.text_bg;
@@ -1571,4 +1660,103 @@ fn putChar(self: *Context, c: u8) void {
     if (c >= 0x20 and c <= 0x7e) {
         self.rawPutChar(c);
     }
+}
+
+// TODO: tell kernel to grab input instead of doing it like that
+//       also do the things instead of using term.zig
+pub fn readKey(self: *Context, input: u8) void {
+    if (input == 0xe0) {
+        self.extra_scancodes = true;
+        return;
+    }
+
+    if (self.extra_scancodes) {
+        self.extra_scancodes = false;
+
+        switch (@as(ScanCode, @enumFromInt(input))) {
+            .ctrl => {
+                self.ctrl_active = true;
+                return;
+            },
+            .ctrl_rel => {
+                self.ctrl_active = false;
+                return;
+            },
+            .keypad_enter => {
+                _ = self.write("\n") catch unreachable;
+                return;
+            },
+            .keypad_slash => {
+                _ = self.write("/") catch unreachable;
+                return;
+            },
+            // TODO for arrows we could also output A, B, C or D depending on termios settings
+            .arrow_up => {
+                root.os.system.term.cursorUp(self.writer(), 1) catch unreachable;
+                return;
+            },
+            .arrow_left => {
+                root.os.system.term.cursorBackward(self.writer(), 1) catch unreachable;
+                return;
+            },
+            .arrow_down => {
+                root.os.system.term.cursorDown(self.writer(), 1) catch unreachable;
+                return;
+            },
+            .arrow_right => {
+                root.os.system.term.cursorForward(self.writer(), 1) catch unreachable;
+                return;
+            },
+            .insert, .home, .end, .pgup, .pgdown, .delete => return,
+            else => {},
+        }
+    }
+
+    switch (@as(ScanCode, @enumFromInt(input))) {
+        .shift_left, .shift_right => {
+            self.shift_active = true;
+            return;
+        },
+        .shift_left_rel, .shift_right_rel => {
+            self.shift_active = false;
+            return;
+        },
+        .ctrl => {
+            self.ctrl_active = true;
+            return;
+        },
+        .ctrl_rel => {
+            self.ctrl_active = false;
+            return;
+        },
+        .capslock => {
+            self.capslock_active = !self.capslock_active;
+            return;
+        },
+        else => {},
+    }
+
+    var c: u8 = undefined;
+
+    if (input >= 0x3b) return; // TODO F1-F12 + keypad pressed
+
+    if (!self.capslock_active) {
+        if (!self.shift_active) {
+            c = convtab_nomod[input];
+        } else {
+            c = convtab_shift[input];
+        }
+    } else {
+        if (!self.shift_active) {
+            c = convtab_capslock[input];
+        } else {
+            c = convtab_shift_capslock[input];
+        }
+    }
+
+    if (self.ctrl_active) {
+        c = std.ascii.toUpper(c) -% 0x40;
+    }
+
+    _ = self.write(&[1]u8{c}) catch unreachable;
 }

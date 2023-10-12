@@ -5,7 +5,6 @@ const ubik = @import("ubik");
 const arch = @import("arch.zig");
 const debug = @import("debug.zig");
 const serial = @import("serial.zig");
-const tty = @import("tty.zig");
 const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const event = @import("event.zig");
@@ -18,6 +17,8 @@ const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
 const pit = @import("pit.zig");
+const term = ubik.term;
+const TTY = @import("TTY.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 
 pub const std_options = struct {
@@ -36,6 +37,8 @@ var gpa = std.heap.GeneralPurposeAllocator(.{
     .verbose_log = if (builtin.mode == .Debug) true else false,
 }){};
 pub const allocator = gpa.allocator();
+pub var tty0: *TTY = undefined;
+pub var writer: TTY.Writer = undefined;
 
 pub export var boot_info_request: limine.BootloaderInfoRequest = .{};
 pub export var hhdm_request: limine.HhdmRequest = .{};
@@ -48,26 +51,34 @@ pub export var smp_request: limine.SmpRequest = .{};
 pub export var boot_time_request: limine.BootTimeRequest = .{};
 pub export var module_request: limine.ModuleRequest = .{};
 
+fn callback(tty: *TTY, cb: TTY.Callback, arg1: u64, arg2: u64, arg3: u64) void {
+    _ = tty;
+    // TODO: https://github.com/limine-bootloader/limine/blob/v5.x-branch/PROTOCOL.md#terminal-callback
+    switch (cb) {
+        else => std.log.warn("unhandled callback: `{}` with args: {}, {}, {}", .{ cb, arg1, arg2, arg3 }),
+    }
+}
+
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
     arch.disableInterrupts();
-    // tty.resetColor();
-    // tty.Color.setFg(.red);
-    tty.write("\nKernel panic: ");
-    // tty.resetColor();
-    tty.print("{s}\n", .{msg});
+    term.resetColor(writer) catch unreachable;
+    term.Color.setFg(writer, .red) catch unreachable;
+    writer.writeAll("\nKernel panic: ") catch unreachable;
+    term.resetColor(writer) catch unreachable;
+    writer.print("{s}\n", .{msg}) catch unreachable;
     debug.printStackIterator(std.debug.StackIterator.init(@returnAddress(), @frameAddress()));
-    // tty.hideCursor();
+    term.hideCursor(writer) catch unreachable;
     arch.halt();
 }
 
 export fn _start() callconv(.C) noreturn {
     main() catch |err| {
-        tty.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {any}\n", .{err});
+        writer.print("\x1b[m\x1b[91m\nKernel error:\x1b[m {any}\n", .{err}) catch unreachable;
         if (@errorReturnTrace()) |stack_trace| {
             debug.printStackTrace(stack_trace);
         }
-        // tty.hideCursor();
+        term.hideCursor(writer) catch unreachable;
     };
 
     const regs = arch.cpuid(0, 0);
@@ -85,11 +96,6 @@ fn main() !void {
     defer arch.enableInterrupts();
 
     serial.init();
-    tty.init() catch unreachable;
-
-    const boot_info = boot_info_request.response.?;
-    tty.print("Booting Ubik with {s} {s}\n", .{ boot_info.name, boot_info.version });
-
     debug.init() catch |err| {
         std.log.warn("Failed to initialize debug info: {}\n", .{err});
     };
@@ -99,7 +105,7 @@ fn main() !void {
     event.init(); // TODO
 
     pmm.init();
-    try vmm.init(); // TODO
+    vmm.init() catch unreachable; // TODO
 
     proc.init(); // TODO + TSS
     sched.init(); // TODO
@@ -110,6 +116,17 @@ fn main() !void {
     acpi.init();
     apic.init(); // TODO: local apic timers for sched
     pit.init();
+
+    const fb = framebuffer_request.response.?.framebuffers()[0];
+    tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
+    writer = tty0.writer();
+
+    const boot_info = boot_info_request.response.?;
+    writer.print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+        boot_info.name,
+        boot_info.version,
+    }) catch unreachable;
+
     ps2.init();
     // TODO: pci
 

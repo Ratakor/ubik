@@ -5,7 +5,6 @@ const root = @import("root");
 const cpu = @import("cpu.zig");
 const arch = @import("arch.zig");
 const idt = @import("idt.zig");
-const tty = @import("tty.zig");
 const pmm = @import("pmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.vmm);
@@ -149,7 +148,7 @@ pub inline fn switchPageTable(addr: u64) void {
 
 fn pageFaultHandler(ctx: *cpu.Context) void {
     _ = ctx;
-    tty.print("TODO: handle Page fault\n", .{});
+    log.debug("TODO: handle Page fault\n", .{});
 }
 
 inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) MapError!void {
