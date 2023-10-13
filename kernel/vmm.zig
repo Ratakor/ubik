@@ -5,7 +5,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const idt = arch.idt;
 const pmm = @import("pmm.zig");
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.vmm);
 
 // TODO: flag, remap, fork
@@ -33,14 +33,19 @@ pub const PageTableEntry = packed struct {
     ignored2: u7,
     pk: u4, // protection key
     xd: u1, // execute disable
+
+    pub inline fn getAddress(self: PageTableEntry) u64 {
+        return @as(u64, self.address) << 12;
+    }
 };
 
+// TODO: merge this struct with AddressSpace
 pub const PageTable = struct {
     entries: [512]PageTableEntry,
 
     const Self = @This();
 
-    inline fn getEntry(self: *Self, vaddr: u64, allocate: bool) ?*PageTableEntry {
+    pub fn virt2pte(self: *Self, vaddr: u64, allocate: bool) ?*PageTableEntry {
         const pml4_idx = (vaddr & (0x1ff << 39)) >> 39;
         const pml3_idx = (vaddr & (0x1ff << 30)) >> 30;
         const pml2_idx = (vaddr & (0x1ff << 21)) >> 21;
@@ -54,16 +59,22 @@ pub const PageTable = struct {
         return &pml1.entries[pml1_idx];
     }
 
+    pub fn virt2phys(self: *Self, vaddr: u64) MapError!u64 {
+        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        if (pte.p == 0) return error.NotMapped;
+        return pte.getAddress();
+    }
+
     pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) MapError!void {
-        const entry = self.getEntry(vaddr, true) orelse return error.OutOfMemory;
-        if (entry.p != 0) return error.AlreadyMapped;
-        entry.* = @bitCast(paddr | flags);
+        const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
+        if (pte.p != 0) return error.AlreadyMapped;
+        pte.* = @bitCast(paddr | flags);
     }
 
     pub fn unmapPage(self: *Self, vaddr: u64) MapError!void {
-        const entry = self.getEntry(vaddr, false) orelse return error.OutOfMemory;
-        if (entry.p == 0) return error.NotMapped;
-        entry.* = @bitCast(0);
+        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        if (pte.p == 0) return error.NotMapped;
+        pte.* = @bitCast(0);
     }
 };
 
@@ -108,7 +119,7 @@ pub fn init() MapError!void {
     const page_table: *PageTable = @ptrFromInt(page_table_phys + hhdm_offset);
 
     for (256..512) |i| {
-        std.debug.assert(getNextLevel(page_table, i, true) != null);
+        _ = getNextLevel(page_table, i, true) != null;
     }
 
     try mapSection("text", page_table, pte_present);
@@ -173,10 +184,10 @@ inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags
 }
 
 fn getNextLevel(page_table: *PageTable, idx: usize, allocate: bool) ?*PageTable {
-    const entry = &page_table.entries[idx];
+    const pte = &page_table.entries[idx];
 
-    if (entry.p != 0) {
-        return @ptrFromInt((@as(u64, entry.address) << 12) + hhdm_offset);
+    if (pte.p != 0) {
+        return @ptrFromInt(pte.getAddress() + hhdm_offset);
     }
 
     if (!allocate) {
@@ -184,7 +195,7 @@ fn getNextLevel(page_table: *PageTable, idx: usize, allocate: bool) ?*PageTable 
     }
 
     const new_page_table = pmm.alloc(1, true) orelse return null; // errno = ENOMEM
-    entry.* = @bitCast(new_page_table | pte_present | pte_writable | pte_user);
+    pte.* = @bitCast(new_page_table | pte_present | pte_writable | pte_user);
     return @ptrFromInt(new_page_table + hhdm_offset);
 }
 

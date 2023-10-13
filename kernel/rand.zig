@@ -1,6 +1,6 @@
 const std = @import("std");
 const arch = @import("arch.zig");
-const pit = @import("pit.zig");
+const time = @import("time.zig");
 const log = std.log.scoped(.rand);
 
 const Pcg = std.rand.Pcg;
@@ -16,7 +16,7 @@ pub fn init() void {
         seed = arch.rdrand();
         log.info("getting seed from rdrand: {}", .{seed});
     } else {
-        seed = @as(u64, @intCast(pit.realtime.tv_sec)) ^ 0x91217df9814032ab;
+        seed = @as(u64, @intCast(time.realtime.tv_sec)) ^ 0x91217df9814032ab;
         log.info("getting seed from time: {}", .{seed});
     }
 

@@ -2,7 +2,7 @@ const std = @import("std");
 const smp = @import("smp.zig");
 const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 
 // TODO: merge this with sched.zig
 // TODO: this needs a lot of work

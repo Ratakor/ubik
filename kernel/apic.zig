@@ -2,9 +2,8 @@ const std = @import("std");
 const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
 const smp = @import("smp.zig");
-const pit = @import("pit.zig");
-
-pub var lapic_base: u32 = undefined; // set in acpi.zig with handleMADT()
+const pit = @import("time.zig");
+const SpinLock = @import("SpinLock.zig");
 
 const Register = enum(u64) {
     lapic_id = 0x020,
@@ -53,16 +52,19 @@ const ISO = extern struct {
     flags: u16 align(1),
 };
 
+pub var lapic_base: u32 = undefined; // set in acpi.zig with handleMADT()
+
 pub var io_apics: std.ArrayListUnmanaged(*const IOAPIC) = .{};
 pub var isos: std.ArrayListUnmanaged(*const ISO) = .{};
 
+var init_lock: SpinLock = .{};
+
 pub fn init() void {
-    // TODO: this is done by all cpu not just bsp, change that >:(
-    // disable PIC
-    arch.out(u8, 0xa1, 0xff);
-    arch.out(u8, 0x21, 0xff);
+    init_lock.lock();
+    defer init_lock.unlock();
 
     timerCalibrate();
+
     // configure spurious IRQ
     writeRegister(.spurious, readRegister(.spurious) | (1 << 8) | 0xff);
 }
@@ -89,7 +91,6 @@ pub fn timerStop() void {
     writeRegister(.lvt_timer, 1 << 16);
 }
 
-// TODO: setup Inter-Processor Interrupts
 pub fn sendIPI(lapic_id: u32, vec: u32) void {
     writeRegister(.icr1, lapic_id << 24);
     writeRegister(.icr0, vec);

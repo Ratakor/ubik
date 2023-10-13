@@ -19,6 +19,7 @@ pub fn init() void {
     // idt.setIST(sched_vector, 1);
 }
 
+// TODO: move to arch
 pub inline fn currentThread() *Thread {
     return asm volatile (
         \\mov %%gs:0x0, %[thr]

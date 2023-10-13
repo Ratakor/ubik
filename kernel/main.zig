@@ -12,11 +12,10 @@ const proc = @import("proc.zig");
 const sched = @import("sched.zig");
 const smp = @import("smp.zig");
 const acpi = @import("acpi.zig");
-const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
-const pit = @import("pit.zig");
+const time = @import("time.zig");
 const TTY = @import("TTY.zig");
-pub const SpinLock = @import("lock.zig").SpinLock;
+pub const SpinLock = @import("SpinLock.zig");
 
 pub const std_options = struct {
     pub const logFn = debug.log;
@@ -143,22 +142,20 @@ fn main() !void {
     };
 
     arch.init();
-
-    event.init(); // TODO
+    event.init(); // TODO: init event handlers
 
     pmm.init();
-    vmm.init() catch unreachable; // TODO
+    vmm.init() catch unreachable; // TODO: mmap
 
-    acpi.init(); // TODO: change so it can be after cpu smh
+    acpi.init();
 
     proc.init(); // TODO
     sched.init(); // TODO
-    // TODO: threads <- with priority level ? <- have a list of thread based
-    // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
-    smp.init(); // TODO
+    smp.init();
 
-    apic.init(); // TODO: local apic timers for sched
-    pit.init();
+    time.init();
+
+    // TODO: start kernel main thread
 
     const fb = framebuffer_request.response.?.framebuffers()[0];
     tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
@@ -171,14 +168,16 @@ fn main() !void {
 
     ps2.init();
     // TODO: pci
+    // TODO: vfs
+    // TODO: basic syscalls
 
-    // TODO: process
-    // TODO: basic syscalls + lib for them (zig + C)
-    // TODO: server with more syscall for compat with Linux
-
-    // TODO: filesystem <- extern
-
-    // TODO: socket -> TCP/IP
+    // TODO: setup Inter-Processor Interrupts
+    // TODO: basic IPC
 
     // TODO: start /bin/init <- load elf with std.elf
+
+    // extern, I think
+    // TODO: server with posix syscalls
+    // TODO: filesystem
+    // TODO: IPC: pipe, socket (TCP, UDP, Unix)
 }

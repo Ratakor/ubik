@@ -7,9 +7,6 @@ pub const CPUID = struct {
     edx: u32,
 };
 
-// TODO
-// var use_xsave = false;
-
 pub inline fn halt() noreturn {
     while (true) asm volatile ("hlt");
 }
@@ -22,14 +19,18 @@ pub inline fn enableInterrupts() void {
     asm volatile ("sti");
 }
 
-pub inline fn toggleInterrupts(state: bool) bool {
-    const old_state = asm volatile (
+pub inline fn interruptState() bool {
+    return asm volatile (
         \\pushfq
         \\pop %[ret]
         : [ret] "=r" (-> u64),
         :
         : "memory"
     ) & (1 << 9) != 0;
+}
+
+pub inline fn toggleInterrupts(state: bool) bool {
+    const old_state = interruptState();
     if (state) enableInterrupts() else disableInterrupts();
     return old_state;
 }
@@ -145,6 +146,30 @@ pub inline fn wrmsr(msr: u32, value: u64) void {
     );
 }
 
+pub inline fn setKernelGsBase(addr: u64) void {
+    wrmsr(0xc0000102, addr);
+}
+
+pub inline fn setGsBase(addr: u64) void {
+    wrmsr(0xc0000101, addr);
+}
+
+pub inline fn setFsBase(addr: u64) void {
+    wrmsr(0xc0000100, addr);
+}
+
+pub inline fn getKernelGsbase() u64 {
+    return rdmsr(0xc0000102);
+}
+
+pub inline fn getGsbase() u64 {
+    return rdmsr(0xc0000101);
+}
+
+pub inline fn getFsbase() u64 {
+    return rdmsr(0xc0000100);
+}
+
 pub inline fn wrxcr(reg: u32, value: u64) void {
     asm volatile (
         \\xsetbv
@@ -152,6 +177,46 @@ pub inline fn wrxcr(reg: u32, value: u64) void {
         : [_] "{eax}" (@as(u32, @truncate(value))),
           [_] "{edx}" (@as(u32, @truncate(value >> 32))),
           [_] "{ecx}" (reg),
+        : "memory"
+    );
+}
+
+pub inline fn xsave(ctx: *Context) void {
+    asm volatile (
+        \\xsave [%ctx]
+        :
+        : [ctx] "r" (ctx),
+          [_] "a" (0xffffffff),
+          [_] "d" (0xffffffff),
+        : "memory"
+    );
+}
+
+pub inline fn xrstor(ctx: *Context) void {
+    asm volatile (
+        \\xrstor %[ctx]
+        :
+        : [ctx] "r" (ctx),
+          [_] "a" (0xffffffff),
+          [_] "d" (0xffffffff),
+        : "memory"
+    );
+}
+
+pub inline fn fxsave(ctx: *Context) void {
+    asm volatile (
+        \\fxsave %[ctx]
+        :
+        : [ctx] "r" (ctx),
+        : "memory"
+    );
+}
+
+pub inline fn fxrstor(ctx: *Context) void {
+    asm volatile (
+        \\fxrstor %[ctx]
+        :
+        : [ctx] "r" (ctx),
         : "memory"
     );
 }
@@ -170,55 +235,11 @@ pub inline fn rdrand() u64 {
     );
 }
 
-pub inline fn setGsBase(addr: u64) void {
-    wrmsr(0xc0000101, addr);
-}
-
-// TODO
-// pub inline fn ctxSave(ctx: *Context) void {
-//     if (use_xsave) xsave(ctx) else fxsave(ctx);
-// }
-
-// pub inline fn ctxRestore(ctx: *Context) void {
-//     if (use_xsave) xrstor(ctx) else fxrstor(ctx);
-// }
-
-inline fn xsave(ctx: *Context) void {
+pub inline fn invlpg(addr: u64) void {
     asm volatile (
-        \\xsave [%ctx]
+        \\invlpg (%[addr])
         :
-        : [ctx] "r" (ctx),
-          [_] "a" (0xffffffff),
-          [_] "d" (0xffffffff),
-        : "memory"
-    );
-}
-
-inline fn xrstor(ctx: *Context) void {
-    asm volatile (
-        \\xrstor %[ctx]
-        :
-        : [ctx] "r" (ctx),
-          [_] "a" (0xffffffff),
-          [_] "d" (0xffffffff),
-        : "memory"
-    );
-}
-
-inline fn fxsave(ctx: *Context) void {
-    asm volatile (
-        \\fxsave %[ctx]
-        :
-        : [ctx] "r" (ctx),
-        : "memory"
-    );
-}
-
-inline fn fxrstor(ctx: *Context) void {
-    asm volatile (
-        \\fxrstor %[ctx]
-        :
-        : [ctx] "r" (ctx),
+        : [addr] "r" (addr),
         : "memory"
     );
 }

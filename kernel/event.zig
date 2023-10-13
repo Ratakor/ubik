@@ -1,6 +1,6 @@
 const arch = @import("arch.zig");
 const Thread = @import("proc.zig").Thread;
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 
 // TODO: this is really ugly, also need threads to work
 // TODO: using i as variable is ugly, use slices

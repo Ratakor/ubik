@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const arch = @import("arch.zig");
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.serial);
 
 pub const Port = enum(u16) {

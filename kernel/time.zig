@@ -6,7 +6,7 @@ const arch = @import("arch.zig");
 const smp = @import("smp.zig");
 const idt = arch.idt;
 const apic = @import("apic.zig");
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.pit);
 
 pub const timespec = extern struct {

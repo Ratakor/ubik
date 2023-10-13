@@ -1,7 +1,7 @@
 const std = @import("std");
 const root = @import("root");
 const vmm = @import("vmm.zig");
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.pmm);
 
 const page_size = std.mem.page_size;

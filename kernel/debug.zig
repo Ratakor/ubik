@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root");
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("SpinLock.zig");
 const serial = @import("serial.zig");
 
 var log_lock: SpinLock = .{};
