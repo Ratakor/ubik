@@ -5,8 +5,6 @@ const ubik = @import("ubik");
 const arch = @import("arch.zig");
 const debug = @import("debug.zig");
 const serial = @import("serial.zig");
-const gdt = @import("gdt.zig");
-const idt = @import("idt.zig");
 const event = @import("event.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
@@ -18,7 +16,7 @@ const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
 const pit = @import("pit.zig");
 const TTY = @import("TTY.zig");
-const SpinLock = @import("lock.zig").SpinLock;
+pub const SpinLock = @import("lock.zig").SpinLock;
 
 pub const std_options = struct {
     pub const logFn = debug.log;
@@ -144,8 +142,8 @@ fn main() !void {
         std.log.warn("Failed to initialize debug info: {}\n", .{err});
     };
 
-    gdt.init();
-    idt.init();
+    arch.init();
+
     event.init(); // TODO
 
     pmm.init();

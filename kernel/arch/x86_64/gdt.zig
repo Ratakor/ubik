@@ -1,5 +1,5 @@
 const log = @import("std").log.scoped(.gdt);
-const SpinLock = @import("lock.zig").SpinLock;
+const SpinLock = @import("root").SpinLock;
 
 const GDTEntry = packed struct {
     limit_low: u16 = 0,
@@ -70,6 +70,7 @@ var gdt: GDT = .{
     },
     .tss = .{},
 };
+
 var tss_lock: SpinLock = .{};
 
 pub fn init() void {

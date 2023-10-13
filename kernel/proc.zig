@@ -1,6 +1,6 @@
 const std = @import("std");
 const smp = @import("smp.zig");
-const idt = @import("idt.zig");
+const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 
@@ -16,7 +16,7 @@ pub const Process = struct {
     pid: pid_t,
     name: [:0]u8, // [127:0]u8 ?
     parent: ?*Process, // use ppid ?
-    addr_space: vmm.AddressSpace, 
+    addr_space: vmm.AddressSpace,
     // mmap_anon_base: usize,
     // thread_stack_top: usize,
     // cwd: // TODO
@@ -39,7 +39,7 @@ pub const Thread = struct {
     lock: SpinLock = .{},
     this_cpu: *smp.CpuLocal,
     process: *Process,
-    ctx: idt.Context,
+    ctx: arch.Context,
 
     scheduling_off: bool,
     running_on: u32,

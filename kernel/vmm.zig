@@ -3,7 +3,7 @@
 const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
-const idt = @import("idt.zig");
+const idt = arch.idt;
 const pmm = @import("pmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.vmm);
@@ -154,7 +154,7 @@ pub inline fn switchPageTable(page_table: *PageTable) void {
     }
 }
 
-fn pageFaultHandler(ctx: *idt.Context) void {
+fn pageFaultHandler(ctx: *arch.Context) void {
     _ = ctx;
 }
 

@@ -1,12 +1,12 @@
 const std = @import("std");
-const arch = @import("arch.zig");
+const x86 = @import("x86_64.zig");
 const log = std.log.scoped(.idt);
 
 pub const page_fault_vector = 0x0e;
 
 const interrupt_gate = 0b1000_1110;
-const call_gate = 0b1000_1100;
-const trap_gate = 0b1000_1111;
+// const call_gate = 0b1000_1100;
+// const trap_gate = 0b1000_1111;
 
 const InterruptStub = *const fn () callconv(.Naked) void;
 pub const InterruptHandler = *const fn (ctx: *Context) void;
@@ -147,8 +147,8 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
 
 fn exceptionHandler(ctx: *Context) void {
     const vector = ctx.isr_vector;
-    const cr2 = arch.readRegister("cr2");
-    const cr3 = arch.readRegister("cr3");
+    const cr2 = x86.readRegister("cr2");
+    const cr3 = x86.readRegister("cr3");
 
     std.debug.panic(
         \\Unhandled exception "{?s}" triggered, dumping context

@@ -1,7 +1,7 @@
 const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
-const idt = @import("idt.zig");
+const idt = arch.idt;
 const smp = @import("smp.zig");
 const apic = @import("apic.zig");
 

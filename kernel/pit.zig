@@ -4,7 +4,7 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const smp = @import("smp.zig");
-const idt = @import("idt.zig");
+const idt = arch.idt;
 const apic = @import("apic.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.pit);
@@ -134,7 +134,7 @@ pub fn getCurrentCount() u16 {
     return (@as(u16, @intCast(hi)) << 8) | lo;
 }
 
-fn timerHandler(ctx: *idt.Context) void {
+fn timerHandler(ctx: *arch.Context) void {
     _ = ctx;
 
     defer apic.eoi();

@@ -1,9 +1,7 @@
 const std = @import("std");
-const root = @import("root");
 const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
 const smp = @import("smp.zig");
-const idt = @import("idt.zig");
 const pit = @import("pit.zig");
 
 pub var lapic_base: u32 = undefined; // set in acpi.zig with handleMADT()
