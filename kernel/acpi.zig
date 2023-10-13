@@ -25,7 +25,7 @@ const SDT = extern struct {
         return ptr[0..self.length][@sizeOf(SDT)..];
     }
 
-    fn validChecksum(self: *const SDT) void {
+    fn doChecksum(self: *const SDT) void {
         const ptr: [*]const u8 = @ptrCast(self);
         var sum: u8 = 0;
         for (0..self.length) |i| {
@@ -140,13 +140,13 @@ pub fn init() void {
 
 fn parse(comptime T: type, addr: u64) void {
     const rsdt: *const SDT = @ptrFromInt(addr + vmm.hhdm_offset);
-    rsdt.validChecksum();
+    rsdt.doChecksum();
     log.info("RSDT is at 0x{x}", .{@intFromPtr(rsdt)});
 
     const entries = std.mem.bytesAsSlice(T, rsdt.data());
     for (entries) |entry| {
         const sdt: *const SDT = @ptrFromInt(entry + vmm.hhdm_offset);
-        sdt.validChecksum();
+        sdt.doChecksum();
 
         switch (readIntNative(u32, &sdt.signature)) {
             readIntNative(u32, "APIC") => handleMADT(sdt),

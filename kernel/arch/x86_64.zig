@@ -123,7 +123,9 @@ pub inline fn rdmsr(msr: u32) u64 {
         : [_] "={eax}" (low),
           [_] "={edx}" (high),
         : [_] "{ecx}" (msr),
+        : "memory"
     );
+
     return @as(u64, low) | (@as(u64, high) << 32);
 }
 
@@ -131,9 +133,21 @@ pub inline fn wrmsr(msr: u32, value: u64) void {
     asm volatile (
         \\wrmsr
         :
-        : [_] "{eax}" (value),
-          [_] "{edx}" (value >> 32),
+        : [_] "{eax}" (@as(u32, @truncate(value))),
+          [_] "{edx}" (@as(u32, @truncate(value >> 32))),
           [_] "{ecx}" (msr),
+        : "memory"
+    );
+}
+
+pub inline fn wrxcr(reg: u32, value: u64) void {
+    asm volatile (
+        \\xsetbv
+        :
+        : [_] "{eax}" (@as(u32, @truncate(value))),
+          [_] "{edx}" (@as(u32, @truncate(value >> 32))),
+          [_] "{ecx}" (reg),
+        : "memory"
     );
 }
 

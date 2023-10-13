@@ -67,10 +67,18 @@ pub const PageTable = struct {
     }
 };
 
+const Mapping = struct {
+    base: usize,
+    length: usize,
+    offset: isize,
+    prot: i32,
+    flags: i32,
+};
+
 pub const AddressSpace = struct {
     lock: SpinLock = .{},
     page_table: *PageTable,
-    // TODO
+    mappings: std.ArrayListUnmanaged(Mapping) = .{},
 };
 
 pub const page_allocator = std.mem.Allocator{

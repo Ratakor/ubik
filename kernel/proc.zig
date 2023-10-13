@@ -1,8 +1,10 @@
 const std = @import("std");
 const smp = @import("smp.zig");
 const idt = @import("idt.zig");
+const vmm = @import("vmm.zig");
 const SpinLock = @import("lock.zig").SpinLock;
 
+// TODO: merge this with sched.zig
 // TODO: this needs a lot of work
 
 pub const pid_t = std.os.linux.pid_t;
@@ -12,12 +14,20 @@ pub const gid_t = std.os.linux.gid_t;
 
 pub const Process = struct {
     pid: pid_t,
-    name: []u8,
-    parent: ?*Process,
+    name: [:0]u8, // [127:0]u8 ?
+    parent: ?*Process, // use ppid ?
+    addr_space: vmm.AddressSpace, 
+    // mmap_anon_base: usize,
+    // thread_stack_top: usize,
     // cwd: // TODO
     threads: std.ArrayListUnmanaged(*Thread) = .{}, // TODO: use linked list?
     children: std.ArrayListUnmanaged(*Process) = .{},
-    // ...
+    // child_events
+    // event: ev.Event
+
+    // fds_lock: SpinLock = .{},
+    // umask: u32,
+    // fds
 };
 
 // TODO: extern ?
@@ -26,10 +36,21 @@ pub const Thread = struct {
     errno: usize,
 
     tid: u32,
-    lock: SpinLock,
+    lock: SpinLock = .{},
     this_cpu: *smp.CpuLocal,
     process: *Process,
     ctx: idt.Context,
+
+    scheduling_off: bool,
+    running_on: u32,
+    enqueued: bool,
+    enqueued_by_signal: bool,
+    timeslice: u32,
+    yield_await: SpinLock = .{},
+    gs_base: u64,
+    fs_base: u64,
+    cr3: u64,
+    fpu_storage: u64,
     // ...
 };
 

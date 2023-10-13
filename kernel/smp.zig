@@ -10,11 +10,11 @@ const apic = @import("apic.zig");
 const sched = @import("sched.zig");
 const Thread = @import("proc.zig").Thread;
 const SpinLock = @import("lock.zig").SpinLock;
-const log = std.log.scoped(.cpu);
+const log = std.log.scoped(.smp);
 
 // TODO: use SYSENTER/SYSEXIT
 // TODO: use FSGSBASE
-// TODO: move asm to x86_64.zig?
+// TODO: move asm and x86 specific stuff to x86_64.zig
 
 pub const CpuLocal = struct {
     cpu_number: usize, // TODO: useless?
@@ -31,21 +31,21 @@ pub const CpuLocal = struct {
 
 const PAT = packed struct {
     // zig fmt: off
-    pa0: u3, reserved0: u5,
-    pa1: u3, reserved1: u5,
-    pa2: u3, reserved2: u5,
-    pa3: u3, reserved3: u5,
-    pa4: u3, reserved4: u5,
-    pa5: u3, reserved5: u5,
-    pa6: u3, reserved6: u5,
-    pa7: u3, reserved7: u5,
+    pat0: Flags, reserved0: u5,
+    pat1: Flags, reserved1: u5,
+    pat2: Flags, reserved2: u5,
+    pat3: Flags, reserved3: u5,
+    pat4: Flags, reserved4: u5,
+    pat5: Flags, reserved5: u5,
+    pat6: Flags, reserved6: u5,
+    pat7: Flags, reserved7: u5,
     // zig fmt: on
 
-    const Flags = enum(u64) {
+    const Flags = enum(u3) {
         uncacheable = 0,
         write_combining = 1,
         write_through = 4,
-        write_protected = 5,
+        write_protect = 5,
         write_back = 6,
         uncached = 7,
     };
@@ -118,6 +118,63 @@ const Feature = enum(u64) {
     pbe = 1 << 63,
 };
 
+/// https://en.wikipedia.org/wiki/Control_register#CR0
+const CR0 = enum(u64) {
+    pe = 1 << 0,
+    mp = 1 << 1,
+    em = 1 << 2,
+    ts = 1 << 3,
+    et = 1 << 4,
+    ne = 1 << 5,
+    wp = 1 << 16,
+    am = 1 << 18,
+    nw = 1 << 29,
+    cd = 1 << 30,
+    pg = 1 << 31,
+};
+
+/// https://en.wikipedia.org/wiki/Control_register#CR4
+const CR4 = enum(u64) {
+    vme = 1 << 0,
+    pvi = 1 << 1,
+    tsd = 1 << 2,
+    de = 1 << 3,
+    pse = 1 << 4,
+    pae = 1 << 5,
+    mce = 1 << 6,
+    pge = 1 << 7,
+    pce = 1 << 8,
+    osfxsr = 1 << 9,
+    osxmmexcpt = 1 << 10,
+    umip = 1 << 11,
+    la57 = 1 << 12,
+    vmxe = 1 << 13,
+    smxe = 1 << 14,
+    fsgsbase = 1 << 16,
+    pcide = 1 << 17,
+    osxsave = 1 << 18,
+    kl = 1 << 19,
+    smep = 1 << 20,
+    smap = 1 << 21,
+    pke = 1 << 22,
+    cet = 1 << 23,
+    pks = 1 << 24,
+    uintr = 1 << 25,
+};
+
+/// https://en.wikipedia.org/wiki/Control_register#XCR0_and_XSS
+const XCR0 = enum(u64) {
+    x87 = 1 << 0,
+    sse = 1 << 1,
+    avx = 1 << 2,
+    bndreg = 1 << 3,
+    bndcsr = 1 << 4,
+    opmask = 1 << 5,
+    zmm_hi256 = 1 << 6,
+    hi16_zmm = 1 << 7,
+    pkru = 1 << 9,
+};
+
 const page_size = std.mem.page_size;
 const stack_size = 0x10000; // 64KiB
 
@@ -126,10 +183,9 @@ pub var cpus: []CpuLocal = undefined;
 var cpus_started: usize = 0;
 
 // TODO
-// pub var sysenter: bool = false;
-pub var fpu_storage_size: usize = 0;
-pub var fpu_save: *const fn (*idt.Context) void = undefined;
-pub var fpu_restore: *const fn (*idt.Context) void = undefined;
+// pub var sysenter = false;
+pub var use_xsave = false;
+pub var fpu_storage_size: usize = 512; // 512 = fxsave storage
 
 var lapic_lock: SpinLock = .{};
 
@@ -182,7 +238,7 @@ pub fn init() void {
             arch.enableInterrupts();
 
             log.info("bootstrap processor is online", .{});
-            cpus_started += 1;
+            _ = @atomicRmw(usize, &cpus_started, .Add, 1, .Release);
             // TODO
             // trampoline(cpu);
         }
@@ -234,7 +290,7 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     arch.enableInterrupts();
 
     log.info("processor {} is online", .{cpu_local.lapic_id});
-    cpus_started += 1;
+    _ = @atomicRmw(usize, &cpus_started, .Add, 1, .AcqRel);
 
     arch.halt();
 }
@@ -250,75 +306,65 @@ fn initFeatures(bsp: bool) void {
     const regs = arch.cpuid(1, 0);
     const features: u64 = @as(u64, regs.edx) << 32 | regs.ecx;
 
-    // TODO: check if the SSE, SSE and PAT are available
-
     // enable SSE/SSE2
     var cr0: u64 = arch.readRegister("cr0");
-    cr0 &= ~@as(u64, (1 << 2));
-    cr0 |= (1 << 1);
+    cr0 &= ~@intFromEnum(CR0.em);
+    cr0 |= @intFromEnum(CR0.mp);
     arch.writeRegister("cr0", cr0);
 
     var cr4: u64 = arch.readRegister("cr4");
-    cr4 |= (1 << 9);
-    cr4 |= (1 << 10);
+    cr4 |= @intFromEnum(CR4.osfxsr);
+    cr4 |= @intFromEnum(CR4.osxmmexcpt);
     arch.writeRegister("cr4", cr4);
 
-    // init PAT (write-protect / write-combining)
-    var pat = arch.rdmsr(0x277);
-    pat &= 0xffffffff;
-    pat |= @as(u64, 0x0105) << 32;
-    arch.wrmsr(0x277, pat);
+    // init PAT
+    var pat: PAT = @bitCast(arch.rdmsr(0x277));
+    pat.pat4 = PAT.Flags.write_protect;
+    pat.pat5 = PAT.Flags.write_combining;
+    arch.wrmsr(0x277, @bitCast(pat));
 
-    // TODO
-    if (false) { //hasFeature(features, .xsave)) {
-        if (bsp) log.info("xsave supported", .{});
+    if (hasFeature(features, .xsave)) {
+        if (bsp) log.info("xsave is supported", .{});
 
-        // enable xsave and x{get, set}bv
         cr4 = arch.readRegister("cr4");
-        cr4 |= @as(u64, 1) << 18;
+        cr4 |= @intFromEnum(CR4.osxsave);
         arch.writeRegister("cr4", cr4);
 
         var xcr0: u64 = 0;
-        if (bsp) log.info("saving x87 state using xsave", .{});
-        xcr0 |= @as(u64, 1) << 0;
-        if (bsp) log.info("saving sse state using xsave", .{});
-        xcr0 |= @as(u64, 1) << 1;
+        xcr0 |= @intFromEnum(XCR0.x87);
+        xcr0 |= @intFromEnum(XCR0.sse);
 
         if (hasFeature(features, .avx)) {
             if (bsp) log.info("saving avx state using xsave", .{});
-            xcr0 |= @as(u64, 1) << 2;
+            xcr0 |= @intFromEnum(XCR0.avx);
         }
 
-        // TODO
-        // if (cpuid(7, 0, &eax, &ebx, &ecx, &edx) && (ebx & CPUID_AVX512)) {
-        //     if (cpu_local->bsp) {
-        //         kernel_print("fpu: Saving AVX-512 state using xsave\n");
-        //     }
-        //     xcr0 |= (uint64_t)1 << 5;
-        //     xcr0 |= (uint64_t)1 << 6;
-        //     xcr0 |= (uint64_t)1 << 7;
-        // }
+        if (arch.cpuid(7, 0).ebx & @as(u64, 1 << 16) != 0) {
+            if (bsp) log.info("saving avx512 state using xsave", .{});
+            xcr0 |= @intFromEnum(XCR0.opmask);
+            xcr0 |= @intFromEnum(XCR0.zmm_hi256);
+            xcr0 |= @intFromEnum(XCR0.hi16_zmm);
+        }
 
-        // TODO
-        // arch.wrxcr(0, xcr0);
+        arch.wrxcr(0, xcr0);
 
-        // TODO
-        // test cpuid with 0xd <- new ecx
-
-        // fpu_storage_size = regs.ecx;
-        // fpu_save = xsave;
-        // fpu_restore = xrstor;
-    } else {
-        if (bsp) log.info("use legacy fxsave", .{});
-        fpu_storage_size = 512;
-        // TODO: can't have inline func as ptr
-        // fpu_save = fxsave;
-        // fpu_restore = fxrstor;
+        fpu_storage_size = arch.cpuid(0xd, 0).ecx;
     }
+
+    // TODO
+    // asm volatile ("fninit");
 }
 
 inline fn setGsBase(addr: u64) void {
     arch.wrmsr(0xc0000101, addr);
+}
+
+inline fn ctxSave(ctx: *idt.Context) void {
+    if (use_xsave) xsave(ctx) else fxsave(ctx);
+}
+
+inline fn ctxRestore(ctx: *idt.Context) void {
+    if (use_xsave) xrstor(ctx) else fxrstor(ctx);
 }
 
 inline fn xsave(ctx: *idt.Context) void {
