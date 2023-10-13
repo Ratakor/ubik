@@ -1,6 +1,5 @@
 const std = @import("std");
 const arch = @import("arch.zig");
-const cpu = @import("cpu.zig");
 const log = std.log.scoped(.idt);
 
 pub const page_fault_vector = 0x0e;
@@ -10,7 +9,34 @@ const call_gate = 0b1000_1100;
 const trap_gate = 0b1000_1111;
 
 const InterruptStub = *const fn () callconv(.Naked) void;
-pub const InterruptHandler = *const fn (ctx: *cpu.Context) void;
+pub const InterruptHandler = *const fn (ctx: *Context) void;
+
+pub const Context = extern struct {
+    ds: u64,
+    es: u64,
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    isr_vector: u64,
+    error_code: u64,
+    rip: u64,
+    cs: u64,
+    rflags: u64,
+    rsp: u64,
+    ss: u64,
+};
 
 /// Interrupt Descriptor Table Entry
 const IDTEntry = extern struct {
@@ -119,7 +145,7 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
 }
 
-fn exceptionHandler(ctx: *cpu.Context) void {
+fn exceptionHandler(ctx: *Context) void {
     const vector = ctx.isr_vector;
     const cr2 = arch.readRegister("cr2");
     const cr3 = arch.readRegister("cr3");
@@ -193,7 +219,7 @@ fn makeStubHandler(vector: u8) InterruptStub {
     }.handler;
 }
 
-export fn interruptHandler(ctx: *cpu.Context) callconv(.C) void {
+export fn interruptHandler(ctx: *Context) callconv(.C) void {
     const handler = isr[ctx.isr_vector];
     handler(ctx);
 }

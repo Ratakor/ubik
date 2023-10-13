@@ -1,5 +1,5 @@
 const std = @import("std");
-const cpu = @import("cpu.zig");
+const smp = @import("smp.zig");
 const idt = @import("idt.zig");
 const rand = @import("rand.zig");
 const proc = @import("proc.zig");
@@ -26,6 +26,6 @@ pub inline fn currentThread() *Thread {
     );
 }
 
-fn schedHandler(ctx: *cpu.Context) void {
+fn schedHandler(ctx: *idt.Context) void {
     _ = ctx;
 }

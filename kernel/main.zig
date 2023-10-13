@@ -12,7 +12,7 @@ const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const proc = @import("proc.zig");
 const sched = @import("sched.zig");
-const cpu = @import("cpu.zig");
+const smp = @import("smp.zig");
 const acpi = @import("acpi.zig");
 const apic = @import("apic.zig");
 const ps2 = @import("ps2.zig");
@@ -153,11 +153,11 @@ fn main() !void {
 
     acpi.init(); // TODO: change so it can be after cpu smh
 
-    proc.init(); // TODO + TSS
+    proc.init(); // TODO
     sched.init(); // TODO
     // TODO: threads <- with priority level ? <- have a list of thread based
     // on priority level and state (accoriding to https://wiki.osdev.org/Going_further_on_x86
-    cpu.init(); // TODO
+    smp.init(); // TODO
 
     apic.init(); // TODO: local apic timers for sched
     pit.init();

@@ -169,9 +169,9 @@ fn handleMADT(madt: *const SDT) void {
 
         const entry = data[2..size];
         switch (kind) {
-            0 => log.warn("unhandled LAPIC: {any}", .{entry}),
-            1 => apic.io_apics.append(@ptrCast(entry)) catch unreachable,
-            2 => apic.isos.append(@ptrCast(entry)) catch unreachable,
+            0 => {}, // log.warn("unhandled LAPIC: {any}", .{entry}),
+            1 => apic.io_apics.append(root.allocator, @ptrCast(entry)) catch unreachable,
+            2 => apic.isos.append(root.allocator, @ptrCast(entry)) catch unreachable,
             3 => log.warn("unhandled IO/APIC NMI source: {any}", .{entry}),
             4 => log.warn("unhandled LAPIC NMI: {any}", .{entry}),
             5 => log.warn("unhandled LAPIC Address Override: {any}", .{entry}),

@@ -3,7 +3,7 @@
 const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
-const cpu = @import("cpu.zig");
+const smp = @import("smp.zig");
 const idt = @import("idt.zig");
 const apic = @import("apic.zig");
 const SpinLock = @import("lock.zig").SpinLock;
@@ -98,7 +98,7 @@ pub var monotonic: timespec = .{};
 pub var realtime: timespec = .{};
 
 var timers_lock: SpinLock = .{};
-var armed_timers = std.ArrayList(*Timer).init(root.allocator);
+var armed_timers = std.ArrayList(*Timer).init(root.allocator); // TODO
 
 pub fn init() void {
     const boot_time = root.boot_time_request.response.?.boot_time;
@@ -107,7 +107,7 @@ pub fn init() void {
     setFrequency(timer_freq);
     const timer_vector = idt.allocVector();
     idt.registerHandler(timer_vector, timerHandler);
-    apic.setIRQRedirect(cpu.bsp_lapic_id, timer_vector, 0);
+    apic.setIRQRedirect(smp.bsp_lapic_id, timer_vector, 0);
 
     log.info("realtime: {}", .{realtime});
 }
@@ -134,7 +134,7 @@ pub fn getCurrentCount() u16 {
     return (@as(u16, @intCast(hi)) << 8) | lo;
 }
 
-fn timerHandler(ctx: *cpu.Context) void {
+fn timerHandler(ctx: *idt.Context) void {
     _ = ctx;
 
     defer apic.eoi();

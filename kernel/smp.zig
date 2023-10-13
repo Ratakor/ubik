@@ -13,45 +13,8 @@ const SpinLock = @import("lock.zig").SpinLock;
 const log = std.log.scoped(.cpu);
 
 // TODO: use SYSENTER/SYSEXIT
+// TODO: use FSGSBASE
 // TODO: move asm to x86_64.zig?
-
-pub const Context = extern struct {
-    ds: u64,
-    es: u64,
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
-    rsi: u64,
-    rdi: u64,
-    rbp: u64,
-    r8: u64,
-    r9: u64,
-    r10: u64,
-    r11: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-    isr_vector: u64,
-    error_code: u64,
-    rip: u64,
-    cs: u64,
-    rflags: u64,
-    rsp: u64,
-    ss: u64,
-};
-
-/// Task State Segment
-pub const TSS = extern struct {
-    reserved0: u32 align(1) = 0,
-    rsp: [3]u64 align(1),
-    reserved1: u64 align(1) = 0,
-    ist: [7]u64 align(1),
-    reserved2: u64 align(1) = 0,
-    reserved3: u16 align(1) = 0,
-    iopb: u16 align(1),
-};
 
 pub const CpuLocal = struct {
     cpu_number: usize, // TODO: useless?
@@ -59,7 +22,7 @@ pub const CpuLocal = struct {
     // last_run_queue_index: u32,
     lapic_id: u32,
     lapic_freq: u64,
-    tss: TSS,
+    tss: gdt.TSS,
     idle_thread: *Thread,
     // tlb_shootdown_lock: SpinLock,
     // tlb_shootdown_done: SpinLock,
@@ -165,8 +128,8 @@ var cpus_started: usize = 0;
 // TODO
 // pub var sysenter: bool = false;
 pub var fpu_storage_size: usize = 0;
-pub var fpu_save: *const fn (*Context) void = undefined;
-pub var fpu_restore: *const fn (*Context) void = undefined;
+pub var fpu_save: *const fn (*idt.Context) void = undefined;
+pub var fpu_restore: *const fn (*idt.Context) void = undefined;
 
 var lapic_lock: SpinLock = .{};
 
@@ -196,6 +159,7 @@ pub fn init() void {
             cpu_local.idle_thread = idle_thread;
             setGsBase(@intFromPtr(idle_thread));
 
+            // TODO: is common_int_stack correct?
             const common_int_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
             const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
             cpu_local.tss.rsp[0] = common_int_stack;
@@ -229,7 +193,7 @@ pub fn init() void {
     }
 }
 
-pub fn this() *CpuLocal {
+pub fn thisCpu() *CpuLocal {
     const thread = sched.currentThread();
     // TODO: panic when calling this function with interrupts on or scheduling enabled
     return thread.this_cpu;
@@ -357,7 +321,7 @@ inline fn setGsBase(addr: u64) void {
     arch.wrmsr(0xc0000101, addr);
 }
 
-inline fn xsave(ctx: *Context) void {
+inline fn xsave(ctx: *idt.Context) void {
     asm volatile (
         \\xsave [%ctx]
         :
@@ -368,7 +332,7 @@ inline fn xsave(ctx: *Context) void {
     );
 }
 
-inline fn xrstor(ctx: *Context) void {
+inline fn xrstor(ctx: *idt.Context) void {
     asm volatile (
         \\xrstor %[ctx]
         :
@@ -379,7 +343,7 @@ inline fn xrstor(ctx: *Context) void {
     );
 }
 
-inline fn fxsave(ctx: *Context) void {
+inline fn fxsave(ctx: *idt.Context) void {
     asm volatile (
         \\fxsave %[ctx]
         :
@@ -388,7 +352,7 @@ inline fn fxsave(ctx: *Context) void {
     );
 }
 
-inline fn fxrstor(ctx: *Context) void {
+inline fn fxrstor(ctx: *idt.Context) void {
     asm volatile (
         \\fxrstor %[ctx]
         :

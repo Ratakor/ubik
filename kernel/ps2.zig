@@ -2,7 +2,7 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const idt = @import("idt.zig");
-const cpu = @import("cpu.zig");
+const smp = @import("smp.zig");
 const apic = @import("apic.zig");
 
 pub fn init() void {
@@ -28,7 +28,7 @@ pub fn init() void {
 
     const keyboard_vector = idt.allocVector();
     idt.registerHandler(keyboard_vector, keyboardHandler);
-    apic.setIRQRedirect(cpu.bsp_lapic_id, keyboard_vector, 1);
+    apic.setIRQRedirect(smp.bsp_lapic_id, keyboard_vector, 1);
 
     _ = arch.in(u8, 0x60);
 }
@@ -53,7 +53,7 @@ fn writeConfig(value: u8) void {
     write(0x60, value);
 }
 
-fn keyboardHandler(ctx: *cpu.Context) void {
+fn keyboardHandler(ctx: *idt.Context) void {
     _ = ctx;
     // TODO
     if (root.tty0) |tty| {

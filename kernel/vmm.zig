@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const root = @import("root");
-const cpu = @import("cpu.zig");
 const arch = @import("arch.zig");
 const idt = @import("idt.zig");
 const pmm = @import("pmm.zig");
@@ -147,7 +146,7 @@ pub inline fn switchPageTable(page_table: *PageTable) void {
     }
 }
 
-fn pageFaultHandler(ctx: *cpu.Context) void {
+fn pageFaultHandler(ctx: *idt.Context) void {
     _ = ctx;
 }
 

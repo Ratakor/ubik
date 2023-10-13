@@ -2,7 +2,7 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const vmm = @import("vmm.zig");
-const cpu = @import("cpu.zig");
+const smp = @import("smp.zig");
 const idt = @import("idt.zig");
 const pit = @import("pit.zig");
 
@@ -55,8 +55,8 @@ const ISO = extern struct {
     flags: u16 align(1),
 };
 
-pub var io_apics = std.ArrayList(*const IOAPIC).init(root.allocator);
-pub var isos = std.ArrayList(*const ISO).init(root.allocator);
+pub var io_apics: std.ArrayListUnmanaged(*const IOAPIC) = .{};
+pub var isos: std.ArrayListUnmanaged(*const ISO) = .{};
 
 pub fn init() void {
     // TODO: this is done by all cpu not just bsp, change that >:(
@@ -79,7 +79,7 @@ pub fn timerOneShot(us: u64, vector: u8) void {
 
     timerStop();
 
-    const ticks = us * (cpu.this().lapic_freq / 1000000);
+    const ticks = us * (smp.thisCpu().lapic_freq / 1000000);
 
     writeRegister(.lvt_timer, vector);
     writeRegister(.timer_divide, 0);
@@ -115,7 +115,7 @@ pub fn timerCalibrate() void {
     const final_tick = pit.getCurrentCount();
 
     const total_ticks: u64 = initial_tick - final_tick;
-    cpu.this().lapic_freq = (samples / total_ticks) * pit.dividend;
+    smp.thisCpu().lapic_freq = (samples / total_ticks) * pit.dividend;
 
     timerStop();
 }

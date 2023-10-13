@@ -1,6 +1,5 @@
 const log = @import("std").log.scoped(.gdt);
 const SpinLock = @import("lock.zig").SpinLock;
-const TSS = @import("cpu.zig").TSS;
 
 const GDTEntry = packed struct {
     limit_low: u16 = 0,
@@ -22,6 +21,17 @@ const TSSDescriptor = packed struct {
     base_high: u8 = undefined,
     base_upper: u32 = undefined,
     reserved: u32 = 0,
+};
+
+/// Task State Segment
+pub const TSS = extern struct {
+    reserved0: u32 align(1) = 0,
+    rsp: [3]u64 align(1),
+    reserved1: u64 align(1) = 0,
+    ist: [7]u64 align(1),
+    reserved2: u64 align(1) = 0,
+    reserved3: u16 align(1) = 0,
+    iopb: u16 align(1),
 };
 
 /// Global Descriptor Table
