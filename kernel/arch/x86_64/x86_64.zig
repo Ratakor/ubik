@@ -1,5 +1,3 @@
-pub const Context = @import("idt.zig").Context;
-
 pub const CPUID = struct {
     eax: u32,
     ebx: u32,
@@ -158,15 +156,15 @@ pub inline fn setFsBase(addr: u64) void {
     wrmsr(0xc0000100, addr);
 }
 
-pub inline fn getKernelGsbase() u64 {
+pub inline fn getKernelGsBase() u64 {
     return rdmsr(0xc0000102);
 }
 
-pub inline fn getGsbase() u64 {
+pub inline fn getGsBase() u64 {
     return rdmsr(0xc0000101);
 }
 
-pub inline fn getFsbase() u64 {
+pub inline fn getFsBase() u64 {
     return rdmsr(0xc0000100);
 }
 
@@ -181,40 +179,40 @@ pub inline fn wrxcr(reg: u32, value: u64) void {
     );
 }
 
-pub inline fn xsave(ctx: *Context) void {
+pub inline fn xsave(ctx: u64) void {
     asm volatile (
-        \\xsave [%ctx]
+        \\xsave (%[ctx])
         :
         : [ctx] "r" (ctx),
-          [_] "a" (0xffffffff),
-          [_] "d" (0xffffffff),
+          [_] "{rax}" (~@as(u64, 0)),
+          [_] "{rdx}" (~@as(u64, 0)),
         : "memory"
     );
 }
 
-pub inline fn xrstor(ctx: *Context) void {
+pub inline fn xrstor(ctx: u64) void {
     asm volatile (
-        \\xrstor %[ctx]
+        \\xrstor (%[ctx])
         :
         : [ctx] "r" (ctx),
-          [_] "a" (0xffffffff),
-          [_] "d" (0xffffffff),
+          [_] "{rax}" (~@as(u64, 0)),
+          [_] "{rdx}" (~@as(u64, 0)),
         : "memory"
     );
 }
 
-pub inline fn fxsave(ctx: *Context) void {
+pub inline fn fxsave(ctx: u64) void {
     asm volatile (
-        \\fxsave %[ctx]
+        \\fxsave (%[ctx])
         :
         : [ctx] "r" (ctx),
         : "memory"
     );
 }
 
-pub inline fn fxrstor(ctx: *Context) void {
+pub inline fn fxrstor(ctx: u64) void {
     asm volatile (
-        \\fxrstor %[ctx]
+        \\fxrstor (%[ctx])
         :
         : [ctx] "r" (ctx),
         : "memory"

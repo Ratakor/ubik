@@ -1,8 +1,9 @@
 # Ubik
-A microkernel
+A kernel
 
 # TODO
 - Add a checklist/roadmap
+- replace 0x08, 0x10, etc... with arch.gdt.kernel_code, arch.gdt.kernel_data, ...
 - Move tty and drivers out of kernel space
 - Provide compatibility with Linux ABI
 - Support RISC-V64, aarch64 and x86_64

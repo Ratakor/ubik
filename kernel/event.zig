@@ -1,5 +1,5 @@
 const arch = @import("arch.zig");
-const Thread = @import("proc.zig").Thread;
+const Thread = @import("sched.zig").Thread;
 const SpinLock = @import("SpinLock.zig");
 
 // TODO: this is really ugly, also need threads to work

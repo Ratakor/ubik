@@ -212,10 +212,10 @@ pub fn initFeatures(bsp: bool) void {
     // asm volatile ("fninit");
 }
 
-pub inline fn ctxSave(ctx: *x86.Context) void {
+pub inline fn fpuSave(ctx: u64) void {
     if (use_xsave) x86.xsave(ctx) else x86.fxsave(ctx);
 }
 
-pub inline fn ctxRestore(ctx: *x86.Context) void {
+pub inline fn fpuRestore(ctx: u64) void {
     if (use_xsave) x86.xrstor(ctx) else x86.fxrstor(ctx);
 }

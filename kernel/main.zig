@@ -8,7 +8,6 @@ const serial = @import("serial.zig");
 const event = @import("event.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
-const proc = @import("proc.zig");
 const sched = @import("sched.zig");
 const smp = @import("smp.zig");
 const acpi = @import("acpi.zig");
@@ -29,7 +28,8 @@ pub const os = struct {
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
-    .MutexType = SpinLock,
+    .thread_safe = false,
+    .MutexType = SpinLock, // TODO: remove?
     .verbose_log = if (builtin.mode == .Debug) true else false,
 }){};
 pub const allocator = gpa.allocator();
@@ -80,22 +80,54 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
 }
 
 export fn _start() callconv(.C) noreturn {
-    main() catch |err| {
-        const fmt = "\x1b[m\x1b[91m\nKernel error:\x1b[m {any}\n";
-        if (tty0) |tty| {
-            const writer = tty.writer();
-            writer.print(fmt, .{err}) catch unreachable;
-            if (@errorReturnTrace()) |stack_trace| {
-                debug.printStackTrace(writer, stack_trace);
-            }
-            ubik.term.hideCursor(writer) catch unreachable;
-        } else {
-            serial.print(fmt, .{err});
-            if (@errorReturnTrace()) |stack_trace| {
-                debug.printStackTrace(serial.writer, stack_trace);
-            }
-        }
+    arch.disableInterrupts();
+
+    serial.init();
+    debug.init() catch |err| {
+        std.log.warn("Failed to initialize debug info: {}\n", .{err});
     };
+    arch.init();
+    event.init(); // TODO: init event handlers
+    pmm.init();
+    vmm.init() catch unreachable; // TODO: mmap
+    acpi.init();
+    // TODO: init random here instead of in sched?
+    sched.init(); // TODO
+    smp.init();
+    time.init();
+
+    // TODO: crash due to page fault
+    // const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null) catch unreachable;
+    // kernel_thread.enqueue(1) catch unreachable;
+
+    arch.enableInterrupts();
+    sched.wait();
+}
+
+fn main() !void {
+    const fb = framebuffer_request.response.?.framebuffers()[0];
+    tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
+
+    const boot_info = boot_info_request.response.?;
+    tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+        boot_info.name,
+        boot_info.version,
+    }) catch unreachable;
+
+    ps2.init();
+    // TODO: pci
+    // TODO: vfs
+    // TODO: basic syscalls
+
+    // TODO: setup Inter-Processor Interrupts
+    // TODO: basic IPC
+
+    // TODO: start /bin/init <- load elf with std.elf
+
+    // extern, I think
+    // TODO: server with posix syscalls
+    // TODO: filesystem
+    // TODO: IPC: pipe, socket (TCP, UDP, Unix)
 
     var regs = arch.cpuid(0, 0);
     std.log.debug("vendor string: {s}{s}{s}", .{
@@ -129,55 +161,17 @@ export fn _start() callconv(.C) noreturn {
         }) catch unreachable;
     }
 
-    arch.halt();
+    const rand = @import("rand.zig");
+    var pcg = rand.Pcg.init(rand.getSeedSlow());
+    inline for (0..8) |_| {
+        const thread = sched.Thread.initKernel(@ptrCast(&hihihi), null) catch unreachable;
+        thread.enqueue(pcg.random().int(u4)) catch unreachable;
+    }
 }
 
-fn main() !void {
-    arch.disableInterrupts();
-    defer arch.enableInterrupts();
-
-    serial.init();
-    debug.init() catch |err| {
-        std.log.warn("Failed to initialize debug info: {}\n", .{err});
-    };
-
-    arch.init();
-    event.init(); // TODO: init event handlers
-
-    pmm.init();
-    vmm.init() catch unreachable; // TODO: mmap
-
-    acpi.init();
-
-    proc.init(); // TODO
-    sched.init(); // TODO
-    smp.init();
-
-    time.init();
-
-    // TODO: start kernel main thread
-
-    const fb = framebuffer_request.response.?.framebuffers()[0];
-    tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
-
-    const boot_info = boot_info_request.response.?;
-    tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
-        boot_info.name,
-        boot_info.version,
-    }) catch unreachable;
-
-    ps2.init();
-    // TODO: pci
-    // TODO: vfs
-    // TODO: basic syscalls
-
-    // TODO: setup Inter-Processor Interrupts
-    // TODO: basic IPC
-
-    // TODO: start /bin/init <- load elf with std.elf
-
-    // extern, I think
-    // TODO: server with posix syscalls
-    // TODO: filesystem
-    // TODO: IPC: pipe, socket (TCP, UDP, Unix)
+fn hihihi() void {
+    if (tty0) |tty| {
+        tty.writer().writeAll("hihihi\n") catch unreachable;
+    }
+    sched.dequeueAndDie();
 }

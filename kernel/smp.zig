@@ -8,7 +8,6 @@ const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const apic = @import("apic.zig");
 const sched = @import("sched.zig");
-const Thread = @import("proc.zig").Thread;
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.smp);
 
@@ -23,8 +22,8 @@ pub const CpuLocal = struct {
 
     id: usize,
     active: bool,
-    idle: *Thread,
-    current: *Thread,
+    idle: *sched.Thread,
+    current: *sched.Thread,
 
     // retain_enable: bool;
     // retain_depth: u32;
@@ -61,21 +60,21 @@ pub fn init() void {
         if (cpu.lapic_id == bsp_lapic_id) {
             gdt.loadTSS(&cpu_local.tss);
 
-            const idle_thread = root.allocator.create(Thread) catch unreachable;
+            // TODO: use null for idle?
+            const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
             idle_thread.self = idle_thread;
-            idle_thread.this_cpu = cpu_local;
+            idle_thread.cpu = cpu_local;
             idle_thread.process = sched.kernel_process;
             cpu_local.idle = idle_thread;
             arch.setGsBase(@intFromPtr(idle_thread));
 
-            // TODO: is common_int_stack correct?
             const common_int_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
             const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
             cpu_local.tss.rsp[0] = common_int_stack;
 
-            // const sched_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
-            // const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
-            // cpu_local.tss.ist[1] = sched_stack;
+            const sched_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
+            const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
+            cpu_local.tss.ist[1] = sched_stack;
 
             arch.cpu.initFeatures(true);
 
@@ -108,7 +107,7 @@ pub fn thisCpu() *CpuLocal {
     // TODO
     // std.debug.assert(thread.scheduling_off == true);
     // std.debug.assert(arch.interruptState() == false);
-    return thread.this_cpu;
+    return thread.cpu;
 }
 
 fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
@@ -118,11 +117,12 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     idt.reload();
     gdt.loadTSS(&cpu_local.tss);
 
-    vmm.switchPageTable(vmm.kernel_address_space.page_table);
+    vmm.switchPageTable(vmm.kernel_addr_space.page_table.cr3());
 
-    const idle_thread = root.allocator.create(Thread) catch unreachable;
+    // TODO: use null for idle?
+    const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
     idle_thread.self = idle_thread;
-    idle_thread.this_cpu = cpu_local;
+    idle_thread.cpu = cpu_local;
     idle_thread.process = sched.kernel_process;
     cpu_local.idle = idle_thread;
     arch.setGsBase(@intFromPtr(idle_thread));
@@ -131,10 +131,9 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
     cpu_local.tss.rsp[0] = common_int_stack;
 
-    // TODO
-    // const sched_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
-    // const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
-    // cpu_local.tss.ist[1] = sched_stack;
+    const sched_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
+    const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
+    cpu_local.tss.ist[1] = sched_stack;
 
     arch.cpu.initFeatures(false);
 
@@ -144,5 +143,5 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     _ = @atomicRmw(usize, &cpus_started, .Add, 1, .AcqRel);
 
     arch.enableInterrupts();
-    arch.halt();
+    sched.wait();
 }

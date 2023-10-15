@@ -83,7 +83,7 @@ pub fn timerOneShot(us: u64, vector: u8) void {
 
     writeRegister(.lvt_timer, vector);
     writeRegister(.timer_divide, 0);
-    writeRegister(.timer_initial_count, ticks);
+    writeRegister(.timer_initial_count, @truncate(ticks));
 }
 
 pub fn timerStop() void {

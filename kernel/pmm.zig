@@ -14,7 +14,9 @@ var last_idx: u64 = 0;
 var usable_pages: u64 = 0; // useless?
 var used_pages: u64 = 0; // useless?
 var reserved_pages: u64 = 0; // useless?
-var lock: SpinLock = .{}; // useless?
+var lock: SpinLock = .{}; // TODO: remove lock on pmm and only use
+//                                 root.allocator for risky allocations,
+//                                 or remove lock on root.allocator?
 
 pub fn init() void {
     const memory_map = root.memory_map_request.response.?;

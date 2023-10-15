@@ -5,6 +5,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const idt = arch.idt;
 const pmm = @import("pmm.zig");
+const sched = @import("sched.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.vmm);
 
@@ -76,6 +77,10 @@ pub const PageTable = struct {
         if (pte.p == 0) return error.NotMapped;
         pte.* = @bitCast(0);
     }
+
+    pub inline fn cr3(self: *const Self) u64 {
+        return @intFromPtr(self) - hhdm_offset;
+    }
 };
 
 const Mapping = struct {
@@ -110,7 +115,7 @@ const pte_user: u64 = 1 << 2;
 const pte_noexec: u64 = 1 << 63;
 
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
-pub var kernel_address_space: AddressSpace = .{ .page_table = undefined };
+pub var kernel_addr_space: AddressSpace = .{ .page_table = undefined };
 
 pub fn init() MapError!void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
@@ -149,24 +154,23 @@ pub fn init() MapError!void {
         }
     }
 
-    kernel_address_space.page_table = page_table;
+    kernel_addr_space.page_table = page_table;
 
     // TODO
     // idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
-    // idt.setIST(idt.page_fault_vector, 2); // ?
+    // idt.setIST(idt.page_fault_vector, 2);
 
-    switchPageTable(page_table);
+    switchPageTable(page_table.cr3());
 }
 
-pub inline fn switchPageTable(page_table: *PageTable) void {
-    switch (arch.arch) {
-        .x86_64 => arch.writeRegister("cr3", @intFromPtr(page_table) - hhdm_offset),
-        else => unreachable, // TODO
-    }
+pub inline fn switchPageTable(page_table: u64) void {
+    arch.writeRegister("cr3", page_table);
 }
 
 fn pageFaultHandler(ctx: *arch.Context) void {
     _ = ctx;
+
+    // TODO: makes cpus crash at some point
 }
 
 inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) MapError!void {
