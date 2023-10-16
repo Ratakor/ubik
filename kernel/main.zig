@@ -97,8 +97,8 @@ export fn _start() callconv(.C) noreturn {
     time.init();
 
     // TODO: crash due to page fault
-    // const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null) catch unreachable;
-    // kernel_thread.enqueue(1) catch unreachable;
+    // const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null, 1) catch unreachable;
+    // sched.enqueue(kernel_thread) catch unreachable;
 
     arch.enableInterrupts();
     sched.wait();
@@ -164,14 +164,20 @@ fn main() !void {
     const rand = @import("rand.zig");
     var pcg = rand.Pcg.init(rand.getSeedSlow());
     inline for (0..8) |_| {
-        const thread = sched.Thread.initKernel(@ptrCast(&hihihi), null) catch unreachable;
-        thread.enqueue(pcg.random().int(u4)) catch unreachable;
+        const thread = sched.Thread.initKernel(
+            @ptrCast(&hihihi),
+            null,
+            pcg.random().int(u4),
+        ) catch unreachable;
+        sched.enqueue(thread) catch unreachable;
     }
 }
 
 fn hihihi() void {
     if (tty0) |tty| {
         tty.writer().writeAll("hihihi\n") catch unreachable;
+    } else {
+        serial.print("hihihi\n", .{});
     }
     sched.dequeueAndDie();
 }

@@ -11,11 +11,9 @@ const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.sched);
 const page_size = std.mem.page_size;
 
-// This is a draft for the Full Random Scheduler
-
 // TODO: if a process create a lot of thread it can suck all the cpu
 //       -> check the process of the chosen thread smh to fix that
-// TODO: use a red-black tree instead of a skiplist ?
+// TODO: use a (red-black) tree instead of an arraylist
 
 pub const Process = struct {
     pid: usize,
@@ -79,8 +77,7 @@ pub const Thread = struct {
     process: *Process,
     ctx: arch.Context,
 
-    ticket: usize,
-    ntickets: usize,
+    tickets: usize,
 
     scheduling_off: bool,
     enqueued: bool, // TODO: useless?
@@ -104,13 +101,15 @@ pub const Thread = struct {
 
     // TODO: improve
     //       use root.allocator instead of pmm.alloc?
-    pub fn initKernel(func: *const anyopaque, arg: ?*anyopaque) !*Thread {
+    pub fn initKernel(func: *const anyopaque, arg: ?*anyopaque, tickets: usize) !*Thread {
         const thread = try root.allocator.create(Thread);
         errdefer root.allocator.destroy(thread);
         @memset(std.mem.asBytes(thread), 0);
 
         thread.self = thread;
         thread.errno = 0;
+
+        thread.tickets = tickets;
 
         // thread.tid = undefined; // normal
         thread.lock = .{};
@@ -165,189 +164,20 @@ pub const Thread = struct {
         pmm.free(self.fpu_storage - vmm.hhdm_offset, pages);
         root.allocator.destroy(self);
     }
-
-    pub fn enqueue(self: *Thread, ntickets: usize) !void {
-        if (self.enqueued) return;
-
-        self.ticket = tickets_count.fetchAdd(ntickets, .AcqRel) + ntickets; // TODO: ordering
-        self.ntickets = ntickets;
-        _ = try running_threads.insert(self);
-        self.enqueued = true;
-
-        for (smp.cpus) |cpu| {
-            if (!cpu.active) {
-                apic.sendIPI(cpu.lapic_id, sched_vector);
-                break;
-            }
-        }
-
-        log.info("enqueued thread: {*} with ticket: {}", .{ self, self.ticket });
-    }
-
-    pub fn dequeue(self: *Thread) void {
-        if (!self.enqueued) return;
-
-        std.debug.assert(running_threads.remove(self.ticket));
-        _ = tickets_count.fetchSub(self.ntickets, .AcqRel); // TODO: ordering
-        self.enqueued = false;
-
-        log.info("dequeued thread: {*} with ticket: {}", .{ self, self.ticket });
-    }
-};
-
-const ThreadSkipList = struct {
-    const Self = @This();
-    const Error = std.mem.Allocator.Error;
-
-    header: *Node,
-    count: usize = 0,
-    level: usize = 1,
-    lock: SpinLock = .{}, // TODO: fine grained lock instead of global
-
-    pub const max_level = 32;
-
-    pub const Node = struct {
-        thread: *Thread,
-        forward: []?*Node,
-
-        pub inline fn next(self: Node) ?*Node {
-            return self.forward[0];
-        }
-    };
-
-    pub fn init() Error!Self {
-        const node = try root.allocator.create(Node);
-        node.forward = try root.allocator.alloc(?*Node, max_level);
-        @memset(node.forward, null);
-        return .{ .header = node };
-    }
-
-    pub fn deinit(self: Self) void {
-        var node: ?*Node = self.header;
-        while (node) |n| {
-            node = n.next();
-            root.allocator.free(n.forward);
-            root.allocator.destroy(n);
-        }
-    }
-
-    fn find(self: *Self, ticket: usize, update: []*Node) ?*Node {
-        var node: *Node = self.header;
-        var lvl = self.level - 1;
-
-        while (true) : (lvl -= 1) {
-            while (node.forward[lvl]) |next| {
-                if (next.thread.ticket >= ticket) break;
-                node = next;
-            }
-            update[lvl] = node;
-
-            if (lvl == 0) break;
-        }
-
-        return node.next();
-    }
-
-    pub fn insert(self: *Self, thread: *Thread) Error!*Node {
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        var update: [max_level]*Node = undefined;
-        const maybe_node = self.find(thread.ticket, &update);
-
-        if (maybe_node) |node| {
-            std.debug.panic(
-                \\trying to insert an already inserted thread
-                \\node.thread.ticket = {}
-                \\thread.ticket = {}
-            , .{ node.thread.ticket, thread.ticket });
-        }
-
-        var lvl: usize = 1;
-        while (random.int(u2) == 0) lvl += 1;
-        if (lvl > self.level) {
-            if (lvl > max_level) lvl = max_level;
-            for (self.level..lvl) |i| {
-                update[i] = self.header;
-            }
-            self.level = lvl;
-        }
-
-        var node = try root.allocator.create(Node);
-        node.thread = thread;
-        node.forward = try root.allocator.alloc(?*Node, lvl);
-
-        for (0..lvl) |i| {
-            node.forward[i] = update[i].forward[i];
-            update[i].forward[i] = node;
-        }
-
-        self.count += 1;
-
-        return node;
-    }
-
-    pub fn remove(self: *Self, ticket: usize) bool {
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        var update: [max_level]*Node = undefined;
-        if (self.find(ticket, &update)) |node| {
-            if (node.thread.ticket == ticket) {
-                for (0..self.level) |lvl| {
-                    if (update[lvl].forward[lvl] != node) break;
-                    update[lvl].forward[lvl] = node.forward[lvl];
-                }
-
-                while (self.level > 1) : (self.level -= 1) {
-                    if (self.header.forward[self.level - 1] != null) break;
-                }
-
-                self.count -= 1;
-                root.allocator.free(node.forward);
-                root.allocator.destroy(node);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    pub inline fn getThread(self: *Self, ticket: usize) ?*Thread {
-        self.lock.lock();
-        defer self.lock.unlock();
-
-        var node: *Node = self.header;
-        var lvl = self.level - 1;
-
-        while (true) : (lvl -= 1) {
-            while (node.forward[lvl]) |next| {
-                if (next.thread.ticket >= ticket) break;
-                node = next;
-            }
-            if (lvl == 0) break;
-        }
-
-        return if (node.next()) |n| n.thread else null;
-    }
-
-    pub inline fn first(self: Self) ?*Node {
-        return self.header.forward[0];
-    }
 };
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{};
 var sched_vector: u8 = undefined;
-var running_threads: ThreadSkipList = undefined;
-var tickets_count = std.atomic.Atomic(usize).init(0);
+var running_threads: std.ArrayListUnmanaged(*Thread) = .{};
+var sched_lock: SpinLock = .{};
+var total_tickets: usize = 0;
 var pcg: rand.Pcg = undefined;
-const random: rand.Random = pcg.random(); // TODO: useless use pcg.random()?
+const random: rand.Random = pcg.random();
 
 pub fn init() void {
     pcg = rand.Pcg.init(rand.getSeedSlow());
-    running_threads = ThreadSkipList.init() catch unreachable;
     kernel_process = Process.init(null, &vmm.kernel_addr_space) catch unreachable;
-
     sched_vector = idt.allocVector();
     log.info("scheduler interrupt vector: 0x{x}", .{sched_vector});
     idt.registerHandler(sched_vector, schedHandler);
@@ -362,15 +192,65 @@ pub inline fn currentThread() *Thread {
 }
 
 fn nextThread() ?*Thread {
-    // TODO: use uintLessThanBiased? <- cmp if speed diff is really important
-    const ticket = random.uintLessThan(usize, tickets_count.load(.Acquire) + 1); // TODO: ordering
-    return running_threads.getThread(ticket);
+    const ticket = random.uintLessThan(usize, total_tickets + 1);
+    var sum: usize = 0;
+
+    sched_lock.lock();
+    defer sched_lock.unlock();
+
+    for (running_threads.items) |thr| {
+        sum += thr.tickets;
+        if (sum > ticket) {
+            return thr;
+        }
+    }
+    return null;
+}
+
+pub fn enqueue(thread: *Thread) !void {
+    if (thread.enqueued) return;
+
+    sched_lock.lock();
+    errdefer sched_lock.unlock();
+
+    try running_threads.append(root.allocator, thread);
+    total_tickets += thread.tickets;
+    thread.enqueued = true;
+    log.info("enqueued thread: {*}", .{thread});
+
+    sched_lock.unlock();
+
+    for (smp.cpus) |cpu| {
+        if (!cpu.active) {
+            apic.sendIPI(cpu.lapic_id, sched_vector);
+            break;
+        }
+    }
+}
+
+// TODO: slow
+pub fn dequeue(thread: *Thread) void {
+    if (!thread.enqueued) return;
+
+    sched_lock.lock();
+    defer sched_lock.unlock();
+
+    for (running_threads.items, 0..) |thr, i| {
+        if (thr == thread) {
+            _ = running_threads.orderedRemove(i);
+            total_tickets -= thread.tickets;
+            thread.enqueued = false;
+            log.info("dequeued thread: {*} of index {}", .{ thread, i });
+            return;
+        }
+    }
+    log.warn("trying to dequeue unknown thread: {*}", .{thread});
 }
 
 /// dequeue current thread and yield
 pub fn dequeueAndDie() noreturn {
     arch.disableInterrupts();
-    currentThread().dequeue();
+    dequeue(currentThread());
     yield(false);
     unreachable;
 }
@@ -453,7 +333,7 @@ fn schedHandler(ctx: *arch.Context) void {
 
 pub fn wait() noreturn {
     arch.disableInterrupts();
-    apic.timerOneShot(1_000, sched_vector);
+    apic.timerOneShot(10_000, sched_vector);
     arch.enableInterrupts();
     arch.halt();
 }

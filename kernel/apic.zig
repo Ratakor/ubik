@@ -79,7 +79,7 @@ pub fn timerOneShot(us: u64, vector: u8) void {
 
     timerStop();
 
-    const ticks = us * (smp.thisCpu().lapic_freq / 1000000);
+    const ticks = us * (smp.thisCpu().lapic_freq / 1_000_000);
 
     writeRegister(.lvt_timer, vector);
     writeRegister(.timer_divide, 0);
