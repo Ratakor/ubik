@@ -4,22 +4,26 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const idt = arch.idt;
+const apic = @import("apic.zig");
 const pmm = @import("pmm.zig");
+const smp = @import("smp.zig");
 const sched = @import("sched.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.vmm);
+const alignBackward = std.mem.alignBackward;
+const alignForward = std.mem.alignForward;
+const page_size = std.mem.page_size;
 
-// TODO: flag, remap, fork
-// TODO: TLB
+// TODO: TLB + mapRange/unmapRange?
 
-const MapError = error{
+pub const MapError = error{
     OutOfMemory,
     AlreadyMapped,
     NotMapped,
 };
 
-// TODO: use a simple u64 instead ?
-pub const PageTableEntry = packed struct {
+/// Page Table Entry
+pub const PTE = packed struct {
     p: u1, // present
     rw: u1, // read/write
     us: u1, // user/supervisor
@@ -35,54 +39,32 @@ pub const PageTableEntry = packed struct {
     pk: u4, // protection key
     xd: u1, // execute disable
 
-    pub inline fn getAddress(self: PageTableEntry) u64 {
+    const present: u64 = 1 << 0;
+    const writable: u64 = 1 << 1;
+    const user: u64 = 1 << 2;
+    const noexec: u64 = 1 << 63;
+
+    pub inline fn getAddress(self: PTE) u64 {
         return @as(u64, self.address) << 12;
     }
-};
 
-// TODO: merge this struct with AddressSpace
-pub const PageTable = struct {
-    entries: [512]PageTableEntry,
+    inline fn getNextLevel(self: *PTE, allocate: bool) ?[*]PTE {
+        if (self.p != 0) {
+            return @ptrFromInt(self.getAddress() + hhdm_offset);
+        }
 
-    const Self = @This();
+        if (!allocate) {
+            return null;
+        }
 
-    pub fn virt2pte(self: *Self, vaddr: u64, allocate: bool) ?*PageTableEntry {
-        const pml4_idx = (vaddr & (0x1ff << 39)) >> 39;
-        const pml3_idx = (vaddr & (0x1ff << 30)) >> 30;
-        const pml2_idx = (vaddr & (0x1ff << 21)) >> 21;
-        const pml1_idx = (vaddr & (0x1ff << 12)) >> 12;
-
-        const pml4 = self;
-        const pml3 = getNextLevel(pml4, pml4_idx, allocate) orelse return null;
-        const pml2 = getNextLevel(pml3, pml3_idx, allocate) orelse return null;
-        const pml1 = getNextLevel(pml2, pml2_idx, allocate) orelse return null;
-
-        return &pml1.entries[pml1_idx];
-    }
-
-    pub fn virt2phys(self: *Self, vaddr: u64) MapError!u64 {
-        const pte = self.virt2pte(vaddr, false) orelse unreachable;
-        if (pte.p == 0) return error.NotMapped;
-        return pte.getAddress();
-    }
-
-    pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) MapError!void {
-        const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
-        if (pte.p != 0) return error.AlreadyMapped;
-        pte.* = @bitCast(paddr | flags);
-    }
-
-    pub fn unmapPage(self: *Self, vaddr: u64) MapError!void {
-        const pte = self.virt2pte(vaddr, false) orelse unreachable;
-        if (pte.p == 0) return error.NotMapped;
-        pte.* = @bitCast(0);
-    }
-
-    pub inline fn cr3(self: *const Self) u64 {
-        return @intFromPtr(self) - hhdm_offset;
+        const new_page_table = pmm.alloc(1, true) orelse return null;
+        // errno = ENOMEM
+        self.* = @bitCast(new_page_table | present | writable | user);
+        return @ptrFromInt(new_page_table + hhdm_offset);
     }
 };
 
+// TODO
 const Mapping = struct {
     base: usize,
     length: usize,
@@ -92,9 +74,105 @@ const Mapping = struct {
 };
 
 pub const AddressSpace = struct {
+    pml4: *[512]PTE,
     lock: SpinLock = .{},
-    page_table: *PageTable,
-    mappings: std.ArrayListUnmanaged(Mapping) = .{},
+    mappings: std.ArrayListUnmanaged(Mapping) = .{}, // TODO
+
+    const Self = @This();
+
+    pub fn init() !*Self {
+        const addr_space = try root.allocator.create(AddressSpace);
+        const pml4_phys = pmm.alloc(1, true) orelse {
+            root.allocator.destroy(addr_space);
+            return error.OutOfMemory;
+        };
+        addr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
+        addr_space.lock = .{};
+
+        // TODO
+        // for (256..512) |i| {
+        //     addr_space.pml4[i] = kaddr_space.pml4[i];
+        // }
+
+        return addr_space;
+    }
+
+    pub fn deinit(self: *Self) void {
+        _ = self;
+        // TODO
+    }
+
+    pub fn fork(self: *Self) !*Self {
+        _ = self;
+        // TODO
+    }
+
+    pub fn virt2pte(self: *const Self, vaddr: u64, allocate: bool) ?*PTE {
+        const pml4_idx = (vaddr & (0x1ff << 39)) >> 39;
+        const pml3_idx = (vaddr & (0x1ff << 30)) >> 30;
+        const pml2_idx = (vaddr & (0x1ff << 21)) >> 21;
+        const pml1_idx = (vaddr & (0x1ff << 12)) >> 12;
+
+        const pml4 = self.pml4;
+        const pml3 = pml4[pml4_idx].getNextLevel(allocate) orelse return null;
+        const pml2 = pml3[pml3_idx].getNextLevel(allocate) orelse return null;
+        const pml1 = pml2[pml2_idx].getNextLevel(allocate) orelse return null;
+
+        return &pml1[pml1_idx];
+    }
+
+    pub fn virt2phys(self: *const Self, vaddr: u64) MapError!u64 {
+        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        if (pte.p == 0) return error.NotMapped;
+        return pte.getAddress();
+    }
+
+    pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) MapError!void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        // TODO: when virt2pte fails the memory it allocated is not freed
+        const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
+        if (pte.p != 0) return error.AlreadyMapped;
+        pte.* = @bitCast(paddr | flags);
+
+        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
+            // TODO: TLB shootdown
+            arch.invlpg(vaddr);
+        }
+    }
+
+    pub fn remapPage(self: *Self, vaddr: u64, flags: u64) MapError!void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        if (pte.p == 0) return error.NotMapped;
+        pte.* = @bitCast(pte.getAddress() | flags);
+
+        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
+            // TODO: TLB shootdown
+            arch.invlpg(vaddr);
+        }
+    }
+
+    pub fn unmapPage(self: *Self, vaddr: u64) MapError!void {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        if (pte.p == 0) return error.NotMapped;
+        pte.* = @bitCast(0);
+
+        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
+            // TODO: TLB shootdown
+            arch.invlpg(vaddr);
+        }
+    }
+
+    pub inline fn cr3(self: *const Self) u64 {
+        return @intFromPtr(self.pml4) - hhdm_offset;
+    }
 };
 
 pub const page_allocator = std.mem.Allocator{
@@ -106,36 +184,28 @@ pub const page_allocator = std.mem.Allocator{
     },
 };
 
-const alignBackward = std.mem.alignBackward;
-const alignForward = std.mem.alignForward;
-const page_size = std.mem.page_size;
-const pte_present: u64 = 1 << 0;
-const pte_writable: u64 = 1 << 1;
-const pte_user: u64 = 1 << 2;
-const pte_noexec: u64 = 1 << 63;
-
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
-pub var kernel_addr_space: AddressSpace = .{ .page_table = undefined };
+pub var kaddr_space: *AddressSpace = undefined;
+var tlb_shootdown_vector: u8 = undefined;
 
 pub fn init() MapError!void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
 
-    const page_table_phys = pmm.alloc(1, true) orelse unreachable;
-    const page_table: *PageTable = @ptrFromInt(page_table_phys + hhdm_offset);
+    kaddr_space = AddressSpace.init() catch unreachable;
 
     for (256..512) |i| {
-        _ = getNextLevel(page_table, i, true) != null;
+        _ = kaddr_space.pml4[i].getNextLevel(true);
     }
 
-    try mapSection("text", page_table, pte_present);
-    try mapSection("rodata", page_table, pte_present | pte_noexec);
-    try mapSection("data", page_table, pte_present | pte_writable | pte_noexec);
+    try mapSection("text", kaddr_space, PTE.present);
+    try mapSection("rodata", kaddr_space, PTE.present | PTE.noexec);
+    try mapSection("data", kaddr_space, PTE.present | PTE.writable | PTE.noexec);
 
     // map the first 4 GiB
     var addr: u64 = 0x1000;
     while (addr < 0x100000000) : (addr += page_size) {
-        try page_table.mapPage(addr, addr, pte_present | pte_writable);
-        try page_table.mapPage(addr + hhdm_offset, addr, pte_present | pte_writable | pte_noexec);
+        try kaddr_space.mapPage(addr, addr, PTE.present | PTE.writable);
+        try kaddr_space.mapPage(addr + hhdm_offset, addr, PTE.present | PTE.writable | PTE.noexec);
     }
 
     // map the rest of the memory map
@@ -149,31 +219,26 @@ pub fn init() MapError!void {
         while (i < top) : (i += page_size) {
             if (i < 0x100000000) continue;
 
-            try page_table.mapPage(i, i, pte_present | pte_writable);
-            try page_table.mapPage(i + hhdm_offset, i, pte_present | pte_writable | pte_noexec);
+            try kaddr_space.mapPage(i, i, PTE.present | PTE.writable);
+            try kaddr_space.mapPage(i + hhdm_offset, i, PTE.present | PTE.writable | PTE.noexec);
         }
     }
-
-    kernel_addr_space.page_table = page_table;
 
     // TODO
     // idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
     // idt.setIST(idt.page_fault_vector, 2);
 
-    switchPageTable(page_table.cr3());
+    tlb_shootdown_vector = idt.allocVector();
+    idt.registerHandler(tlb_shootdown_vector, tlbShootdownHandler);
+
+    switchPageTable(kaddr_space.cr3());
 }
 
 pub inline fn switchPageTable(page_table: u64) void {
     arch.writeRegister("cr3", page_table);
 }
 
-fn pageFaultHandler(ctx: *arch.Context) void {
-    _ = ctx;
-
-    // TODO: makes cpus crash at some point
-}
-
-inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags: u64) MapError!void {
+inline fn mapSection(comptime section: []const u8, addr_space: *AddressSpace, flags: u64) MapError!void {
     const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
     const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
     const start_addr = alignBackward(u64, start, page_size);
@@ -183,24 +248,20 @@ inline fn mapSection(comptime section: []const u8, page_table: *PageTable, flags
     var addr = start_addr;
     while (addr < end_addr) : (addr += page_size) {
         const paddr = addr - kaddr.virtual_base + kaddr.physical_base;
-        try page_table.mapPage(addr, paddr, flags);
+        try addr_space.mapPage(addr, paddr, flags);
     }
 }
 
-fn getNextLevel(page_table: *PageTable, idx: usize, allocate: bool) ?*PageTable {
-    const pte = &page_table.entries[idx];
+fn pageFaultHandler(ctx: *arch.Context) void {
+    _ = ctx;
+    // TODO: makes cpus crash at some point
+}
 
-    if (pte.p != 0) {
-        return @ptrFromInt(pte.getAddress() + hhdm_offset);
-    }
+fn tlbShootdownHandler(ctx: *arch.Context) void {
+    _ = ctx;
+    defer apic.eoi();
 
-    if (!allocate) {
-        return null;
-    }
-
-    const new_page_table = pmm.alloc(1, true) orelse return null; // errno = ENOMEM
-    pte.* = @bitCast(new_page_table | pte_present | pte_writable | pte_user);
-    return @ptrFromInt(new_page_table + hhdm_offset);
+    // TODO
 }
 
 // kernel page allocator functions

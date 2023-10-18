@@ -36,12 +36,12 @@ pub const TSS = extern struct {
 
 /// Global Descriptor Table
 const GDT = extern struct {
-    null_entry: GDTEntry align(8),
-    kernel_code: GDTEntry align(8),
-    kernel_data: GDTEntry align(8),
-    user_code: GDTEntry align(8),
-    user_data: GDTEntry align(8),
-    tss: TSSDescriptor align(8),
+    null_entry: GDTEntry align(8), // 0x00
+    kernel_code: GDTEntry align(8), // 0x08
+    kernel_data: GDTEntry align(8), // 0x10
+    user_code: GDTEntry align(8), // 0x18
+    user_data: GDTEntry align(8), // 0x20
+    tss: TSSDescriptor align(8), // 0x28
 };
 
 const GDTDescriptor = extern struct {

@@ -1,3 +1,28 @@
+pub const Rflags = packed struct {
+    CF: u1 = 0,
+    reserved: u1 = 1,
+    PF: u1 = 0,
+    reserved1: u1 = 0,
+    AF: u1 = 0,
+    reserved2: u1 = 0,
+    ZF: u1 = 0,
+    SF: u1 = 0,
+    TF: u1 = 0,
+    IF: u1 = 0,
+    DF: u1 = 0,
+    OF: u1 = 0,
+    IOPL: u2 = 0,
+    NT: u1 = 0,
+    reserved3: u1 = 0,
+    RF: u1 = 0,
+    VM: u1 = 0,
+    AC: u1 = 0,
+    VIF: u1 = 0,
+    VIP: u1 = 0,
+    ID: u1 = 0,
+    reserved4: u42 = 0,
+};
+
 pub const CPUID = struct {
     eax: u32,
     ebx: u32,

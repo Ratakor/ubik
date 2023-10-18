@@ -117,7 +117,7 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     idt.reload();
     gdt.loadTSS(&cpu_local.tss);
 
-    vmm.switchPageTable(vmm.kernel_addr_space.page_table.cr3());
+    vmm.switchPageTable(vmm.kaddr_space.cr3());
 
     // TODO: use null for idle?
     const idle_thread = root.allocator.create(sched.Thread) catch unreachable;

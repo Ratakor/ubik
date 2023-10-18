@@ -66,7 +66,7 @@ const IDTRegister = extern struct {
     base: u64 align(1) = undefined,
 };
 
-const exceptions = [_][]const u8{
+const exceptions = [_]?[]const u8{
     "Division by zero",
     "Debug",
     "Non-maskable Interrupt",
@@ -82,23 +82,23 @@ const exceptions = [_][]const u8{
     "Stack-Segment Fault",
     "General Protection Fault",
     "Page Fault",
-    "",
+    null,
     "x87 Floating-Point Exception",
     "Alignment Check",
     "Machine Check",
     "SIMD Floating-Point Exception",
     "Virtualization Exception",
     "Control Protection Exception",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
     "Hypervisor Injection Exception",
     "VMM Communication Exception",
     "Security Exception",
-    "",
+    null,
 };
 
 var isr = [_]InterruptHandler{exceptionHandler} ** 256;
@@ -147,6 +147,15 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
 
 fn exceptionHandler(ctx: *Context) void {
     const vector = ctx.isr_vector;
+
+    // user
+    if (ctx.cs != 0x08) {
+        switch (vector) {
+            // TODO
+            else => {},
+        }
+    }
+
     const cr2 = x86.readRegister("cr2");
     const cr3 = x86.readRegister("cr3");
 
@@ -219,7 +228,7 @@ fn makeStubHandler(vector: u8) InterruptStub {
     }.handler;
 }
 
-export fn interruptHandler(ctx: *Context) callconv(.C) void {
+export fn interruptHandler(ctx: *Context) callconv(.SysV) void {
     const handler = isr[ctx.isr_vector];
     handler(ctx);
 }

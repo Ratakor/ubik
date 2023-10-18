@@ -32,26 +32,28 @@ pub const Process = struct {
     // umask: u32,
     // fds
 
-    pub fn init(old_process: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
+    // running_time: usize,
+
+    pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
         const proc = try root.allocator.create(Process);
         errdefer root.allocator.destroy(proc);
 
         try processes.append(root.allocator, proc);
-        errdefer _ = processes.popOrNull(); // TODO: or just assume push to old_proc won't fail :D
+        errdefer _ = processes.popOrNull(); // TODO: or just assume push to parent won't fail :D
         proc.pid = processes.items.len - 1;
-        proc.parent = old_process;
+        proc.parent = parent;
         proc.threads = .{};
         proc.children = .{};
 
-        if (old_process) |old_proc| {
-            @memcpy(&proc.name, &old_proc.name);
+        if (parent) |p| {
+            @memcpy(&proc.name, &p.name);
             // proc.addr_space = try old_proc.addr_space.fork();
             // proc.thread_stack_top = old_proc.thread_stack_top;
             // proc.mmap_anon_base = old_proc.mmap_anon_base;
             // proc.cwd = old_proc.cwd;
             // proc.umask = old_proc.umask;
 
-            try old_proc.children.append(root.allocator, proc);
+            try p.children.append(root.allocator, proc);
             // try old_proc.child_events.append(root.allocator, &proc.event);
         } else {
             @memset(&proc.name, 0);
@@ -71,18 +73,18 @@ pub const Thread = struct {
     self: *Thread, // TODO
     errno: usize, // TODO
 
-    tid: u32,
-    lock: SpinLock = .{},
+    tid: usize,
+    lock: SpinLock = .{}, // TODO?
     cpu: *smp.CpuLocal,
     process: *Process,
     ctx: arch.Context,
 
     tickets: usize,
 
-    scheduling_off: bool,
+    scheduling_off: bool, // TODO?
     enqueued: bool, // TODO: useless?
-    enqueued_by_signal: bool,
-    timeslice: u32,
+    // enqueued_by_signal: bool,
+    timeslice: u32, // in microseconds
     yield_await: SpinLock = .{},
     gs_base: u64,
     fs_base: u64,
@@ -96,7 +98,9 @@ pub const Thread = struct {
     // attached_events_i: usize,
     // attached_events: [ev.max_event]*ev.Event,
 
-    pub const stack_size = 0x40000; // TODO
+    // running_time: usize,
+
+    pub const stack_size = 1024 * 1024; // 1MiB
     pub const stack_pages = stack_size / page_size;
 
     // TODO: improve
@@ -127,16 +131,16 @@ pub const Thread = struct {
         thread.ctx.ds = 0x10;
         thread.ctx.es = 0x10;
         thread.ctx.ss = 0x10;
-        // thread.ctx.rflags = 0x202; // TODO: check osdev, this is better in 0b
+        thread.ctx.rflags = @bitCast(arch.Rflags{ .IF = 1 });
         thread.ctx.rip = @intFromPtr(func);
         thread.ctx.rdi = @intFromPtr(arg);
         thread.ctx.rsp = stack;
 
-        thread.cr3 = kernel_process.addr_space.page_table.cr3();
+        thread.cr3 = kernel_process.addr_space.cr3();
         thread.gs_base = @intFromPtr(thread);
 
         thread.process = kernel_process;
-        thread.timeslice = 5000; // TODO
+        thread.timeslice = 5000;
         // TODO: calculate this once and store it in arch.cpu.fpu_storage_pages
         const pages = std.math.divCeil(u64, arch.cpu.fpu_storage_size, page_size) catch unreachable;
         const fpu_storage_phys = pmm.alloc(pages, true) orelse {
@@ -145,6 +149,8 @@ pub const Thread = struct {
             return error.OutOfMemory;
         };
         thread.fpu_storage = fpu_storage_phys + vmm.hhdm_offset;
+
+        // kernel_process.threads.append(root.allocator, thread);
 
         return thread;
     }
@@ -177,7 +183,7 @@ const random: rand.Random = pcg.random();
 
 pub fn init() void {
     pcg = rand.Pcg.init(rand.getSeedSlow());
-    kernel_process = Process.init(null, &vmm.kernel_addr_space) catch unreachable;
+    kernel_process = Process.init(null, vmm.kaddr_space) catch unreachable;
     sched_vector = idt.allocVector();
     log.info("scheduler interrupt vector: 0x{x}", .{sched_vector});
     idt.registerHandler(sched_vector, schedHandler);
@@ -247,8 +253,9 @@ pub fn dequeue(thread: *Thread) void {
     log.warn("trying to dequeue unknown thread: {*}", .{thread});
 }
 
+// TODO: deinit current thread?
 /// dequeue current thread and yield
-pub fn dequeueAndDie() noreturn {
+pub fn die() noreturn {
     arch.disableInterrupts();
     dequeue(currentThread());
     yield(false);
@@ -292,7 +299,7 @@ fn schedHandler(ctx: *arch.Context) void {
             arch.setKernelGsBase(@intFromPtr(cpu.idle));
         }
         cpu.active = false;
-        vmm.switchPageTable(vmm.kernel_addr_space.page_table.cr3());
+        vmm.switchPageTable(vmm.kaddr_space.cr3());
         wait();
     }
 
@@ -385,6 +392,7 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         \\pop %%r13
         \\pop %%r14
         \\pop %%r15
+        // TODO: check if user?
         \\swapgs
         \\add $16, %%rsp
         \\iretq

@@ -73,13 +73,13 @@ pub inline fn eoi() void {
     writeRegister(.eoi, 0);
 }
 
-pub fn timerOneShot(us: u64, vector: u8) void {
+pub fn timerOneShot(microseconds: u64, vector: u8) void {
     const old_state = arch.toggleInterrupts(false);
     defer _ = arch.toggleInterrupts(old_state);
 
     timerStop();
 
-    const ticks = us * (smp.thisCpu().lapic_freq / 1_000_000);
+    const ticks = microseconds * (smp.thisCpu().lapic_freq / 1_000_000);
 
     writeRegister(.lvt_timer, vector);
     writeRegister(.timer_divide, 0);
@@ -96,6 +96,7 @@ pub fn sendIPI(lapic_id: u32, vec: u32) void {
     writeRegister(.icr0, vec);
 }
 
+// TODO
 pub fn timerCalibrate() void {
     timerStop();
 
@@ -105,10 +106,10 @@ pub fn timerCalibrate() void {
 
     pit.setReloadValue(0xffff); // reset PIT
 
-    const samples = 0xfffff;
+    const samples: u64 = 0xfffff;
     const initial_tick = pit.getCurrentCount();
 
-    writeRegister(.timer_initial_count, samples);
+    writeRegister(.timer_initial_count, @truncate(samples));
     while (readRegister(.timer_current_count) != 0) {}
 
     const final_tick = pit.getCurrentCount();

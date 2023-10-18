@@ -59,6 +59,7 @@ fn callback(tty: *TTY, cb: TTY.Callback, arg1: u64, arg2: u64, arg3: u64) void {
     }
 }
 
+// TODO: halt all other cpu
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     @setCold(true);
 
@@ -79,7 +80,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     arch.halt();
 }
 
-export fn _start() callconv(.C) noreturn {
+export fn _start() noreturn {
     arch.disableInterrupts();
 
     serial.init();
@@ -87,12 +88,12 @@ export fn _start() callconv(.C) noreturn {
         std.log.warn("Failed to initialize debug info: {}\n", .{err});
     };
     arch.init();
-    event.init(); // TODO: init event handlers
+    // event.init(); // TODO
     pmm.init();
     vmm.init() catch unreachable; // TODO: mmap
     acpi.init();
     // TODO: init random here instead of in sched?
-    sched.init(); // TODO
+    sched.init();
     smp.init();
     time.init();
 
@@ -118,11 +119,9 @@ fn main() !void {
     // TODO: pci
     // TODO: vfs
     // TODO: basic syscalls
-
-    // TODO: setup Inter-Processor Interrupts
     // TODO: basic IPC
 
-    // TODO: start /bin/init <- load elf with std.elf
+    // TODO: start /bin/init <- load elf with std.elf?
 
     // extern, I think
     // TODO: server with posix syscalls
@@ -179,5 +178,5 @@ fn hihihi() void {
     } else {
         serial.print("hihihi\n", .{});
     }
-    sched.dequeueAndDie();
+    sched.die();
 }
