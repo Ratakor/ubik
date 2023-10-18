@@ -16,6 +16,7 @@ const time = @import("time.zig");
 const TTY = @import("TTY.zig");
 pub const SpinLock = @import("SpinLock.zig");
 
+pub const panic = debug.panic;
 pub const std_options = struct {
     pub const logFn = debug.log;
 };
@@ -57,27 +58,6 @@ fn callback(tty: *TTY, cb: TTY.Callback, arg1: u64, arg2: u64, arg3: u64) void {
             arg3,
         }),
     }
-}
-
-// TODO: halt all other cpu
-pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    @setCold(true);
-
-    arch.disableInterrupts();
-
-    const StackIterator = std.debug.StackIterator;
-    const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
-    if (tty0) |tty| {
-        const writer = tty.writer();
-        writer.print(fmt, .{msg}) catch unreachable;
-        debug.printStackIterator(writer, StackIterator.init(@returnAddress(), @frameAddress()));
-        ubik.term.hideCursor(writer) catch unreachable;
-    } else {
-        serial.print(fmt, .{msg});
-        debug.printStackIterator(serial.writer, StackIterator.init(@returnAddress(), @frameAddress()));
-    }
-
-    arch.halt();
 }
 
 export fn _start() noreturn {

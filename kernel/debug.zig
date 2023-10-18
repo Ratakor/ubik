@@ -1,10 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root");
-const SpinLock = @import("SpinLock.zig");
+const arch = @import("arch.zig");
 const serial = @import("serial.zig");
+const SpinLock = @import("SpinLock.zig");
+const StackIterator = std.debug.StackIterator;
+const readIntLittle = std.mem.readIntLittle;
 
 var log_lock: SpinLock = .{};
+var panic_lock: SpinLock = .{};
 
 var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MiB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
@@ -39,20 +43,65 @@ pub fn init() !void {
     try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
 }
 
-pub fn printStackIterator(writer: anytype, stack_iter: std.debug.StackIterator) void {
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    @setCold(true);
+
+    arch.disableInterrupts();
+
+    if (!panic_lock.tryLock()) {
+        arch.halt();
+    }
+
+    const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
+    if (root.tty0) |tty| {
+        const writer = tty.writer();
+        writer.print(fmt, .{msg}) catch {};
+        printStackIterator(writer, StackIterator.init(@returnAddress(), @frameAddress()));
+        std.os.system.term.hideCursor(writer) catch {};
+    } else {
+        serial.print(fmt, .{msg});
+        printStackIterator(serial.writer, StackIterator.init(@returnAddress(), @frameAddress()));
+    }
+
+    arch.halt();
+}
+
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    comptime if (builtin.mode != .Debug) return;
+
+    const level_txt = comptime switch (level) {
+        .err => "\x1b[31merror\x1b[m",
+        .warn => "\x1b[33mwarning\x1b[m",
+        .info => "\x1b[32minfo\x1b[m",
+        .debug => "\x1b[36mdebug\x1b[m",
+    };
+    const scope_prefix = (if (scope != .default) "@" ++ @tagName(scope) else "") ++ ": ";
+
+    log_lock.lock();
+    defer log_lock.unlock();
+    const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
+    nosuspend serial.print(fmt, args);
+}
+
+fn printStackIterator(writer: anytype, stack_iter: StackIterator) void {
     var iter = stack_iter;
 
-    writer.print("Stack trace:\n", .{}) catch unreachable;
+    writer.writeAll("Stack trace:\n") catch {};
     while (iter.next()) |addr| {
         printSymbol(writer, addr);
     }
 }
 
-pub fn printStackTrace(writer: anytype, stack_trace: *std.builtin.StackTrace) void {
+fn printStackTrace(writer: anytype, stack_trace: *std.builtin.StackTrace) void {
     var frame_index: usize = 0;
     var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
 
-    writer.print("Stack trace:\n", .{}) catch unreachable;
+    writer.writeAll("Stack trace:\n") catch {};
     while (frames_left != 0) {
         const return_address = stack_trace.instruction_addresses[frame_index];
         printSymbol(writer, return_address);
@@ -83,34 +132,34 @@ fn printSymbol(writer: anytype, address: u64) void {
         symbol_name,
         file_name,
         line,
-    }) catch unreachable;
+    }) catch {};
 }
 
 fn getSectionData(elf: [*]const u8, shdr: []const u8) []const u8 {
-    const offset = std.mem.readIntLittle(u64, shdr[24..][0..8]);
-    const size = std.mem.readIntLittle(u64, shdr[32..][0..8]);
+    const offset = readIntLittle(u64, shdr[24..][0..8]);
+    const size = readIntLittle(u64, shdr[32..][0..8]);
 
     return elf[offset .. offset + size];
 }
 
 fn getSectionName(names: []const u8, shdr: []const u8) ?[]const u8 {
-    const offset = std.mem.readIntLittle(u32, shdr[0..][0..4]);
+    const offset = readIntLittle(u32, shdr[0..][0..4]);
     const len = std.mem.indexOf(u8, names[offset..], "\x00") orelse return null;
 
     return names[offset .. offset + len];
 }
 
 fn getShdr(elf: [*]const u8, idx: u16) []const u8 {
-    const sh_offset = std.mem.readIntLittle(u64, elf[40 .. 40 + 8]);
-    const sh_entsize = std.mem.readIntLittle(u16, elf[58 .. 58 + 2]);
+    const sh_offset = readIntLittle(u64, elf[40 .. 40 + 8]);
+    const sh_entsize = readIntLittle(u16, elf[58 .. 58 + 2]);
     const off = sh_offset + sh_entsize * idx;
 
     return elf[off .. off + sh_entsize];
 }
 
 fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
-    const sh_strndx = std.mem.readIntLittle(u16, elf[62 .. 62 + 2]);
-    const sh_num = std.mem.readIntLittle(u16, elf[60 .. 60 + 2]);
+    const sh_strndx = readIntLittle(u16, elf[62 .. 62 + 2]);
+    const sh_num = readIntLittle(u16, elf[60 .. 60 + 2]);
 
     if (sh_strndx > sh_num) {
         return error.ShstrndxOutOfRange;
@@ -129,26 +178,4 @@ fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
     }
 
     return error.SectionNotFound;
-}
-
-pub fn log(
-    comptime level: std.log.Level,
-    comptime scope: @TypeOf(.EnumLiteral),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    comptime if (builtin.mode != .Debug) return;
-
-    const level_txt = comptime switch (level) {
-        .err => "\x1b[31merror\x1b[m",
-        .warn => "\x1b[33mwarning\x1b[m",
-        .info => "\x1b[32minfo\x1b[m",
-        .debug => "\x1b[36mdebug\x1b[m",
-    };
-    const scope_prefix = (if (scope != .default) "@" ++ @tagName(scope) else "") ++ ": ";
-
-    log_lock.lock();
-    defer log_lock.unlock();
-    const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
-    nosuspend serial.print(fmt, args);
 }
