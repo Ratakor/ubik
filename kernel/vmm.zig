@@ -62,6 +62,11 @@ pub const PTE = packed struct {
         self.* = @bitCast(new_page_table | present | writable | user);
         return @ptrFromInt(new_page_table + hhdm_offset);
     }
+
+    comptime {
+        std.debug.assert(@sizeOf(PTE) == @sizeOf(u64));
+        std.debug.assert(@bitSizeOf(PTE) == @bitSizeOf(u64));
+    }
 };
 
 // TODO
@@ -75,8 +80,8 @@ const Mapping = struct {
 
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
-    lock: SpinLock = .{},
-    mappings: std.ArrayListUnmanaged(Mapping) = .{}, // TODO
+    lock: SpinLock,
+    mmap_ranges: std.ArrayListUnmanaged(*Mapping), // TODO
 
     const Self = @This();
 
@@ -88,6 +93,7 @@ pub const AddressSpace = struct {
         };
         addr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
         addr_space.lock = .{};
+        addr_space.mmap_ranges = .{};
 
         // TODO
         // for (256..512) |i| {
@@ -170,6 +176,20 @@ pub const AddressSpace = struct {
         }
     }
 
+    inline fn mapSection(self: *Self, comptime section: []const u8, flags: u64) MapError!void {
+        const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
+        const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
+        const start_addr = alignBackward(u64, start, page_size);
+        const end_addr = alignForward(u64, end, page_size);
+        const kaddr = root.kernel_address_request.response.?;
+
+        var addr = start_addr;
+        while (addr < end_addr) : (addr += page_size) {
+            const paddr = addr - kaddr.virtual_base + kaddr.physical_base;
+            try self.mapPage(addr, paddr, flags);
+        }
+    }
+
     pub inline fn cr3(self: *const Self) u64 {
         return @intFromPtr(self.pml4) - hhdm_offset;
     }
@@ -197,9 +217,9 @@ pub fn init() MapError!void {
         _ = kaddr_space.pml4[i].getNextLevel(true);
     }
 
-    try mapSection("text", kaddr_space, PTE.present);
-    try mapSection("rodata", kaddr_space, PTE.present | PTE.noexec);
-    try mapSection("data", kaddr_space, PTE.present | PTE.writable | PTE.noexec);
+    try kaddr_space.mapSection("text", PTE.present);
+    try kaddr_space.mapSection("rodata", PTE.present | PTE.noexec);
+    try kaddr_space.mapSection("data", PTE.present | PTE.writable | PTE.noexec);
 
     // map the first 4 GiB
     var addr: u64 = 0x1000;
@@ -236,20 +256,6 @@ pub fn init() MapError!void {
 
 pub inline fn switchPageTable(page_table: u64) void {
     arch.writeRegister("cr3", page_table);
-}
-
-inline fn mapSection(comptime section: []const u8, addr_space: *AddressSpace, flags: u64) MapError!void {
-    const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
-    const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
-    const start_addr = alignBackward(u64, start, page_size);
-    const end_addr = alignForward(u64, end, page_size);
-    const kaddr = root.kernel_address_request.response.?;
-
-    var addr = start_addr;
-    while (addr < end_addr) : (addr += page_size) {
-        const paddr = addr - kaddr.virtual_base + kaddr.physical_base;
-        try addr_space.mapPage(addr, paddr, flags);
-    }
 }
 
 fn pageFaultHandler(ctx: *arch.Context) void {

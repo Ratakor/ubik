@@ -1,9 +1,10 @@
+const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
 const x86 = @import("x86_64.zig");
 const gdt = @import("idt.zig");
 const idt = @import("idt.zig");
-const log = @import("std").log.scoped(.cpu);
+const log = std.log.scoped(.cpu);
 
 const PAT = packed struct {
     // zig fmt: off
@@ -25,6 +26,11 @@ const PAT = packed struct {
         write_back = 6,
         uncached = 7,
     };
+
+    comptime {
+        std.debug.assert(@sizeOf(PAT) == @sizeOf(u64));
+        std.debug.assert(@bitSizeOf(PAT) == @bitSizeOf(u64));
+    }
 };
 
 /// https://en.wikipedia.org/wiki/CPUID#EAX=1:_Processor_Info_and_Feature_Bits

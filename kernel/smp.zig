@@ -88,8 +88,6 @@ pub fn init() void {
             arch.out(u8, 0x21, 0xff);
             apic.init(); // smp safe
 
-            arch.enableInterrupts();
-
             log.info("bootstrap processor is online with id: {}", .{cpu_local.id});
             _ = @atomicRmw(usize, &cpus_started, .Add, 1, .AcqRel);
         } else {
@@ -142,6 +140,5 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     log.info("processor {} is online", .{cpu_local.id});
     _ = @atomicRmw(usize, &cpus_started, .Add, 1, .AcqRel);
 
-    arch.enableInterrupts();
     sched.wait();
 }

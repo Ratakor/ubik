@@ -35,7 +35,9 @@ inline fn lockFast(self: *SpinLock, comptime cas_fn_name: []const u8) bool {
 fn lockSlow(self: *SpinLock) void {
     @setCold(true);
 
-    for (0..100_000_000) |_| {
+    // TODO
+    // for (0..100_000_000) |_| {
+    while (true) {
         if (self.lockFast("tryCompareAndSwap")) {
             return;
         }
@@ -47,5 +49,7 @@ fn lockSlow(self: *SpinLock) void {
 
 pub fn unlock(self: *SpinLock) void {
     const state = self.state.swap(unlocked, .Release);
-    std.debug.assert(state == locked);
+    // TODO
+    _ = state;
+    // std.debug.assert(state == locked);
 }

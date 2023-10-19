@@ -1,3 +1,5 @@
+const assert = @import("std").debug.assert;
+
 pub const Rflags = packed struct {
     CF: u1 = 0,
     reserved: u1 = 1,
@@ -21,6 +23,11 @@ pub const Rflags = packed struct {
     VIP: u1 = 0,
     ID: u1 = 0,
     reserved4: u42 = 0,
+
+    comptime {
+        assert(@sizeOf(Rflags) == @sizeOf(u64));
+        assert(@bitSizeOf(Rflags) == @bitSizeOf(u64));
+    }
 };
 
 pub const CPUID = struct {

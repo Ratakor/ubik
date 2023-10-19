@@ -77,25 +77,22 @@ export fn _start() noreturn {
     smp.init();
     time.init();
 
-    // TODO: crash due to page fault
-    // const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null, 1) catch unreachable;
-    // sched.enqueue(kernel_thread) catch unreachable;
-
-    arch.enableInterrupts();
+    const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null, 1) catch unreachable;
+    sched.enqueue(kernel_thread) catch unreachable;
     sched.wait();
 }
 
 fn main() !void {
-    const fb = framebuffer_request.response.?.framebuffers()[0];
-    tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
+    // const fb = framebuffer_request.response.?.framebuffers()[0];
+    // tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
 
-    const boot_info = boot_info_request.response.?;
-    tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
-        boot_info.name,
-        boot_info.version,
-    }) catch unreachable;
+    // const boot_info = boot_info_request.response.?;
+    // tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+    //     boot_info.name,
+    //     boot_info.version,
+    // }) catch unreachable;
 
-    ps2.init();
+    // ps2.init();
     // TODO: pci
     // TODO: vfs
     // TODO: basic syscalls
@@ -108,48 +105,52 @@ fn main() !void {
     // TODO: filesystem
     // TODO: IPC: pipe, socket (TCP, UDP, Unix)
 
-    var regs = arch.cpuid(0, 0);
-    std.log.debug("vendor string: {s}{s}{s}", .{
-        @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-        @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-    });
+    // pmm.reclaimMemory();
 
-    regs = arch.cpuid(0x80000000, 0);
-    if (regs.eax >= 0x80000004) {
-        regs = arch.cpuid(0x80000002, 0);
-        serial.writer.print("cpu name: {s}{s}{s}{s}", .{
-            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        }) catch unreachable;
-        regs = arch.cpuid(0x80000003, 0);
-        serial.writer.print("{s}{s}{s}{s}", .{
-            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        }) catch unreachable;
-        regs = arch.cpuid(0x80000004, 0);
-        serial.writer.print("{s}{s}{s}{s}\n", .{
-            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        }) catch unreachable;
-    }
+    // var regs = arch.cpuid(0, 0);
+    // std.log.debug("vendor string: {s}{s}{s}", .{
+    //     @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+    //     @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+    //     @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+    // });
 
-    const rand = @import("rand.zig");
-    var pcg = rand.Pcg.init(rand.getSeedSlow());
-    inline for (0..8) |_| {
-        const thread = sched.Thread.initKernel(
-            @ptrCast(&hihihi),
-            null,
-            pcg.random().int(u4),
-        ) catch unreachable;
-        sched.enqueue(thread) catch unreachable;
-    }
+    // regs = arch.cpuid(0x80000000, 0);
+    // if (regs.eax >= 0x80000004) {
+    //     regs = arch.cpuid(0x80000002, 0);
+    //     serial.writer.print("cpu name: {s}{s}{s}{s}", .{
+    //         @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+    //     }) catch unreachable;
+    //     regs = arch.cpuid(0x80000003, 0);
+    //     serial.writer.print("{s}{s}{s}{s}", .{
+    //         @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+    //     }) catch unreachable;
+    //     regs = arch.cpuid(0x80000004, 0);
+    //     serial.writer.print("{s}{s}{s}{s}\n", .{
+    //         @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+    //         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+    //     }) catch unreachable;
+    // }
+
+    // const rand = @import("rand.zig");
+    // var pcg = rand.Pcg.init(rand.getSeedSlow());
+    // inline for (0..8) |_| {
+    //     const thread = sched.Thread.initKernel(
+    //         @ptrCast(&hihihi),
+    //         null,
+    //         pcg.random().int(u4),
+    //     ) catch unreachable;
+    //     sched.enqueue(thread) catch unreachable;
+    // }
+
+    arch.halt();
 }
 
 fn hihihi() void {

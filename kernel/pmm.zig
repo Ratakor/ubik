@@ -3,17 +3,15 @@ const root = @import("root");
 const vmm = @import("vmm.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.pmm);
-
 const page_size = std.mem.page_size;
-const free_page = false;
 
+const free_page = false;
 // TODO: use u64 and bitwise operation to speed up the process?
-// TODO: decide what to do with "useless" stuff
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
-var usable_pages: u64 = 0; // useless?
-var used_pages: u64 = 0; // useless?
-var reserved_pages: u64 = 0; // useless?
+var usable_pages: u64 = 0;
+var used_pages: u64 = 0;
+var reserved_pages: u64 = 0;
 var lock: SpinLock = .{}; // TODO: remove lock on pmm and only use
 //                                 root.allocator for risky allocations,
 //                                 or remove lock on root.allocator?
@@ -71,6 +69,21 @@ pub fn init() void {
 
     log.info("usable memory: {} MiB", .{(usable_pages * page_size) / 1024 / 1024});
     log.info("reserved memory: {} MiB", .{(reserved_pages * page_size) / 1024 / 1024});
+}
+
+pub fn reclaimMemory() void {
+    const memory_map = root.memory_map_request.response.?;
+
+    for (memory_map.entries()) |entry| {
+        if (entry.kind == .bootloader_reclaimable) {
+            const pages = entry.length / page_size;
+            usable_pages += pages;
+            reserved_pages -= pages;
+            free(entry.base, pages);
+
+            log.info("reclaimed {} pages at 0x{x}", .{ pages, entry.base });
+        }
+    }
 }
 
 fn innerAlloc(pages: usize, limit: u64) ?u64 {

@@ -68,7 +68,6 @@ pub const Process = struct {
     }
 };
 
-// TODO: extern ?
 pub const Thread = struct {
     self: *Thread, // TODO
     errno: usize, // TODO
@@ -140,7 +139,7 @@ pub const Thread = struct {
         thread.gs_base = @intFromPtr(thread);
 
         thread.process = kernel_process;
-        thread.timeslice = 5000;
+        thread.timeslice = 1000;
         // TODO: calculate this once and store it in arch.cpu.fpu_storage_pages
         const pages = std.math.divCeil(u64, arch.cpu.fpu_storage_size, page_size) catch unreachable;
         const fpu_storage_phys = pmm.alloc(pages, true) orelse {
@@ -152,6 +151,8 @@ pub const Thread = struct {
 
         // kernel_process.threads.append(root.allocator, thread);
 
+        std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
+
         return thread;
     }
 
@@ -162,9 +163,9 @@ pub const Thread = struct {
 
     // TODO
     pub fn deinit(self: *Thread) void {
-        // for (self.stacks.items) |stack| {
-        //     pmm.free(stack - vmm.hhdm_offset - stack_size, stack_pages);
-        // }
+        for (self.stacks.items) |stack| {
+            pmm.free(stack, stack_pages);
+        }
         // TODO: calculate this once and store it in arch.cpu.fpu_storage_pages
         const pages = std.math.divCeil(u64, arch.cpu.fpu_storage_size, page_size) catch unreachable;
         pmm.free(self.fpu_storage - vmm.hhdm_offset, pages);
@@ -187,9 +188,10 @@ pub fn init() void {
     sched_vector = idt.allocVector();
     log.info("scheduler interrupt vector: 0x{x}", .{sched_vector});
     idt.registerHandler(sched_vector, schedHandler);
-    // idt.setIST(sched_vector, 1);
+    // idt.setIST(sched_vector, 1); // TODO
 }
 
+// TODO: save cpu in gs not thread
 pub inline fn currentThread() *Thread {
     return asm volatile (
         \\mov %%gs:0x0, %[thr]
@@ -197,6 +199,7 @@ pub inline fn currentThread() *Thread {
     );
 }
 
+// O(n)
 fn nextThread() ?*Thread {
     const ticket = random.uintLessThan(usize, total_tickets + 1);
     var sum: usize = 0;
@@ -213,6 +216,7 @@ fn nextThread() ?*Thread {
     return null;
 }
 
+// O(1)
 pub fn enqueue(thread: *Thread) !void {
     if (thread.enqueued) return;
 
@@ -234,7 +238,7 @@ pub fn enqueue(thread: *Thread) !void {
     }
 }
 
-// TODO: slow
+// O(n)
 pub fn dequeue(thread: *Thread) void {
     if (!thread.enqueued) return;
 
@@ -243,21 +247,20 @@ pub fn dequeue(thread: *Thread) void {
 
     for (running_threads.items, 0..) |thr, i| {
         if (thr == thread) {
-            _ = running_threads.orderedRemove(i);
+            _ = running_threads.swapRemove(i);
             total_tickets -= thread.tickets;
             thread.enqueued = false;
-            log.info("dequeued thread: {*} of index {}", .{ thread, i });
+            log.info("dequeued thread: {*}", .{thread});
             return;
         }
     }
     log.warn("trying to dequeue unknown thread: {*}", .{thread});
 }
 
-// TODO: deinit current thread?
-/// dequeue current thread and yield
 pub fn die() noreturn {
     arch.disableInterrupts();
     dequeue(currentThread());
+    // TODO: deinit current thread
     yield(false);
     unreachable;
 }
@@ -266,7 +269,15 @@ fn schedHandler(ctx: *arch.Context) void {
     apic.timerStop();
 
     var current_thread = currentThread();
-    std.debug.assert(@intFromPtr(current_thread) != 0);
+    std.debug.assert(@intFromPtr(current_thread) != 0); // TODO
+
+    // TODO
+    if (current_thread.scheduling_off) {
+        apic.eoi();
+        apic.timerOneShot(current_thread.timeslice, sched_vector);
+        return;
+    }
+
     const cpu = smp.thisCpu(); // TODO: current_thread.cpu
     cpu.active = true;
     const next_thread = nextThread();
@@ -289,6 +300,8 @@ fn schedHandler(ctx: *arch.Context) void {
             arch.cpu.fpuSave(current_thread.fpu_storage);
         }
 
+        // TODO
+        // current_thread.cpu = null;
         current_thread.lock.unlock();
     }
 
@@ -318,11 +331,11 @@ fn schedHandler(ctx: *arch.Context) void {
         // if (sysenter) {
         //     arch.wrmsr(0x175, @intFromPtr(current_thread.kernel_stack));
         // } else {
-        //     cpu.tss.ist3 = @intFromPtr(current_thread.kernel_stack);
+        //     cpu.tss.ist[3] = @intFromPtr(current_thread.kernel_stack);
         // }
 
         // TODO: set page fault stack
-        // cpu.tss.ist2 = @intFromPtr(current_thread.pf_stack);
+        // cpu.tss.ist[2] = current_thread.pf_stack;
 
         if (arch.readRegister("cr3") != current_thread.cr3) {
             arch.writeRegister("cr3", current_thread.cr3);
@@ -340,7 +353,7 @@ fn schedHandler(ctx: *arch.Context) void {
 
 pub fn wait() noreturn {
     arch.disableInterrupts();
-    apic.timerOneShot(10_000, sched_vector);
+    apic.timerOneShot(1000, sched_vector);
     arch.enableInterrupts();
     arch.halt();
 }

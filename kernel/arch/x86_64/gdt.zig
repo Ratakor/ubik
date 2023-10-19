@@ -1,4 +1,5 @@
-const log = @import("std").log.scoped(.gdt);
+const std = @import("std");
+const log = std.log.scoped(.gdt);
 const SpinLock = @import("root").SpinLock;
 
 const GDTEntry = packed struct {
@@ -9,6 +10,11 @@ const GDTEntry = packed struct {
     limit_high: u4 = 0,
     flags: u4 = 0,
     base_high: u8 = 0,
+
+    comptime {
+        std.debug.assert(@sizeOf(GDTEntry) == @sizeOf(u64));
+        std.debug.assert(@bitSizeOf(GDTEntry) == @bitSizeOf(u64));
+    }
 };
 
 const TSSDescriptor = packed struct {
@@ -21,6 +27,11 @@ const TSSDescriptor = packed struct {
     base_high: u8 = undefined,
     base_upper: u32 = undefined,
     reserved: u32 = 0,
+
+    comptime {
+        std.debug.assert(@sizeOf(TSSDescriptor) == @sizeOf(u64) * 2);
+        std.debug.assert(@bitSizeOf(TSSDescriptor) == @bitSizeOf(u64) * 2);
+    }
 };
 
 /// Task State Segment

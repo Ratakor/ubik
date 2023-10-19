@@ -52,6 +52,8 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
         arch.halt();
     }
 
+    // TODO: send signal to other cpu to stop them
+
     const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
     if (root.tty0) |tty| {
         const writer = tty.writer();

@@ -131,7 +131,7 @@ pub fn getCurrentCount() u16 {
     arch.out(u8, 0x43, 0);
     const lo = arch.in(u8, 0x40);
     const hi = arch.in(u8, 0x40);
-    return (@as(u16, @intCast(hi)) << 8) | lo;
+    return (@as(u16, hi) << 8) | lo;
 }
 
 fn timerHandler(ctx: *arch.Context) void {
