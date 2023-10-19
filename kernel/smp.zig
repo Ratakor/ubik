@@ -105,7 +105,7 @@ pub fn thisCpu() *CpuLocal {
     // TODO
     // std.debug.assert(thread.scheduling_off == true);
     // std.debug.assert(arch.interruptState() == false);
-    return thread.cpu;
+    return thread.cpu.?;
 }
 
 fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {

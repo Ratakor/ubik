@@ -35,9 +35,7 @@ inline fn lockFast(self: *SpinLock, comptime cas_fn_name: []const u8) bool {
 fn lockSlow(self: *SpinLock) void {
     @setCold(true);
 
-    // TODO
-    // for (0..100_000_000) |_| {
-    while (true) {
+    for (0..100_000_000) |_| {
         if (self.lockFast("tryCompareAndSwap")) {
             return;
         }

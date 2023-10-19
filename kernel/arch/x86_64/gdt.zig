@@ -47,18 +47,24 @@ pub const TSS = extern struct {
 
 /// Global Descriptor Table
 const GDT = extern struct {
-    null_entry: GDTEntry align(8), // 0x00
-    kernel_code: GDTEntry align(8), // 0x08
-    kernel_data: GDTEntry align(8), // 0x10
-    user_code: GDTEntry align(8), // 0x18
-    user_data: GDTEntry align(8), // 0x20
-    tss: TSSDescriptor align(8), // 0x28
+    null_entry: GDTEntry align(8),
+    kernel_code: GDTEntry align(8),
+    kernel_data: GDTEntry align(8),
+    user_code: GDTEntry align(8),
+    user_data: GDTEntry align(8),
+    tss: TSSDescriptor align(8),
 };
 
 const GDTDescriptor = extern struct {
     limit: u16 align(1) = @sizeOf(GDT) - 1,
     base: u64 align(1) = undefined,
 };
+
+pub const kernel_code = 0x08;
+pub const kernel_data = 0x10;
+pub const user_code = 0x18;
+pub const user_data = 0x20;
+pub const tss_descriptor = 0x28;
 
 var gdtr: GDTDescriptor = .{};
 var gdt: GDT = .{
@@ -93,14 +99,14 @@ pub fn init() void {
 pub fn reload() void {
     asm volatile (
         \\lgdt (%[gdtr])
-        // reload CS register, 0x08 = kernel_code
-        \\push $0x08
+        // reload CS register
+        \\push %[kcode]
         \\lea 1f(%%rip), %%rax
         \\push %%rax
         \\lretq
         \\1:
-        // reload data segment registers, 0x10 = kernel_data
-        \\mov $0x10, %%ax
+        // reload data segment registers
+        \\mov %[kdata], %%ax
         \\mov %%ax, %%ds
         \\mov %%ax, %%es
         \\mov %%ax, %%fs
@@ -108,6 +114,8 @@ pub fn reload() void {
         \\mov %%ax, %%ss
         :
         : [gdtr] "r" (&gdtr),
+          [kcode] "i" (kernel_code),
+          [kdata] "i" (kernel_data),
         : "rax", "memory"
     );
 }
@@ -128,7 +136,7 @@ pub fn loadTSS(tss: *TSS) void {
     asm volatile (
         \\ltr %[tss]
         :
-        : [tss] "{ax}" (@as(u16, 0x28)), // 0x28 = address of tss descriptor in gdt
+        : [tss] "{ax}" (@as(u16, tss_descriptor)),
         : "memory"
     );
 }

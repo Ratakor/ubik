@@ -18,6 +18,7 @@ pub const SpinLock = @import("SpinLock.zig");
 
 pub const panic = debug.panic;
 pub const std_options = struct {
+    // pub const log_level = .debug;
     pub const logFn = debug.log;
 };
 
@@ -65,7 +66,7 @@ export fn _start() noreturn {
 
     serial.init();
     debug.init() catch |err| {
-        std.log.warn("Failed to initialize debug info: {}\n", .{err});
+        std.log.warn("Failed to initialize debug info: {}", .{err});
     };
     arch.init();
     // event.init(); // TODO
@@ -83,14 +84,7 @@ export fn _start() noreturn {
 }
 
 fn main() !void {
-    // const fb = framebuffer_request.response.?.framebuffers()[0];
-    // tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
-
-    // const boot_info = boot_info_request.response.?;
-    // tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
-    //     boot_info.name,
-    //     boot_info.version,
-    // }) catch unreachable;
+    std.log.debug("in main with cpu {}", .{smp.thisCpu().id});
 
     // ps2.init();
     // TODO: pci
@@ -101,11 +95,19 @@ fn main() !void {
     // TODO: start /bin/init <- load elf with std.elf?
 
     // extern, I think
+
     // TODO: server with posix syscalls
     // TODO: filesystem
     // TODO: IPC: pipe, socket (TCP, UDP, Unix)
 
-    // pmm.reclaimMemory();
+    // const fb = framebuffer_request.response.?.framebuffers()[0];
+    // tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
+
+    // const boot_info = boot_info_request.response.?;
+    // tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+    //     boot_info.name,
+    //     boot_info.version,
+    // }) catch unreachable;
 
     // var regs = arch.cpuid(0, 0);
     // std.log.debug("vendor string: {s}{s}{s}", .{

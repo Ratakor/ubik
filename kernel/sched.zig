@@ -1,8 +1,10 @@
 const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
+const gdt = arch.gdt;
 const idt = arch.idt;
 const apic = @import("apic.zig");
+const ev = @import("event.zig");
 const rand = @import("rand.zig");
 const smp = @import("smp.zig");
 const pmm = @import("pmm.zig");
@@ -74,7 +76,7 @@ pub const Thread = struct {
 
     tid: usize,
     lock: SpinLock = .{}, // TODO?
-    cpu: *smp.CpuLocal,
+    cpu: ?*smp.CpuLocal,
     process: *Process,
     ctx: arch.Context,
 
@@ -93,9 +95,9 @@ pub const Thread = struct {
     pf_stack: u64,
     kernel_stack: u64,
 
-    // which_event: usize,
-    // attached_events_i: usize,
-    // attached_events: [ev.max_event]*ev.Event,
+    which_event: usize,
+    attached_events_i: usize,
+    attached_events: [ev.max_events]*ev.Event,
 
     // running_time: usize,
 
@@ -110,8 +112,6 @@ pub const Thread = struct {
         @memset(std.mem.asBytes(thread), 0);
 
         thread.self = thread;
-        thread.errno = 0;
-
         thread.tickets = tickets;
 
         // thread.tid = undefined; // normal
@@ -126,10 +126,10 @@ pub const Thread = struct {
         try thread.stacks.append(root.allocator, stack_phys);
         const stack = stack_phys + stack_size + vmm.hhdm_offset;
 
-        thread.ctx.cs = 0x08;
-        thread.ctx.ds = 0x10;
-        thread.ctx.es = 0x10;
-        thread.ctx.ss = 0x10;
+        thread.ctx.cs = gdt.kernel_code;
+        thread.ctx.ds = gdt.kernel_data;
+        thread.ctx.es = gdt.kernel_data;
+        thread.ctx.ss = gdt.kernel_data;
         thread.ctx.rflags = @bitCast(arch.Rflags{ .IF = 1 });
         thread.ctx.rip = @intFromPtr(func);
         thread.ctx.rdi = @intFromPtr(arg);
@@ -209,8 +209,8 @@ fn nextThread() ?*Thread {
 
     for (running_threads.items) |thr| {
         sum += thr.tickets;
-        if (sum > ticket) {
-            return thr;
+        if (sum >= ticket) {
+            return if (thr.lock.tryLock()) thr else null;
         }
     }
     return null;
@@ -300,8 +300,7 @@ fn schedHandler(ctx: *arch.Context) void {
             arch.cpu.fpuSave(current_thread.fpu_storage);
         }
 
-        // TODO
-        // current_thread.cpu = null;
+        current_thread.cpu = null;
         current_thread.lock.unlock();
     }
 
@@ -320,7 +319,7 @@ fn schedHandler(ctx: *arch.Context) void {
 
     if (arch.arch == .x86_64) {
         arch.setGsBase(@intFromPtr(current_thread));
-        if (current_thread.ctx.cs == 0x08) { // 0x08 = kernel cs
+        if (current_thread.ctx.cs == gdt.kernel_code) {
             arch.setKernelGsBase(@intFromPtr(current_thread));
         } else {
             arch.setKernelGsBase(current_thread.gs_base);

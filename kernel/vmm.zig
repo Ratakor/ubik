@@ -81,7 +81,7 @@ const Mapping = struct {
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
     lock: SpinLock,
-    mmap_ranges: std.ArrayListUnmanaged(*Mapping), // TODO
+    mappings: std.ArrayListUnmanaged(Mapping), // TODO
 
     const Self = @This();
 
@@ -93,7 +93,7 @@ pub const AddressSpace = struct {
         };
         addr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
         addr_space.lock = .{};
-        addr_space.mmap_ranges = .{};
+        addr_space.mappings = .{};
 
         // TODO
         // for (256..512) |i| {

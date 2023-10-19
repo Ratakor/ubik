@@ -71,21 +71,6 @@ pub fn init() void {
     log.info("reserved memory: {} MiB", .{(reserved_pages * page_size) / 1024 / 1024});
 }
 
-pub fn reclaimMemory() void {
-    const memory_map = root.memory_map_request.response.?;
-
-    for (memory_map.entries()) |entry| {
-        if (entry.kind == .bootloader_reclaimable) {
-            const pages = entry.length / page_size;
-            usable_pages += pages;
-            reserved_pages -= pages;
-            free(entry.base, pages);
-
-            log.info("reclaimed {} pages at 0x{x}", .{ pages, entry.base });
-        }
-    }
-}
-
 fn innerAlloc(pages: usize, limit: u64) ?u64 {
     var p: usize = 0;
 

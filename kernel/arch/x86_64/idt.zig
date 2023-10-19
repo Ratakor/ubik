@@ -1,5 +1,6 @@
 const std = @import("std");
 const x86 = @import("x86_64.zig");
+const gdt = @import("gdt.zig");
 const log = std.log.scoped(.idt);
 
 pub const page_fault_vector = 0x0e;
@@ -51,7 +52,7 @@ const IDTEntry = extern struct {
     fn init(handler: u64, ist: u8, attributes: u8) IDTEntry {
         return .{
             .offset_low = @truncate(handler),
-            .selector = 0x08, // gdt.kernel_code
+            .selector = gdt.kernel_code,
             .ist = ist,
             .type_attributes = attributes,
             .offset_mid = @truncate(handler >> 16),
@@ -148,8 +149,7 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
 fn exceptionHandler(ctx: *Context) void {
     const vector = ctx.isr_vector;
 
-    // user
-    if (ctx.cs != 0x08) {
+    if (ctx.cs == gdt.user_code) {
         switch (vector) {
             // TODO
             else => {},

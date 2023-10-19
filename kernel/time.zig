@@ -6,8 +6,8 @@ const arch = @import("arch.zig");
 const smp = @import("smp.zig");
 const idt = arch.idt;
 const apic = @import("apic.zig");
+const ev = @import("event.zig");
 const SpinLock = @import("SpinLock.zig");
-const log = std.log.scoped(.pit);
 
 pub const timespec = extern struct {
     tv_sec: isize = 0,
@@ -48,7 +48,9 @@ pub const Timer = struct {
     idx: usize,
     done: bool,
     when: timespec,
-    // event: ev.Event;
+    event: ev.Event,
+
+    const bad_idx = std.math.maxInt(usize);
 
     pub fn init(when: timespec) !*Timer {
         var timer = try root.allocator.create(Timer);
@@ -70,25 +72,22 @@ pub const Timer = struct {
 
         self.idx = armed_timers.items.len;
         self.done = false;
-        armed_timers.append(self) catch |err| return err;
+        armed_timers.append(root.allocator, self) catch |err| return err;
     }
 
     fn disarm(self: *Timer) void {
         timers_lock.lock();
         defer timers_lock.unlock();
 
-        if (armed_timers.items.len == 0 or self.idx == bad_idx or self.idx >= armed_timers.items.len) {
-            return;
+        if (self.idx < armed_timers.items.len) {
+            armed_timers.items[self.idx] = armed_timers.getLast();
+            armed_timers.items[self.idx].idx = self.idx;
+            _ = armed_timers.pop();
+            self.idx = bad_idx;
         }
-
-        armed_timers.items[self.idx] = armed_timers.getLast();
-        armed_timers.items[self.idx].idx = self.idx;
-        _ = armed_timers.pop();
-        self.idx = bad_idx;
     }
 };
 
-const bad_idx = std.math.maxInt(usize);
 pub const dividend = 1_193_182;
 pub const timer_freq = 100;
 pub const ns_per_s = std.time.ns_per_s;
@@ -98,7 +97,7 @@ pub var monotonic: timespec = .{};
 pub var realtime: timespec = .{};
 
 var timers_lock: SpinLock = .{};
-var armed_timers = std.ArrayList(*Timer).init(root.allocator); // TODO
+var armed_timers: std.ArrayListUnmanaged(*Timer) = .{};
 
 pub fn init() void {
     const boot_time = root.boot_time_request.response.?.boot_time;
@@ -108,8 +107,6 @@ pub fn init() void {
     const timer_vector = idt.allocVector();
     idt.registerHandler(timer_vector, timerHandler);
     apic.setIRQRedirect(smp.bsp_lapic_id, timer_vector, 0);
-
-    log.info("realtime: {}", .{realtime});
 }
 
 fn setFrequency(divisor: u64) void {
@@ -137,8 +134,6 @@ pub fn getCurrentCount() u16 {
 fn timerHandler(ctx: *arch.Context) void {
     _ = ctx;
 
-    defer apic.eoi();
-
     const interval: timespec = .{ .tv_nsec = ns_per_s / timer_freq };
     monotonic.add(interval);
     realtime.add(interval);
@@ -149,7 +144,7 @@ fn timerHandler(ctx: *arch.Context) void {
 
             timer.when.sub(interval);
             if (timer.when.tv_sec == 0 and timer.when.tv_nsec == 0) {
-                // ev.trigger(&timer.event, false);
+                // _ = timer.event.trigger(false); // TODO
                 timer.done = true;
             }
         }
@@ -164,9 +159,8 @@ pub fn nanosleep(ns: u64) void {
     };
     const timer = Timer.init(duration) catch return;
     defer timer.deinit();
-    // const events: []*ev.Event = .{ &timer.event };
-    // ev.await(events, true);
 
     // TODO
-    while (!timer.done) asm volatile ("hlt");
+    // const events = [1]*ev.Event{ &timer.event };
+    // _ = ev.awaitEvent(events[0..], true);
 }
