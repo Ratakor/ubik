@@ -1,4 +1,5 @@
 //! Intel Manual 3A: https://cdrdv2.intel.com/v1/dl/getContent/671190
+//! https://wiki.osdev.org/TLB
 
 const std = @import("std");
 const root = @import("root");
@@ -13,8 +14,11 @@ const log = std.log.scoped(.vmm);
 const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
+const PROT = std.os.linux.PROT;
+const MAP = std.os.linux.MAP;
 
-// TODO: TLB + mapRange/unmapRange?
+// TODO: TLB shootdown?
+// TODO: mapRange/unmapRange?
 
 pub const MapError = error{
     OutOfMemory,
@@ -48,17 +52,20 @@ pub const PTE = packed struct {
         return @as(u64, self.address) << 12;
     }
 
+    pub inline fn getFlags(self: PTE) u64 {
+        return @as(u64, @bitCast(self)) & 0xf800_0000_0000_0fff;
+    }
+
     inline fn getNextLevel(self: *PTE, allocate: bool) ?[*]PTE {
         if (self.p != 0) {
             return @ptrFromInt(self.getAddress() + hhdm_offset);
         }
 
         if (!allocate) {
-            return null;
+            return null; // TODO return error
         }
 
-        const new_page_table = pmm.alloc(1, true) orelse return null;
-        // errno = ENOMEM
+        const new_page_table = pmm.alloc(1, true) orelse return null; // TODO return OOM
         self.* = @bitCast(new_page_table | present | writable | user);
         return @ptrFromInt(new_page_table + hhdm_offset);
     }
@@ -69,8 +76,18 @@ pub const PTE = packed struct {
     }
 };
 
-// TODO
-const Mapping = struct {
+const MMapRangeGlobal = struct {
+    shadow_addr_space: *AddressSpace,
+    locals: std.ArrayListUnmanaged(*MMapRangeLocal),
+    // resource: *Resource,
+    base: usize,
+    length: usize,
+    offset: isize,
+};
+
+const MMapRangeLocal = struct {
+    addr_space: *AddressSpace,
+    global: *MMapRangeGlobal,
     base: usize,
     length: usize,
     offset: isize,
@@ -78,10 +95,36 @@ const Mapping = struct {
     flags: i32,
 };
 
+const Addr2Range = struct {
+    range: *MMapRangeLocal,
+    memory_page: usize,
+    file_page: usize,
+
+    const Error = error{RangeNotFound};
+
+    fn init(addr_space: *AddressSpace, vaddr: u64) Error!Addr2Range {
+        for (addr_space.mmap_ranges.items) |local_range| {
+            if (vaddr >= local_range.base and vaddr < local_range.base + local_range.length) {
+                const memory_page = vaddr / page_size;
+                // TODO: divTrunc?
+                const offset = @divExact(local_range.offset, page_size);
+                // TODO: ugly
+                const file_page: usize = @intCast(offset + @as(isize, @intCast(memory_page - local_range.base / page_size)));
+                return .{
+                    .range = local_range,
+                    .memory_page = memory_page,
+                    .file_page = file_page,
+                };
+            }
+        }
+        return error.RangeNotFound;
+    }
+};
+
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
     lock: SpinLock,
-    mappings: std.ArrayListUnmanaged(Mapping), // TODO
+    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal),
 
     const Self = @This();
 
@@ -93,24 +136,100 @@ pub const AddressSpace = struct {
         };
         addr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
         addr_space.lock = .{};
-        addr_space.mappings = .{};
+        addr_space.mmap_ranges = .{};
 
-        // TODO
-        // for (256..512) |i| {
-        //     addr_space.pml4[i] = kaddr_space.pml4[i];
-        // }
+        for (256..512) |i| {
+            addr_space.pml4[i] = kaddr_space.pml4[i];
+        }
 
         return addr_space;
     }
 
-    pub fn deinit(self: *Self) void {
-        _ = self;
-        // TODO
+    fn destroyLevel(pml: [*]PTE, start: usize, end: usize, level: usize) void {
+        if (level == 0) return;
+
+        for (start..end) |i| {
+            const next_level = pml[i].getNextLevel(false) orelse unreachable; // TODO: continue
+            destroyLevel(next_level, 0, 512, level - 1);
+        }
+
+        pmm.free(@intFromPtr(pml) - hhdm_offset, 1);
     }
 
+    pub fn deinit(self: *Self) void {
+        for (self.mmap_ranges.items) |local_range| {
+            self.munmap(local_range.base, local_range.length);
+        }
+        self.lock.lock();
+        destroyLevel(self.pml4, 0, 256, 4);
+        root.allocator.destroy(self);
+    }
+
+    // TODO
     pub fn fork(self: *Self) !*Self {
-        _ = self;
-        // TODO
+        self.lock.lock();
+        defer self.lock.unlock();
+        errdefer self.lock.unlock();
+
+        const new_addr_space = try AddressSpace.init();
+        errdefer new_addr_space.deinit();
+
+        for (self.mmap_ranges.items) |local_range| {
+            const global_range = local_range.global;
+
+            const new_local_range = try root.allocator.create(MMapRangeLocal);
+            new_local_range.* = local_range.*;
+            // new_local_range.addr_space = new_addr_space;
+
+            // if (global_range.resource) |res| {
+            //     res.refcount += 1;
+            // }
+
+            try new_addr_space.mmap_ranges.append(root.allocator, new_local_range);
+
+            if (local_range.flags & MAP.SHARED != 0) {
+                try global_range.locals.append(root.allocator, new_local_range);
+                var i = local_range.base;
+                while (i < local_range.base + local_range.length) : (i += page_size) {
+                    const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
+                    const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
+                    new_pte.* = old_pte.*;
+                }
+            } else {
+                const new_global_range = try root.allocator.create(MMapRangeGlobal);
+                errdefer root.allocator.destroy(new_global_range);
+                new_global_range.* = global_range.*;
+                new_local_range.locals = .{};
+                new_global_range.shadow_addr_space = try AddressSpace.init();
+                errdefer new_global_range.shadow_addr_space.deinit();
+                try new_global_range.locals.append(root.allocator, new_local_range);
+                errdefer new_global_range.locals.deinit(root.allocator);
+
+                new_local_range.addr_space = new_global_range;
+
+                if (local_range.flags & MAP.ANONYMOUS == 0) {
+                    @panic("Non anonymous fork");
+                }
+
+                var i = local_range.base;
+                while (i < local_range.base + local_range.length) : (i += page_size) {
+                    const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
+                    if (old_pte.p == 0) continue;
+                    const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
+                    const new_spte = new_global_range.shadow_addr_space(i, true) orelse unreachable; // TODO: free
+
+                    const old_page = old_pte.getAddress();
+                    const new_page = pmm.alloc(1, false) orelse unreachable; // TODO: free
+                    const slice_old_page = @as([*]u8, @ptrFromInt(old_page + hhdm_offset))[0..page_size];
+                    const slice_new_page = @as([*]u8, @ptrFromInt(new_page + hhdm_offset))[0..page_size];
+                    @memcpy(slice_new_page, slice_old_page);
+                    new_pte.* = old_pte.getFlags() | new_page;
+                    new_spte.* = new_pte.*;
+                }
+            }
+        }
+
+        return new_addr_space;
     }
 
     pub fn virt2pte(self: *const Self, vaddr: u64, allocate: bool) ?*PTE {
@@ -141,42 +260,30 @@ pub const AddressSpace = struct {
         const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
         if (pte.p != 0) return error.AlreadyMapped;
         pte.* = @bitCast(paddr | flags);
-
-        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
-            // TODO: TLB shootdown
-            arch.invlpg(vaddr);
-        }
+        self.flush(vaddr);
     }
 
     pub fn remapPage(self: *Self, vaddr: u64, flags: u64) MapError!void {
         self.lock.lock();
         defer self.lock.unlock();
 
-        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
         if (pte.p == 0) return error.NotMapped;
         pte.* = @bitCast(pte.getAddress() | flags);
-
-        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
-            // TODO: TLB shootdown
-            arch.invlpg(vaddr);
-        }
+        self.flush(vaddr);
     }
 
-    pub fn unmapPage(self: *Self, vaddr: u64) MapError!void {
-        self.lock.lock();
-        defer self.lock.unlock();
+    pub fn unmapPage(self: *Self, vaddr: u64, lock: bool) MapError!void {
+        if (lock) self.lock.lock();
+        defer if (lock) self.lock.unlock();
 
-        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
         if (pte.p == 0) return error.NotMapped;
         pte.* = @bitCast(0);
-
-        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
-            // TODO: TLB shootdown
-            arch.invlpg(vaddr);
-        }
+        self.flush(vaddr);
     }
 
-    inline fn mapSection(self: *Self, comptime section: []const u8, flags: u64) MapError!void {
+    inline fn mapSection(self: *Self, comptime section: []const u8, flags: u64) void {
         const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
         const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
         const start_addr = alignBackward(u64, start, page_size);
@@ -186,12 +293,97 @@ pub const AddressSpace = struct {
         var addr = start_addr;
         while (addr < end_addr) : (addr += page_size) {
             const paddr = addr - kaddr.virtual_base + kaddr.physical_base;
-            try self.mapPage(addr, paddr, flags);
+            self.mapPage(addr, paddr, flags) catch unreachable;
         }
     }
 
     pub inline fn cr3(self: *const Self) u64 {
         return @intFromPtr(self.pml4) - hhdm_offset;
+    }
+
+    inline fn flush(self: *Self, vaddr: u64) void {
+        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
+            arch.invlpg(vaddr);
+        }
+    }
+
+    // TODO
+    pub fn munmap(self: *Self, addr: u64, constlen: usize) !void {
+        if (constlen == 0) return error.EINVAL;
+        const len = alignForward(usize, constlen, page_size);
+
+        var i = addr;
+        while (i < addr + len) : (i += page_size) {
+            const range = Addr2Range.init(self, i) catch continue;
+            const local_range = range.range;
+            const global_range = local_range.global;
+
+            const snip_start = i;
+            while (true) {
+                i += page_size;
+                if (i >= local_range.base + local_range.length or i >= addr + len) {
+                    break;
+                }
+            }
+            const snip_end = i;
+            const snip_size = snip_end - snip_start;
+
+            self.lock.lock();
+            errdefer self.lock.unlock();
+
+            if (snip_start > local_range.base and snip_end < local_range.base + local_range.length) {
+                const postsplit_range = try root.allocator.create(MMapRangeLocal); // if this fail we're in bad state
+                errdefer root.allocator.destroy(postsplit_range);
+                postsplit_range.addr_space = local_range.addr_space;
+                postsplit_range.global = global_range;
+                postsplit_range.base = snip_end;
+                postsplit_range.length = (local_range.base + local_range.length) - snip_end;
+                postsplit_range.offset = local_range.offset + @as(isize, snip_end - local_range.base);
+                postsplit_range.prot = local_range.prot;
+                postsplit_range.flags = local_range.flags;
+
+                try self.mmap_ranges.append(root.allocator, postsplit_range);
+
+                local_range.length -= postsplit_range.length;
+            }
+
+            var j = snip_start;
+            while (j < snip_end) : (j += page_size) {
+                self.unmapPage(j, false);
+            }
+
+            if (snip_size == local_range.length) {
+                for (self.mmap_ranges.items, 0..) |mmap_range, k| {
+                    if (mmap_range == local_range) {
+                        _ = self.mmap_ranges.swapRemove(k);
+                        break;
+                    }
+                }
+            }
+
+            self.lock.unlock();
+
+            if (snip_size == local_range.length and global_range.locals.items.len == 1) {
+                if (local_range.flags & MAP.ANONYMOUS != 0) {
+                    var k = global_range.base;
+                    while (k < global_range.base + global_range.length) : (k += page_size) {
+                        const paddr = global_range.shadow_addr_space.virt2phys(j) catch continue;
+                        try global_range.shadow_addr_space.unmapPage(j, false); // if this fail we're in really bad state
+                        pmm.free(paddr, 1);
+                    }
+                } else {
+                    // TODO: unamp res
+                }
+
+                root.allocator.destroy(local_range);
+            } else {
+                if (snip_start == local_range.base) {
+                    local_range.offset += snip_size;
+                    local_range.base = snip_end;
+                }
+                local_range.length -= snip_size;
+            }
+        }
     }
 };
 
@@ -206,31 +398,35 @@ pub const page_allocator = std.mem.Allocator{
 
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
 pub var kaddr_space: *AddressSpace = undefined;
-var tlb_shootdown_vector: u8 = undefined;
 
-pub fn init() MapError!void {
+pub fn init() void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
 
-    kaddr_space = AddressSpace.init() catch unreachable;
+    kaddr_space = root.allocator.create(AddressSpace) catch unreachable;
+    const pml4_phys = pmm.alloc(1, true) orelse unreachable;
+    kaddr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
+    kaddr_space.lock = .{};
+    kaddr_space.mmap_ranges = .{};
 
     for (256..512) |i| {
         _ = kaddr_space.pml4[i].getNextLevel(true);
     }
 
-    try kaddr_space.mapSection("text", PTE.present);
-    try kaddr_space.mapSection("rodata", PTE.present | PTE.noexec);
-    try kaddr_space.mapSection("data", PTE.present | PTE.writable | PTE.noexec);
+    kaddr_space.mapSection("text", PTE.present);
+    kaddr_space.mapSection("rodata", PTE.present | PTE.noexec);
+    kaddr_space.mapSection("data", PTE.present | PTE.writable | PTE.noexec);
 
     // map the first 4 GiB
     var addr: u64 = 0x1000;
     while (addr < 0x100000000) : (addr += page_size) {
-        try kaddr_space.mapPage(addr, addr, PTE.present | PTE.writable);
-        try kaddr_space.mapPage(addr + hhdm_offset, addr, PTE.present | PTE.writable | PTE.noexec);
+        kaddr_space.mapPage(addr, addr, PTE.present | PTE.writable) catch unreachable;
+        kaddr_space.mapPage(addr + hhdm_offset, addr, PTE.present | PTE.writable | PTE.noexec) catch unreachable;
     }
 
     // map the rest of the memory map
     const memory_map = root.memory_map_request.response.?;
     for (memory_map.entries()) |entry| {
+        if (entry.kind == .reserved) continue; // TODO
         const base = alignBackward(u64, entry.base, page_size);
         const top = alignForward(u64, entry.base + entry.length, page_size);
         if (top <= 0x100000000) continue;
@@ -239,17 +435,10 @@ pub fn init() MapError!void {
         while (i < top) : (i += page_size) {
             if (i < 0x100000000) continue;
 
-            try kaddr_space.mapPage(i, i, PTE.present | PTE.writable);
-            try kaddr_space.mapPage(i + hhdm_offset, i, PTE.present | PTE.writable | PTE.noexec);
+            kaddr_space.mapPage(i, i, PTE.present | PTE.writable) catch unreachable;
+            kaddr_space.mapPage(i + hhdm_offset, i, PTE.present | PTE.writable | PTE.noexec) catch unreachable;
         }
     }
-
-    // TODO
-    // idt.registerHandler(idt.page_fault_vector, pageFaultHandler);
-    // idt.setIST(idt.page_fault_vector, 2);
-
-    tlb_shootdown_vector = idt.allocVector();
-    idt.registerHandler(tlb_shootdown_vector, tlbShootdownHandler);
 
     switchPageTable(kaddr_space.cr3());
 }
@@ -258,16 +447,42 @@ pub inline fn switchPageTable(page_table: u64) void {
     arch.writeRegister("cr3", page_table);
 }
 
-fn pageFaultHandler(ctx: *arch.Context) void {
-    _ = ctx;
-    // TODO: makes cpus crash at some point
+pub fn handlePageFault(cr2: u64, reason: u64) !void {
+    if (reason & 0x1 != 0) return error.MapIsPresent;
+
+    const addr_space = sched.currentThread().process.addr_space;
+    addr_space.lock.lock();
+    const range = try Addr2Range.init(addr_space, cr2);
+    addr_space.lock.unlock();
+
+    // TODO: enable interrupts?
+
+    const local_range = range.range;
+    const page = if (local_range.flags & MAP.ANONYMOUS != 0) blk: {
+        break :blk pmm.alloc(1, true) orelse return error.OutOfMemory;
+    } else {
+        @panic("TODO: resource");
+    };
+
+    try mmapPageInRange(local_range.global, range.memory_page * page_size, page, local_range.prot);
 }
 
-fn tlbShootdownHandler(ctx: *arch.Context) void {
-    _ = ctx;
-    defer apic.eoi();
+fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) !void {
+    var flags = PTE.present | PTE.user;
+    if ((prot & PROT.WRITE) != 0) {
+        flags |= PTE.writable;
+    }
+    if ((prot & PROT.EXEC) == 0) {
+        flags |= PTE.noexec;
+    }
 
-    // TODO
+    try global.shadow_addr_space.mapPage(vaddr, paddr, flags);
+
+    for (global.locals.items) |local_range| {
+        if (vaddr >= local_range.base and vaddr < local_range.base + local_range.length) {
+            try local_range.addr_space.mapPage(vaddr, paddr, flags);
+        }
+    }
 }
 
 // kernel page allocator functions

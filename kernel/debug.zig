@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const root = @import("root");
 const arch = @import("arch.zig");
 const serial = @import("serial.zig");
+const smp = @import("smp.zig");
 const SpinLock = @import("SpinLock.zig");
 const StackIterator = std.debug.StackIterator;
 const readIntLittle = std.mem.readIntLittle;
@@ -10,7 +11,7 @@ const readIntLittle = std.mem.readIntLittle;
 var log_lock: SpinLock = .{};
 var panic_lock: SpinLock = .{};
 
-var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MiB
+var fba_buffer: [32 * 1024 * 1024]u8 = undefined; // 32MiB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.dwarf.DwarfInfo = null;
@@ -49,10 +50,11 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     arch.disableInterrupts();
 
     if (!panic_lock.tryLock()) {
+        arch.disableInterrupts();
         arch.halt();
     }
 
-    // TODO: send signal to other cpu to stop them
+    smp.stopAll();
 
     const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
     if (root.tty0) |tty| {

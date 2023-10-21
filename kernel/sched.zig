@@ -71,20 +71,20 @@ pub const Process = struct {
 };
 
 pub const Thread = struct {
-    self: *Thread, // TODO
-    errno: usize, // TODO
+    self: *Thread,
+    errno: usize,
 
     tid: usize,
-    lock: SpinLock = .{}, // TODO?
+    lock: SpinLock = .{},
     cpu: ?*smp.CpuLocal,
     process: *Process,
     ctx: arch.Context,
 
     tickets: usize,
 
-    scheduling_off: bool, // TODO?
-    enqueued: bool, // TODO: useless?
-    // enqueued_by_signal: bool,
+    scheduling_off: bool, // TODO: for TLB
+    enqueued: bool,
+    // enqueued_by_signal: bool, // TODO: for events
     timeslice: u32, // in microseconds
     yield_await: SpinLock = .{},
     gs_base: u64,
@@ -113,7 +113,6 @@ pub const Thread = struct {
 
         thread.self = thread;
         thread.tickets = tickets;
-
         // thread.tid = undefined; // normal
         thread.lock = .{};
         thread.yield_await = .{};
@@ -152,6 +151,7 @@ pub const Thread = struct {
         // kernel_process.threads.append(root.allocator, thread);
 
         std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
+        std.debug.assert(@intFromPtr(thread) + 8 == @intFromPtr(&thread.errno));
 
         return thread;
     }
@@ -186,9 +186,8 @@ pub fn init() void {
     pcg = rand.Pcg.init(rand.getSeedSlow());
     kernel_process = Process.init(null, vmm.kaddr_space) catch unreachable;
     sched_vector = idt.allocVector();
-    log.info("scheduler interrupt vector: 0x{x}", .{sched_vector});
     idt.registerHandler(sched_vector, schedHandler);
-    // idt.setIST(sched_vector, 1); // TODO
+    idt.setIST(sched_vector, 1);
 }
 
 // TODO: save cpu in gs not thread
@@ -352,7 +351,7 @@ fn schedHandler(ctx: *arch.Context) void {
 
 pub fn wait() noreturn {
     arch.disableInterrupts();
-    apic.timerOneShot(1000, sched_vector);
+    apic.timerOneShot(10000, sched_vector);
     arch.enableInterrupts();
     arch.halt();
 }

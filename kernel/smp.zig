@@ -11,26 +11,18 @@ const sched = @import("sched.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.smp);
 
-// TODO: use SYSENTER/SYSEXIT
-// TODO: use FSGSBASE
+// TODO: use SYSENTER/SYSEXIT?
+// TODO: use FSGSBASE?
 
 pub const CpuLocal = struct {
-    // TODO: x86 specific
-    lapic_id: u32,
-    lapic_freq: u64,
-    tss: gdt.TSS,
-
     id: usize,
     active: bool,
     idle: *sched.Thread,
     current: *sched.Thread,
 
-    // retain_enable: bool;
-    // retain_depth: u32;
-
-    // tlb_shootdown_lock: SpinLock,
-    // tlb_shootdown_done: SpinLock,
-    // tlb_shootdown_cr3: u64,
+    lapic_id: u32,
+    lapic_freq: u64,
+    tss: gdt.TSS,
 };
 
 const page_size = std.mem.page_size;
@@ -50,14 +42,14 @@ pub fn init() void {
     @memset(std.mem.sliceAsBytes(cpus), 0);
     log.info("{} processors detected", .{cpus.len});
 
-    // TODO: lapic irq handler <- in sched
-
     for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, i| {
         cpu.extra_argument = @intFromPtr(cpu_local);
-        cpu_local.lapic_id = cpu.lapic_id;
         cpu_local.id = i;
+        cpu_local.lapic_id = cpu.lapic_id;
 
         if (cpu.lapic_id == bsp_lapic_id) {
+            // TODO: use trampoline
+
             gdt.loadTSS(&cpu_local.tss);
 
             // TODO: use null for idle?
@@ -68,20 +60,15 @@ pub fn init() void {
             cpu_local.idle = idle_thread;
             arch.setGsBase(@intFromPtr(idle_thread));
 
-            const common_int_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
+            const common_int_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
             const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
-            cpu_local.tss.rsp[0] = common_int_stack;
+            cpu_local.tss.rsp0 = common_int_stack;
 
-            const sched_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
+            const sched_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
             const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
-            cpu_local.tss.ist[1] = sched_stack;
+            cpu_local.tss.ist1 = sched_stack;
 
             arch.cpu.initFeatures(true);
-
-            // TODO: this + setup SYSENTER to be used instead
-            // log.info("SYSENTER not present: using #UD", .{});
-            // idt.registerHandler(0x06, syscall.UDHandler);
-            // idt.setIST(0x6, 3); // #UD uses IST 3
 
             // disable PIC
             arch.out(u8, 0xa1, 0xff);
@@ -100,11 +87,20 @@ pub fn init() void {
     }
 }
 
+pub fn stopAll() void {
+    if (cpus_started <= 1) return;
+
+    const self = thisCpu();
+    for (cpus) |*cpu| {
+        if (cpu != self) {
+            apic.sendIPI(cpu.lapic_id, idt.panic_ipi_vector);
+        }
+    }
+}
+
 pub fn thisCpu() *CpuLocal {
     const thread = sched.currentThread();
-    // TODO
-    // std.debug.assert(thread.scheduling_off == true);
-    // std.debug.assert(arch.interruptState() == false);
+    std.debug.assert(thread.scheduling_off or arch.interruptState() == false);
     return thread.cpu.?;
 }
 
@@ -125,13 +121,13 @@ fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     cpu_local.idle = idle_thread;
     arch.setGsBase(@intFromPtr(idle_thread));
 
-    const common_int_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
+    const common_int_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
     const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
-    cpu_local.tss.rsp[0] = common_int_stack;
+    cpu_local.tss.rsp0 = common_int_stack;
 
-    const sched_stack_phys = pmm.alloc(@divExact(stack_size, page_size), true) orelse unreachable;
+    const sched_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
     const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
-    cpu_local.tss.ist[1] = sched_stack;
+    cpu_local.tss.ist1 = sched_stack;
 
     arch.cpu.initFeatures(false);
 

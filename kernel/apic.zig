@@ -91,9 +91,9 @@ pub fn timerStop() void {
     writeRegister(.lvt_timer, 1 << 16);
 }
 
-pub fn sendIPI(lapic_id: u32, vec: u32) void {
+pub fn sendIPI(lapic_id: u32, vector: u32) void {
     writeRegister(.icr1, lapic_id << 24);
-    writeRegister(.icr0, vec);
+    writeRegister(.icr0, vector | (1 << 14)); // clear init level
 }
 
 // TODO

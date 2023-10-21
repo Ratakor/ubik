@@ -1,13 +1,41 @@
-// TODO
+const std = @import("std");
+const root = @import("root");
 
-// fn loadFile(name: []const u8) !*limine.File {
-//     const module_response = module_request.response.?;
-//     for (module_response.modules()) |file| {
-//         const path: []u8 = file.path[0..std.mem.len(file.path)];
-//         if (std.mem.endsWith(u8, path, name)) {
-//             return file;
-//         }
-//     }
+pub const Node = struct {
+    mountpoint: *Node,
+    redir: *Node,
+    // resource: *Resource,
+    filesystem: ?*FileSystem,
+    name: [:0]u8,
+    parent: ?*Node,
+    children: std.AutoHashMapUnmanaged(usize, *Node), // TODO
+    symlink_target: []u8,
+    populated: bool,
 
-//     return error.FileNotFound;
-// }
+    pub fn init(fs: ?*FileSystem, parent: ?*Node, name: []const u8, dir: bool) !*Node {
+        const node = try root.allocator.create(Node);
+        errdefer root.allocator.destroy(node);
+        node.name = try root.allocator.dupeZ(u8, name);
+        node.parent = parent;
+        node.filesystem = fs;
+
+        if (dir) {
+            node.children = .{};
+            // try node.children.ensureTotalCapacity(root.allocator, 256); // TODO
+        }
+
+        return node;
+    }
+};
+
+pub const FileSystem = struct {
+    // TODO
+};
+
+// TODO: rename
+pub var _root: *Node = undefined;
+
+pub fn init() void {
+    _root = Node.init(null, null, "", false) catch unreachable;
+    // TODO filesystems
+}

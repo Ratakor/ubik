@@ -7,18 +7,19 @@ const debug = @import("debug.zig");
 const serial = @import("serial.zig");
 const event = @import("event.zig");
 const pmm = @import("pmm.zig");
-const vmm = @import("vmm.zig");
+pub const vmm = @import("vmm.zig");
+const acpi = @import("acpi.zig");
 const sched = @import("sched.zig");
 const smp = @import("smp.zig");
-const acpi = @import("acpi.zig");
-const ps2 = @import("ps2.zig");
 const time = @import("time.zig");
+const vfs = @import("vfs.zig");
+const ps2 = @import("ps2.zig");
 const TTY = @import("TTY.zig");
 pub const SpinLock = @import("SpinLock.zig");
 
 pub const panic = debug.panic;
 pub const std_options = struct {
-    // pub const log_level = .debug;
+    pub const log_level = if (builtin.mode == .Debug) .debug else .info;
     pub const logFn = debug.log;
 };
 
@@ -71,9 +72,8 @@ export fn _start() noreturn {
     arch.init();
     // event.init(); // TODO
     pmm.init();
-    vmm.init() catch unreachable; // TODO: mmap
+    vmm.init();
     acpi.init();
-    // TODO: init random here instead of in sched?
     sched.init();
     smp.init();
     time.init();
@@ -83,12 +83,15 @@ export fn _start() noreturn {
     sched.wait();
 }
 
-fn main() !void {
+fn main() noreturn {
+    arch.disableInterrupts();
     std.log.debug("in main with cpu {}", .{smp.thisCpu().id});
+    arch.enableInterrupts();
 
+    vfs.init(); // TODO
     // ps2.init();
+    // TODO: init random here instead of in sched?
     // TODO: pci
-    // TODO: vfs
     // TODO: basic syscalls
     // TODO: basic IPC
 
@@ -100,66 +103,46 @@ fn main() !void {
     // TODO: filesystem
     // TODO: IPC: pipe, socket (TCP, UDP, Unix)
 
-    // const fb = framebuffer_request.response.?.framebuffers()[0];
-    // tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
+    const fb = framebuffer_request.response.?.framebuffers()[0];
+    tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
 
-    // const boot_info = boot_info_request.response.?;
-    // tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
-    //     boot_info.name,
-    //     boot_info.version,
-    // }) catch unreachable;
+    const boot_info = boot_info_request.response.?;
+    tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+        boot_info.name,
+        boot_info.version,
+    }) catch unreachable;
 
-    // var regs = arch.cpuid(0, 0);
-    // std.log.debug("vendor string: {s}{s}{s}", .{
-    //     @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-    //     @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-    //     @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-    // });
+    var regs = arch.cpuid(0, 0);
+    std.log.debug("vendor string: {s}{s}{s}", .{
+        @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+        @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+    });
 
-    // regs = arch.cpuid(0x80000000, 0);
-    // if (regs.eax >= 0x80000004) {
-    //     regs = arch.cpuid(0x80000002, 0);
-    //     serial.writer.print("cpu name: {s}{s}{s}{s}", .{
-    //         @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-    //     }) catch unreachable;
-    //     regs = arch.cpuid(0x80000003, 0);
-    //     serial.writer.print("{s}{s}{s}{s}", .{
-    //         @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-    //     }) catch unreachable;
-    //     regs = arch.cpuid(0x80000004, 0);
-    //     serial.writer.print("{s}{s}{s}{s}\n", .{
-    //         @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-    //         @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-    //     }) catch unreachable;
-    // }
-
-    // const rand = @import("rand.zig");
-    // var pcg = rand.Pcg.init(rand.getSeedSlow());
-    // inline for (0..8) |_| {
-    //     const thread = sched.Thread.initKernel(
-    //         @ptrCast(&hihihi),
-    //         null,
-    //         pcg.random().int(u4),
-    //     ) catch unreachable;
-    //     sched.enqueue(thread) catch unreachable;
-    // }
-
-    arch.halt();
-}
-
-fn hihihi() void {
-    if (tty0) |tty| {
-        tty.writer().writeAll("hihihi\n") catch unreachable;
-    } else {
-        serial.print("hihihi\n", .{});
+    regs = arch.cpuid(0x80000000, 0);
+    if (regs.eax >= 0x80000004) {
+        regs = arch.cpuid(0x80000002, 0);
+        serial.writer.print("cpu name: {s}{s}{s}{s}", .{
+            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        }) catch unreachable;
+        regs = arch.cpuid(0x80000003, 0);
+        serial.writer.print("{s}{s}{s}{s}", .{
+            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        }) catch unreachable;
+        regs = arch.cpuid(0x80000004, 0);
+        serial.writer.print("{s}{s}{s}{s}\n", .{
+            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+        }) catch unreachable;
     }
+
     sched.die();
 }

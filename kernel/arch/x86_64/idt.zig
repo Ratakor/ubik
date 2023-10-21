@@ -1,9 +1,10 @@
 const std = @import("std");
 const x86 = @import("x86_64.zig");
 const gdt = @import("gdt.zig");
+const vmm = @import("root").vmm;
 const log = std.log.scoped(.idt);
 
-pub const page_fault_vector = 0x0e;
+const page_fault_vector = 0x0e;
 
 const interrupt_gate = 0b1000_1110;
 // const call_gate = 0b1000_1100;
@@ -104,6 +105,7 @@ const exceptions = [_]?[]const u8{
 
 var isr = [_]InterruptHandler{exceptionHandler} ** 256;
 var next_vector: u8 = exceptions.len;
+pub var panic_ipi_vector: u8 = undefined;
 
 var idtr: IDTRegister = .{};
 var idt: [256]IDTEntry = undefined;
@@ -116,6 +118,10 @@ pub fn init() void {
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
         // log.info("init idt[{}] with {}", .{ i, handler });
     }
+
+    setIST(page_fault_vector, 2);
+    panic_ipi_vector = allocVector();
+    registerHandler(panic_ipi_vector, panicHandler);
 
     reload();
     log.info("init: successfully reloaded IDT", .{});
@@ -146,19 +152,31 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
 }
 
+fn panicHandler(ctx: *Context) void {
+    _ = ctx;
+    x86.disableInterrupts();
+    x86.halt();
+}
+
 fn exceptionHandler(ctx: *Context) void {
     const vector = ctx.isr_vector;
+    const cr2 = x86.readRegister("cr2");
 
     if (ctx.cs == gdt.user_code) {
         switch (vector) {
+            page_fault_vector => {
+                if (vmm.handlePageFault(cr2, ctx.error_code)) {
+                    return;
+                } else |err| {
+                    log.err("failed to handle page fault: {}", .{err});
+                }
+            },
             // TODO
             else => {},
         }
     }
 
-    const cr2 = x86.readRegister("cr2");
     const cr3 = x86.readRegister("cr3");
-
     std.debug.panic(
         \\Unhandled exception "{?s}" triggered, dumping context
         \\vector: 0x{x:0>2}               error code: 0x{x}

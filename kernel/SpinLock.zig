@@ -47,7 +47,6 @@ fn lockSlow(self: *SpinLock) void {
 
 pub fn unlock(self: *SpinLock) void {
     const state = self.state.swap(unlocked, .Release);
-    // TODO
     _ = state;
     // std.debug.assert(state == locked);
 }
