@@ -107,18 +107,16 @@ pub fn init() void {
 pub fn reload() void {
     asm volatile (
         \\lgdt (%[gdtr])
-        // reload CS register
+        // reload code segment register
         \\push %[kcode]
         \\lea 1f(%%rip), %%rax
         \\push %%rax
         \\lretq
         \\1:
-        // reload data segment registers
+        // reload other segment registers
         \\mov %[kdata], %%ax
         \\mov %%ax, %%ds
         \\mov %%ax, %%es
-        \\mov %%ax, %%fs
-        \\mov %%ax, %%gs
         \\mov %%ax, %%ss
         :
         : [gdtr] "r" (&gdtr),

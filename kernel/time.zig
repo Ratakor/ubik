@@ -131,7 +131,7 @@ pub fn getCurrentCount() u16 {
     return (@as(u16, hi) << 8) | lo;
 }
 
-fn timerHandler(ctx: *arch.Context) void {
+fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
     _ = ctx;
 
     const interval: timespec = .{ .tv_nsec = ns_per_s / timer_freq };

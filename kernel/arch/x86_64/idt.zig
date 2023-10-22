@@ -4,14 +4,10 @@ const gdt = @import("gdt.zig");
 const vmm = @import("root").vmm;
 const log = std.log.scoped(.idt);
 
-const page_fault_vector = 0x0e;
-
 const interrupt_gate = 0b1000_1110;
-// const call_gate = 0b1000_1100;
-// const trap_gate = 0b1000_1111;
+const trap_gate = 0b1000_1111;
 
-const InterruptStub = *const fn () callconv(.Naked) void;
-pub const InterruptHandler = *const fn (ctx: *Context) void;
+pub const InterruptHandler = *const fn (ctx: *Context) callconv(.SysV) void;
 
 pub const Context = extern struct {
     ds: u64,
@@ -31,7 +27,7 @@ pub const Context = extern struct {
     r13: u64,
     r14: u64,
     r15: u64,
-    isr_vector: u64,
+    vector: u64,
     error_code: u64,
     rip: u64,
     cs: u64,
@@ -50,12 +46,12 @@ const IDTEntry = extern struct {
     offset_high: u32 align(1),
     reserved: u32 align(1),
 
-    fn init(handler: u64, ist: u8, attributes: u8) IDTEntry {
+    fn init(handler: u64, ist: u8, gate: u8) IDTEntry {
         return .{
             .offset_low = @truncate(handler),
             .selector = gdt.kernel_code,
             .ist = ist,
-            .type_attributes = attributes,
+            .type_attributes = gate,
             .offset_mid = @truncate(handler >> 16),
             .offset_high = @truncate(handler >> 32),
             .reserved = 0,
@@ -103,7 +99,7 @@ const exceptions = [_]?[]const u8{
     null,
 };
 
-var isr = [_]InterruptHandler{exceptionHandler} ** 256;
+var isr = [_]InterruptHandler{defaultHandler} ** 256;
 var next_vector: u8 = exceptions.len;
 pub var panic_ipi_vector: u8 = undefined;
 
@@ -119,9 +115,9 @@ pub fn init() void {
         // log.info("init idt[{}] with {}", .{ i, handler });
     }
 
-    setIST(page_fault_vector, 2);
+    setIST(0x0e, 2); // page fault uses IST 2
     panic_ipi_vector = allocVector();
-    registerHandler(panic_ipi_vector, panicHandler);
+    idt[panic_ipi_vector] = IDTEntry.init(@intFromPtr(&panicHandler), 0, interrupt_gate);
 
     reload();
     log.info("init: successfully reloaded IDT", .{});
@@ -152,19 +148,17 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
 }
 
-fn panicHandler(ctx: *Context) void {
-    _ = ctx;
+fn panicHandler() callconv(.Naked) noreturn {
     x86.disableInterrupts();
     x86.halt();
 }
 
-fn exceptionHandler(ctx: *Context) void {
-    const vector = ctx.isr_vector;
+fn defaultHandler(ctx: *Context) callconv(.SysV) void {
     const cr2 = x86.readRegister("cr2");
 
     if (ctx.cs == gdt.user_code) {
-        switch (vector) {
-            page_fault_vector => {
+        switch (ctx.vector) {
+            0x0e => {
                 if (vmm.handlePageFault(cr2, ctx.error_code)) {
                     return;
                 } else |err| {
@@ -178,7 +172,7 @@ fn exceptionHandler(ctx: *Context) void {
 
     const cr3 = x86.readRegister("cr3");
     std.debug.panic(
-        \\Unhandled exception "{?s}" triggered, dumping context
+        \\Unhandled interruption "{?s}" triggered, dumping context
         \\vector: 0x{x:0>2}               error code: 0x{x}
         \\ds:  0x{x:0>16}    es:     0x{x:0>16}
         \\rax: 0x{x:0>16}    rbx:    0x{x:0>16}
@@ -193,8 +187,8 @@ fn exceptionHandler(ctx: *Context) void {
         \\rsp: 0x{x:0>16}    ss:     0x{x:0>16}
         \\cr2: 0x{x:0>16}    cr3:    0x{x:0>16}
     , .{
-        if (vector < exceptions.len) exceptions[vector] else null,
-        vector,
+        if (ctx.vector < exceptions.len) exceptions[ctx.vector] else null,
+        ctx.vector,
         ctx.error_code,
         ctx.ds,
         ctx.es,
@@ -223,7 +217,7 @@ fn exceptionHandler(ctx: *Context) void {
     });
 }
 
-fn makeStubHandler(vector: u8) InterruptStub {
+fn makeStubHandler(vector: u8) *const fn () callconv(.Naked) void {
     return struct {
         fn handler() callconv(.Naked) void {
             const has_error_code = switch (vector) {
@@ -244,11 +238,6 @@ fn makeStubHandler(vector: u8) InterruptStub {
             );
         }
     }.handler;
-}
-
-export fn interruptHandler(ctx: *Context) callconv(.SysV) void {
-    const handler = isr[ctx.isr_vector];
-    handler(ctx);
 }
 
 export fn commonStub() callconv(.Naked) void {
@@ -277,10 +266,19 @@ export fn commonStub() callconv(.Naked) void {
         \\push %%rax
         \\mov %%ds, %%ax
         \\push %%rax
-        \\
+    );
+
+    asm volatile (
+        \\mov 0x88(%%rsp), %%rdi
+        \\imul $8, %%rdi
+        \\add %%rdi, %%rax
         \\mov %%rsp, %%rdi
-        \\call interruptHandler
-        \\
+        \\call *(%%rax)
+        :
+        : [_] "{rax}" (&isr),
+    );
+
+    asm volatile (
         \\pop %%rax
         \\mov %%ax, %%ds
         \\pop %%rax

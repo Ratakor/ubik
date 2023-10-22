@@ -16,6 +16,12 @@ var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.dwarf.DwarfInfo = null;
 
+var dmesg = blk: {
+    var dmesg_sfa = std.heap.stackFallback(4096, root.allocator);
+    break :blk std.ArrayList(u8).init(dmesg_sfa.get());
+};
+const dmesg_writer = dmesg.writer();
+
 pub fn init() !void {
     errdefer debug_info = null;
     const kernel_file = root.kernel_file_request.response.?.kernel_file;
@@ -50,21 +56,25 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     arch.disableInterrupts();
 
     if (!panic_lock.tryLock()) {
-        arch.disableInterrupts();
         arch.halt();
     }
 
     smp.stopAll();
 
     const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
+    const stack_iter = StackIterator.init(@returnAddress(), @frameAddress());
+
+    dmesg_writer.print(fmt, .{msg}) catch {};
+    printStackIterator(dmesg_writer, stack_iter);
+
     if (root.tty0) |tty| {
         const writer = tty.writer();
         writer.print(fmt, .{msg}) catch {};
-        printStackIterator(writer, StackIterator.init(@returnAddress(), @frameAddress()));
+        printStackIterator(writer, stack_iter);
         std.os.system.term.hideCursor(writer) catch {};
     } else {
         serial.print(fmt, .{msg});
-        printStackIterator(serial.writer, StackIterator.init(@returnAddress(), @frameAddress()));
+        printStackIterator(serial.writer, stack_iter);
     }
 
     arch.halt();
@@ -76,8 +86,6 @@ pub fn log(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // if (comptime builtin.mode != .Debug) return;
-
     const level_txt = comptime switch (level) {
         .err => "\x1b[31merror\x1b[m",
         .warn => "\x1b[33mwarning\x1b[m",
@@ -85,31 +93,44 @@ pub fn log(
         .debug => "\x1b[36mdebug\x1b[m",
     };
     const scope_prefix = (if (scope != .default) "@" ++ @tagName(scope) else "") ++ ": ";
+    const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
 
     log_lock.lock();
     defer log_lock.unlock();
-    const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
-    nosuspend serial.print(fmt, args);
+
+    if (comptime scope != .gpa) dmesg_writer.print(fmt, args) catch {};
+    if (comptime builtin.mode == .Debug) serial.print(fmt, args);
 }
 
 fn printStackIterator(writer: anytype, stack_iter: StackIterator) void {
-    var iter = stack_iter;
+    writer.writeAll("Stack trace: ") catch {};
+    if (debug_info == null) {
+        writer.writeAll("Unavailable") catch {};
+        return;
+    } else {
+        writer.writeAll("\n") catch {};
+    }
 
-    writer.writeAll("Stack trace:\n") catch {};
+    var iter = stack_iter;
     while (iter.next()) |addr| {
         printSymbol(writer, addr);
     }
 }
 
 fn printStackTrace(writer: anytype, stack_trace: *std.builtin.StackTrace) void {
+    writer.writeAll("Stack trace: ") catch {};
+    if (debug_info == null) {
+        writer.writeAll("Unavailable") catch {};
+        return;
+    } else {
+        writer.writeAll("\n") catch {};
+    }
+
     var frame_index: usize = 0;
     var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
-
-    writer.writeAll("Stack trace:\n") catch {};
-    while (frames_left != 0) {
+    while (frames_left != 0) : (frames_left -= 1) {
         const return_address = stack_trace.instruction_addresses[frame_index];
         printSymbol(writer, return_address);
-        frames_left -= 1;
         frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len;
     }
 }
@@ -119,13 +140,13 @@ fn printSymbol(writer: anytype, address: u64) void {
     var file_name: []const u8 = "??";
     var line: usize = 0;
 
-    if (debug_info) |*info| brk: {
+    if (debug_info) |*info| blk: {
         if (info.getSymbolName(address)) |name| {
             symbol_name = name;
         }
 
-        const compile_unit = info.findCompileUnit(address) catch break :brk;
-        const line_info = info.getLineNumberInfo(debug_allocator, compile_unit.*, address) catch break :brk;
+        const compile_unit = info.findCompileUnit(address) catch break :blk;
+        const line_info = info.getLineNumberInfo(debug_allocator, compile_unit.*, address) catch break :blk;
 
         file_name = line_info.file_name;
         line = line_info.line;

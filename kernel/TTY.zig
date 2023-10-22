@@ -267,12 +267,10 @@ const col256 = [_]u32{
     0x585858, 0x626262, 0x6c6c6c, 0x767676, 0x808080, 0x8a8a8a, 0x949494, 0x9e9e9e,
     0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee
 };
-// zig fmt: on
 
 const esc = std.ascii.control_code.esc;
 const bs = std.ascii.control_code.bs;
 
-// zig fmt: off
 const convtab_nomod = [_]u8{
     0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
     'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
@@ -1195,14 +1193,13 @@ fn controlSequenceParse(self: *Context, c: u8) void {
                 self.scroll_bottom_margin = self.rows;
             }
 
-            // zig fmt: off
             if (self.scroll_top_margin >= self.rows or
                 self.scroll_bottom_margin > self.rows or
-                self.scroll_top_margin >= (self.scroll_bottom_margin - 1)) {
-                    self.scroll_top_margin = 0;
-                    self.scroll_bottom_margin = self.rows;
+                self.scroll_top_margin >= (self.scroll_bottom_margin - 1))
+            {
+                self.scroll_top_margin = 0;
+                self.scroll_bottom_margin = self.rows;
             }
-            // zig fmt: on
             self.setCursorPos(0, 0);
         },
         'l', 'h' => self.modeToggle(c),

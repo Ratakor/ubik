@@ -44,6 +44,26 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     return kernel;
 }
 
+fn findModules(b: *std.Build) []const u8 {
+    var modules = std.ArrayList([]const u8).init(b.allocator);
+    const config = @embedFile("limine.cfg");
+    var iter = std.mem.splitAny(u8, config, &std.ascii.whitespace);
+
+    while (iter.next()) |line| {
+        if (std.mem.startsWith(u8, line, "MODULE_PATH=boot://")) {
+            const i = std.mem.lastIndexOfScalar(u8, line, '/') orelse unreachable;
+            modules.append(line[i + 1 ..]) catch unreachable;
+        }
+    }
+
+    var modules_str: []const u8 = "";
+    for (modules.items) |module| {
+        modules_str = concat(b, &[_][]const u8{ modules_str, module, " " });
+    }
+
+    return modules_str;
+}
+
 fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
     const image_dir = b.cache_root.join(b.allocator, &[_][]const u8{"image_root/"}) catch unreachable;
 
@@ -54,7 +74,7 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
             "mkdir -p ", image_dir, " && ",
             "cp zig-out/bin/kernel.elf limine.cfg limine/limine-bios.sys ",
                 "limine/limine-bios-cd.bin limine/limine-uefi-cd.bin ",
-                image_dir, " && ",
+                findModules(b), image_dir, " && ",
             "mkdir -p ", image_dir, "EFI/BOOT && ",
             "cp limine/BOOTX64.EFI ", image_dir, "EFI/BOOT/ && ",
             "cp limine/BOOTIA32.EFI ", image_dir, "EFI/BOOT/ && ",
@@ -83,22 +103,20 @@ pub fn build(b: *std.Build) void {
     image_step.dependOn(&image_cmd.step);
 
     const run_step = b.step("run", "Run the image with qemu");
-    const graphics = b.option(bool, "graphics", "Enable graphics on qemu") orelse true;
-    const qemu_cmd = concat(b, &[_][]const u8{ "qemu-system-", arch });
-    const qemu_params = [_][]const u8{
+    const nodisplay = b.option(bool, "nodisplay", "Disable display for qemu") orelse false;
+    const run_cmd = b.addSystemCommand(&[_][]const u8{
+        concat(b, &[_][]const u8{ "qemu-system-", arch }),
         "-no-reboot",
-        "-serial", "mon:stdio",
+        "-serial", "stdio",
         "-M", "q35",
         "-m", "1G",
         "-smp", "4",
         // "-d", "int,guest_errors",
         "-boot", "d",
+        "-vga", "std",
+        "-display", if (nodisplay) "none" else "gtk",
         "-cdrom", image_name
-    };
-    const run_cmd = if (graphics)
-        b.addSystemCommand(&[_][]const u8{ qemu_cmd, "-vga", "std" } ++ qemu_params)
-    else
-        b.addSystemCommand(&[_][]const u8{ qemu_cmd, "-nographic" } ++ qemu_params);
+    });
     run_cmd.step.dependOn(image_step);
     run_step.dependOn(&run_cmd.step);
 

@@ -18,9 +18,9 @@ const page_size = std.mem.page_size;
 // TODO: use a (red-black) tree instead of an arraylist
 
 pub const Process = struct {
-    pid: usize,
+    id: u32,
     name: [127:0]u8,
-    parent: ?*Process, // use ppid ?
+    parent: ?*Process,
     addr_space: *vmm.AddressSpace,
     // mmap_anon_base: usize,
     // thread_stack_top: usize,
@@ -40,9 +40,7 @@ pub const Process = struct {
         const proc = try root.allocator.create(Process);
         errdefer root.allocator.destroy(proc);
 
-        try processes.append(root.allocator, proc);
-        errdefer _ = processes.popOrNull(); // TODO: or just assume push to parent won't fail :D
-        proc.pid = processes.items.len - 1;
+        proc.id = @intCast(processes.items.len); // TODO: wrong
         proc.parent = parent;
         proc.threads = .{};
         proc.children = .{};
@@ -65,6 +63,8 @@ pub const Process = struct {
             // proc.cwd = vfs_root;
             // proc.umask = S_IWGRP | S_IWOTH;
         }
+
+        try processes.append(root.allocator, proc);
 
         return proc;
     }
@@ -264,7 +264,7 @@ pub fn die() noreturn {
     unreachable;
 }
 
-fn schedHandler(ctx: *arch.Context) void {
+fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     apic.timerStop();
 
     var current_thread = currentThread();

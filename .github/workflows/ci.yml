@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          timeout 60 zig build run -Dgraphics=false
+          timeout 60 zig build run -Dnodisplay=true
           [ $? -ne 124 ] && exit 1 || exit 0
 
   lint:
