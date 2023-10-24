@@ -3,7 +3,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const gdt = arch.gdt;
 const idt = arch.idt;
-const apic = @import("apic.zig");
+const apic = arch.apic;
 const ev = @import("event.zig");
 const rand = @import("rand.zig");
 const smp = @import("smp.zig");
@@ -76,7 +76,7 @@ pub const Thread = struct {
 
     tid: usize,
     lock: SpinLock = .{},
-    cpu: ?*smp.CpuLocal,
+    cpu: ?*arch.cpu.CpuLocal,
     process: *Process,
     ctx: arch.Context,
 
@@ -281,7 +281,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     cpu.active = true;
     const next_thread = nextThread();
 
-    if (current_thread != cpu.idle) {
+    if (current_thread != cpu.idle_thread) {
         current_thread.yield_await.unlock();
 
         if (next_thread == null and current_thread.enqueued) {
@@ -306,8 +306,8 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     if (next_thread == null) {
         apic.eoi();
         if (arch.arch == .x86_64) {
-            arch.setGsBase(@intFromPtr(cpu.idle));
-            arch.setKernelGsBase(@intFromPtr(cpu.idle));
+            arch.setGsBase(@intFromPtr(cpu.idle_thread));
+            arch.setKernelGsBase(@intFromPtr(cpu.idle_thread));
         }
         cpu.active = false;
         vmm.switchPageTable(vmm.kaddr_space.cr3());
@@ -366,8 +366,8 @@ pub fn yield(save_ctx: bool) void {
     if (save_ctx) {
         thread.yield_await.lock();
     } else {
-        arch.setGsBase(@intFromPtr(cpu.idle));
-        arch.setKernelGsBase(@intFromPtr(cpu.idle));
+        arch.setGsBase(@intFromPtr(cpu.idle_thread));
+        arch.setKernelGsBase(@intFromPtr(cpu.idle_thread));
     }
 
     apic.sendIPI(cpu.lapic_id, sched_vector);

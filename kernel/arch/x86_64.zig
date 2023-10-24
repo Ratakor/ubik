@@ -1,6 +1,7 @@
 pub usingnamespace @import("x86_64/x86_64.zig");
 pub const gdt = @import("x86_64/gdt.zig");
 pub const idt = @import("x86_64/idt.zig");
+pub const apic = @import("x86_64/apic.zig");
 pub const cpu = @import("x86_64/cpu.zig");
 
 pub const Context = idt.Context;

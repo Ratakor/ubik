@@ -3,8 +3,8 @@
 const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
+const apic = arch.apic;
 const vmm = @import("vmm.zig");
-const apic = @import("apic.zig");
 const log = std.log.scoped(.acpi);
 const readIntNative = std.mem.readIntNative;
 

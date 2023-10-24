@@ -2,8 +2,8 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const idt = arch.idt;
+const apic = arch.apic;
 const smp = @import("smp.zig");
-const apic = @import("apic.zig");
 
 pub fn init() void {
     // disable primary and secondary PS/2 ports

@@ -1,10 +1,62 @@
 const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
+const pmm = root.pmm;
+const vmm = root.vmm;
+const sched = root.sched;
 const x86 = @import("x86_64.zig");
-const gdt = @import("idt.zig");
+const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
+const apic = @import("apic.zig");
 const log = std.log.scoped(.cpu);
+const page_size = std.mem.page_size;
+
+pub const CpuLocal = struct {
+    id: usize,
+    active: bool,
+    idle_thread: *sched.Thread,
+    current_thread: *sched.Thread, // TODO
+
+    lapic_id: u32,
+    lapic_freq: u64,
+    tss: gdt.TSS,
+
+    pub const stack_size = 0x10000; // 64KiB
+
+    pub fn initCpu(self: *CpuLocal, is_bsp: bool) void {
+        gdt.reload();
+        idt.reload();
+        gdt.loadTSS(&self.tss);
+
+        vmm.switchPageTable(vmm.kaddr_space.cr3());
+
+        // TODO: use null for idle?
+        const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
+        idle_thread.self = idle_thread;
+        idle_thread.cpu = self;
+        idle_thread.process = sched.kernel_process;
+        self.idle_thread = idle_thread;
+        x86.setGsBase(@intFromPtr(idle_thread));
+
+        const common_int_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
+        const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
+        self.tss.rsp0 = common_int_stack;
+
+        const sched_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
+        const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
+        self.tss.ist1 = sched_stack;
+
+        initFeatures(is_bsp);
+
+        if (is_bsp) {
+            // disable PIC
+            x86.out(u8, 0xa1, 0xff);
+            x86.out(u8, 0x21, 0xff);
+        }
+
+        apic.init(); // smp safe
+    }
+};
 
 const PAT = packed struct {
     // zig fmt: off
@@ -164,7 +216,7 @@ inline fn hasFeature(features: u64, feat: Feature) bool {
     return features & @intFromEnum(feat) != 0;
 }
 
-pub fn initFeatures(bsp: bool) void {
+fn initFeatures(is_bsp: bool) void {
     const regs = x86.cpuid(1, 0);
     const features: u64 = @as(u64, regs.edx) << 32 | regs.ecx;
 
@@ -186,7 +238,7 @@ pub fn initFeatures(bsp: bool) void {
     x86.wrmsr(0x277, @bitCast(pat));
 
     if (hasFeature(features, .xsave)) {
-        if (bsp) log.info("xsave is supported", .{});
+        if (is_bsp) log.info("xsave is supported", .{});
         use_xsave = true;
 
         cr4 = x86.readRegister("cr4");
@@ -198,12 +250,12 @@ pub fn initFeatures(bsp: bool) void {
         xcr0 |= @intFromEnum(XCR0.sse);
 
         if (hasFeature(features, .avx)) {
-            if (bsp) log.info("saving avx state using xsave", .{});
+            if (is_bsp) log.info("saving avx state using xsave", .{});
             xcr0 |= @intFromEnum(XCR0.avx);
         }
 
         if (x86.cpuid(7, 0).ebx & @as(u64, 1 << 16) != 0) {
-            if (bsp) log.info("saving avx512 state using xsave", .{});
+            if (is_bsp) log.info("saving avx512 state using xsave", .{});
             xcr0 |= @intFromEnum(XCR0.opmask);
             xcr0 |= @intFromEnum(XCR0.zmm_hi256);
             xcr0 |= @intFromEnum(XCR0.hi16_zmm);

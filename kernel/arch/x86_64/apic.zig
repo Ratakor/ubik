@@ -1,9 +1,10 @@
 const std = @import("std");
-const arch = @import("arch.zig");
-const vmm = @import("vmm.zig");
-const smp = @import("smp.zig");
-const pit = @import("time.zig");
-const SpinLock = @import("SpinLock.zig");
+const root = @import("root");
+const x86 = @import("x86_64.zig");
+const vmm = root.vmm;
+const smp = root.smp;
+const pit = root.time;
+const SpinLock = root.SpinLock;
 
 const Register = enum(u64) {
     lapic_id = 0x020,
@@ -74,8 +75,8 @@ pub inline fn eoi() void {
 }
 
 pub fn timerOneShot(microseconds: u64, vector: u8) void {
-    const old_state = arch.toggleInterrupts(false);
-    defer _ = arch.toggleInterrupts(old_state);
+    const old_state = x86.toggleInterrupts(false);
+    defer _ = x86.toggleInterrupts(old_state);
 
     timerStop();
 

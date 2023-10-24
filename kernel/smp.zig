@@ -2,38 +2,18 @@ const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
 const arch = @import("arch.zig");
-const gdt = arch.gdt;
 const idt = arch.idt;
-const pmm = @import("pmm.zig");
-const vmm = @import("vmm.zig");
-const apic = @import("apic.zig");
+const apic = arch.apic;
 const sched = @import("sched.zig");
-const SpinLock = @import("SpinLock.zig");
+const CpuLocal = arch.cpu.CpuLocal;
 const log = std.log.scoped(.smp);
 
 // TODO: use SYSENTER/SYSEXIT?
 // TODO: use FSGSBASE?
 
-pub const CpuLocal = struct {
-    id: usize,
-    active: bool,
-    idle: *sched.Thread,
-    current: *sched.Thread,
-
-    lapic_id: u32,
-    lapic_freq: u64,
-    tss: gdt.TSS,
-};
-
-const page_size = std.mem.page_size;
-const stack_size = 0x10000; // 64KiB
-
 pub var bsp_lapic_id: u32 = undefined; // bootstrap processor lapic id
 pub var cpus: []CpuLocal = undefined;
 var cpus_started: usize = 0;
-
-// TODO
-// pub var sysenter = false;
 
 pub fn init() void {
     const smp = root.smp_request.response.?;
@@ -42,43 +22,18 @@ pub fn init() void {
     @memset(std.mem.sliceAsBytes(cpus), 0);
     log.info("{} processors detected", .{cpus.len});
 
-    for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, i| {
+    for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, id| {
         cpu.extra_argument = @intFromPtr(cpu_local);
-        cpu_local.id = i;
+        cpu_local.id = id;
         cpu_local.lapic_id = cpu.lapic_id;
 
-        if (cpu.lapic_id == bsp_lapic_id) {
-            // TODO: use trampoline
-
-            gdt.loadTSS(&cpu_local.tss);
-
-            // TODO: use null for idle?
-            const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
-            idle_thread.self = idle_thread;
-            idle_thread.cpu = cpu_local;
-            idle_thread.process = sched.kernel_process;
-            cpu_local.idle = idle_thread;
-            arch.setGsBase(@intFromPtr(idle_thread));
-
-            const common_int_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
-            const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
-            cpu_local.tss.rsp0 = common_int_stack;
-
-            const sched_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
-            const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
-            cpu_local.tss.ist1 = sched_stack;
-
-            arch.cpu.initFeatures(true);
-
-            // disable PIC
-            arch.out(u8, 0xa1, 0xff);
-            arch.out(u8, 0x21, 0xff);
-            apic.init(); // smp safe
+        if (cpu.lapic_id != bsp_lapic_id) {
+            cpu.goto_address = apInit;
+        } else {
+            cpu_local.initCpu(true);
 
             log.info("bootstrap processor is online with id: {}", .{cpu_local.id});
-            _ = @atomicRmw(usize, &cpus_started, .Add, 1, .AcqRel);
-        } else {
-            cpu.goto_address = trampoline;
+            _ = @atomicRmw(usize, &cpus_started, .Add, 1, .Release);
         }
     }
 
@@ -104,37 +59,13 @@ pub fn thisCpu() *CpuLocal {
     return thread.cpu.?;
 }
 
-fn trampoline(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
+fn apInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     const cpu_local: *CpuLocal = @ptrFromInt(smp_info.extra_argument);
 
-    gdt.reload();
-    idt.reload();
-    gdt.loadTSS(&cpu_local.tss);
-
-    vmm.switchPageTable(vmm.kaddr_space.cr3());
-
-    // TODO: use null for idle?
-    const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
-    idle_thread.self = idle_thread;
-    idle_thread.cpu = cpu_local;
-    idle_thread.process = sched.kernel_process;
-    cpu_local.idle = idle_thread;
-    arch.setGsBase(@intFromPtr(idle_thread));
-
-    const common_int_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
-    const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
-    cpu_local.tss.rsp0 = common_int_stack;
-
-    const sched_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
-    const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
-    cpu_local.tss.ist1 = sched_stack;
-
-    arch.cpu.initFeatures(false);
-
-    apic.init(); // smp safe
+    cpu_local.initCpu(false);
 
     log.info("processor {} is online", .{cpu_local.id});
-    _ = @atomicRmw(usize, &cpus_started, .Add, 1, .AcqRel);
+    _ = @atomicRmw(usize, &cpus_started, .Add, 1, .Release);
 
     sched.wait();
 }

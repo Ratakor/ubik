@@ -5,7 +5,7 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const idt = arch.idt;
-const apic = @import("apic.zig");
+const apic = arch.apic;
 const pmm = @import("pmm.zig");
 const smp = @import("smp.zig");
 const sched = @import("sched.zig");
@@ -426,7 +426,8 @@ pub fn init() void {
     // map the rest of the memory map
     const memory_map = root.memory_map_request.response.?;
     for (memory_map.entries()) |entry| {
-        if (entry.kind == .reserved) continue; // TODO
+        if (entry.kind == .reserved) continue;
+
         const base = alignBackward(u64, entry.base, page_size);
         const top = alignForward(u64, entry.base + entry.length, page_size);
         if (top <= 0x100000000) continue;

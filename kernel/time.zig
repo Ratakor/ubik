@@ -5,7 +5,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const smp = @import("smp.zig");
 const idt = arch.idt;
-const apic = @import("apic.zig");
+const apic = arch.apic;
 const ev = @import("event.zig");
 const SpinLock = @import("SpinLock.zig");
 
