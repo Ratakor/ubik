@@ -14,8 +14,8 @@ const log = std.log.scoped(.vmm);
 const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
-const PROT = std.os.linux.PROT;
-const MAP = std.os.linux.MAP;
+pub const PROT = std.os.linux.PROT;
+pub const MAP = std.os.linux.MAP;
 
 // TODO: TLB shootdown?
 // TODO: mapRange/unmapRange?
@@ -76,6 +76,7 @@ pub const PTE = packed struct {
     }
 };
 
+// TODO: init and deinit func?
 const MMapRangeGlobal = struct {
     shadow_addr_space: *AddressSpace,
     locals: std.ArrayListUnmanaged(*MMapRangeLocal),
@@ -85,6 +86,7 @@ const MMapRangeGlobal = struct {
     offset: isize,
 };
 
+// TODO: init and deinit func?
 const MMapRangeLocal = struct {
     addr_space: *AddressSpace,
     global: *MMapRangeGlobal,
@@ -130,10 +132,9 @@ pub const AddressSpace = struct {
 
     pub fn init() !*Self {
         const addr_space = try root.allocator.create(AddressSpace);
-        const pml4_phys = pmm.alloc(1, true) orelse {
-            root.allocator.destroy(addr_space);
-            return error.OutOfMemory;
-        };
+        errdefer root.allocator.destroy(addr_space);
+
+        const pml4_phys = pmm.alloc(1, true) orelse return error.OutOfMemory;
         addr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
         addr_space.lock = .{};
         addr_space.mmap_ranges = .{};
@@ -160,7 +161,7 @@ pub const AddressSpace = struct {
         for (self.mmap_ranges.items) |local_range| {
             self.munmap(local_range.base, local_range.length);
         }
-        self.lock.lock();
+        self.lock.lock(); // TODO: useless or may cause deadlocks?
         destroyLevel(self.pml4, 0, 256, 4);
         root.allocator.destroy(self);
     }
@@ -304,6 +305,46 @@ pub const AddressSpace = struct {
     inline fn flush(self: *Self, vaddr: u64) void {
         if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
             arch.invlpg(vaddr);
+        }
+    }
+
+    pub fn mmapRange(self: *Self, vaddr: u64, paddr: u64, len: usize, prot: i32, flags: i32) !void {
+        flags |= MAP.ANONYMOUS; // TODO
+
+        const aligned_vaddr = alignBackward(vaddr, page_size);
+        const aligned_len = alignForward(len + (vaddr - aligned_vaddr), page_size);
+
+        const global_range = try root.allocator.create(MMapRangeGlobal);
+        errdefer root.allocator.destroy(global_range);
+        global_range.shadow_addr_space = try AddressSpace.init();
+        errdefer global_range.shadow_addr_space.deinit();
+        global_range.base = aligned_vaddr;
+        global_range.length = aligned_len;
+        global_range.locals = .{};
+        errdefer global_range.locals.deinit(root.allocator);
+
+        const local_range = try root.allocator.create(MMapRangeLocal);
+        errdefer root.allocator.destroy(local_range);
+        local_range.addr_space = self;
+        local_range.global = global_range;
+        local_range.base = aligned_vaddr;
+        local_range.length = aligned_len;
+        local_range.prot = prot;
+        local_range.flags = flags;
+
+        try global_range.locals.append(root.allocator, local_range);
+
+        {
+            self.lock.lock();
+            errdefer self.lock.unlock();
+            try self.mmap_ranges.append(root.allocator, local_range);
+            self.lock.unlock();
+        }
+
+        var i: usize = 0;
+        while (i < aligned_len) : (i += page_size) {
+            try mmapPageInRange(global_range, aligned_vaddr + i, paddr + i, prot);
+            // TODO: if mmapPageInRange fails we're in trouble
         }
     }
 

@@ -9,7 +9,8 @@ const gdt = @import("gdt.zig");
 const idt = @import("idt.zig");
 const apic = @import("apic.zig");
 const log = std.log.scoped(.cpu);
-const page_size = std.mem.page_size;
+
+// TODO: move all of this in x86_64.zig?
 
 pub const CpuLocal = struct {
     id: usize,
@@ -22,6 +23,7 @@ pub const CpuLocal = struct {
     tss: gdt.TSS,
 
     pub const stack_size = 0x10000; // 64KiB
+    pub const stack_pages = stack_size / std.mem.page_size;
 
     pub fn initCpu(self: *CpuLocal, is_bsp: bool) void {
         gdt.reload();
@@ -38,11 +40,11 @@ pub const CpuLocal = struct {
         self.idle_thread = idle_thread;
         x86.setGsBase(@intFromPtr(idle_thread));
 
-        const common_int_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
+        const common_int_stack_phys = pmm.alloc(stack_pages, true) orelse unreachable;
         const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
         self.tss.rsp0 = common_int_stack;
 
-        const sched_stack_phys = pmm.alloc(stack_size / page_size, true) orelse unreachable;
+        const sched_stack_phys = pmm.alloc(stack_pages, true) orelse unreachable;
         const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
         self.tss.ist1 = sched_stack;
 
@@ -211,6 +213,8 @@ const XCR0 = enum(u64) {
 
 pub var use_xsave = false;
 pub var fpu_storage_size: usize = 512; // 512 = fxsave storage
+// TODO: replace with @divCeil
+pub var fpu_storage_pages: usize = 1;
 
 inline fn hasFeature(features: u64, feat: Feature) bool {
     return features & @intFromEnum(feat) != 0;
@@ -264,6 +268,8 @@ fn initFeatures(is_bsp: bool) void {
         x86.wrxcr(0, xcr0);
 
         fpu_storage_size = x86.cpuid(0xd, 0).ecx;
+        // TODO: replace with @divCeil
+        fpu_storage_pages = std.math.divCeil(usize, fpu_storage_size, std.mem.page_size) catch unreachable;
     }
 
     // TODO

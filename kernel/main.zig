@@ -93,7 +93,7 @@ fn main() noreturn {
         for (resp.modules()) |module| {
             std.log.debug("file \"{s}\" contains \"{s}\"", .{ module.path, module.data() });
             // std.log.debug("loading {s}", .{module.cmdline});
-            // const thr = sched.Thread.initKernel(@ptrCast(&module.address), null, 1) catch unreachable;
+            // const thr = sched.Thread.initUser(
             // sched.enqueue(thr) catch unreachable;
         }
     }

@@ -11,7 +11,6 @@ const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.sched);
-const page_size = std.mem.page_size;
 
 // TODO: if a process create a lot of thread it can suck all the cpu
 //       -> check the process of the chosen thread smh to fix that
@@ -23,7 +22,7 @@ pub const Process = struct {
     parent: ?*Process,
     addr_space: *vmm.AddressSpace,
     // mmap_anon_base: usize,
-    // thread_stack_top: usize,
+    thread_stack_top: usize, // TODO
     threads: std.ArrayListUnmanaged(*Thread),
     children: std.ArrayListUnmanaged(*Process),
     // child_events
@@ -36,11 +35,13 @@ pub const Process = struct {
 
     // running_time: usize,
 
+    var next_pid: u32 = 0;
+
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
         const proc = try root.allocator.create(Process);
         errdefer root.allocator.destroy(proc);
 
-        proc.id = @intCast(processes.items.len); // TODO: wrong
+        proc.id = next_pid;
         proc.parent = parent;
         proc.threads = .{};
         proc.children = .{};
@@ -65,8 +66,14 @@ pub const Process = struct {
         }
 
         try processes.append(root.allocator, proc);
+        next_pid += 1;
 
         return proc;
+    }
+
+    pub fn deinit(self: *Process) void {
+        _ = self;
+        // TODO
     }
 };
 
@@ -85,7 +92,6 @@ pub const Thread = struct {
     scheduling_off: bool, // TODO: for TLB
     enqueued: bool,
     // enqueued_by_signal: bool, // TODO: for events
-    timeslice: u32, // in microseconds
     yield_await: SpinLock = .{},
     gs_base: u64,
     fs_base: u64,
@@ -102,28 +108,22 @@ pub const Thread = struct {
     // running_time: usize,
 
     pub const stack_size = 1024 * 1024; // 1MiB
-    pub const stack_pages = stack_size / page_size;
+    pub const stack_pages = stack_size / std.mem.page_size;
 
     // TODO: improve
     //       use root.allocator instead of pmm.alloc?
     pub fn initKernel(func: *const anyopaque, arg: ?*anyopaque, tickets: usize) !*Thread {
         const thread = try root.allocator.create(Thread);
-        errdefer root.allocator.destroy(thread);
+        errdefer thread.deinit();
         @memset(std.mem.asBytes(thread), 0);
 
         thread.self = thread;
+        thread.process = kernel_process;
         thread.tickets = tickets;
         // thread.tid = undefined; // normal
         thread.lock = .{};
         thread.yield_await = .{};
         thread.stacks = .{};
-
-        const stack_phys = pmm.alloc(stack_pages, true) orelse {
-            root.allocator.destroy(thread);
-            return error.OutOfMemory;
-        };
-        try thread.stacks.append(root.allocator, stack_phys);
-        const stack = stack_phys + stack_size + vmm.hhdm_offset;
 
         thread.ctx.cs = gdt.kernel_code;
         thread.ctx.ds = gdt.kernel_data;
@@ -132,22 +132,20 @@ pub const Thread = struct {
         thread.ctx.rflags = @bitCast(arch.Rflags{ .IF = 1 });
         thread.ctx.rip = @intFromPtr(func);
         thread.ctx.rdi = @intFromPtr(arg);
-        thread.ctx.rsp = stack;
+        thread.ctx.rsp = blk: {
+            const stack_phys = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
+            errdefer pmm.free(stack_phys, stack_pages);
+            try thread.stacks.append(root.allocator, stack_phys);
+            break :blk stack_phys + stack_size + vmm.hhdm_offset;
+        };
 
         thread.cr3 = kernel_process.addr_space.cr3();
         thread.gs_base = @intFromPtr(thread);
 
-        thread.process = kernel_process;
-        thread.timeslice = 1000;
-        // TODO: calculate this once and store it in arch.cpu.fpu_storage_pages
-        const pages = std.math.divCeil(u64, arch.cpu.fpu_storage_size, page_size) catch unreachable;
-        const fpu_storage_phys = pmm.alloc(pages, true) orelse {
-            pmm.free(stack_phys, stack_pages);
-            root.allocator.destroy(thread);
-            return error.OutOfMemory;
-        };
+        const fpu_storage_phys = pmm.alloc(arch.cpu.fpu_storage_pages, true) orelse return error.OutOfMemory;
         thread.fpu_storage = fpu_storage_phys + vmm.hhdm_offset;
 
+        // TODO
         // kernel_process.threads.append(root.allocator, thread);
 
         std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
@@ -157,8 +155,126 @@ pub const Thread = struct {
     }
 
     // TODO: idk if this should be in kernel, it is pthread
-    pub fn initUser() !*Thread {
-        @compileError("TODO");
+    pub fn initUser(
+        process: *Process,
+        func: *const anyopaque,
+        args: ?*anyopaque,
+        stack_ptr: ?*anyopaque,
+        argv: [][*:0]u8,
+        environ: [][*:0]u8,
+        tickets: usize,
+    ) !*Thread {
+        const thread = try root.allocator.create(Thread);
+        errdefer thread.deinit();
+        @memset(std.mem.asBytes(thread), 0);
+
+        thread.self = thread;
+        thread.process = process;
+        thread.tickets = tickets;
+        thread.lock = .{};
+        thread.enqueued = false;
+        thread.yield_await = .{};
+        thread.stacks = .{};
+
+        // TODO: ugly + save in threads.stacks so it's easily freed on deinit?
+        var stack: u64 = undefined;
+        var stack_vma: u64 = undefined;
+        if (stack_ptr) |sp| {
+            stack = @intFromPtr(sp);
+            stack_vma = @intFromPtr(sp);
+        } else {
+            const stack_phys = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
+            errdefer pmm.free(stack_phys, stack_pages);
+
+            stack = stack_phys + stack_size + vmm.hhdm_offset;
+            stack_vma = process.thread_stack_top;
+            try process.addr_space.mmapRange(
+                process.thread_stack_top - stack_size,
+                stack_phys,
+                stack_size,
+                vmm.PROT.READ | vmm.PROT.WRITE,
+                vmm.MAP.ANONYMOUS,
+            );
+            process.thread_stack_top -= stack_size - std.mem.page_size;
+        }
+
+        thread.kernel_stack = blk: {
+            const stack_phys = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
+            errdefer pmm.free(stack_phys, stack_pages);
+            try thread.stacks.append(root.allocator, stack_phys);
+            break :blk stack_phys + stack_size + vmm.hhdm_offset;
+        };
+
+        thread.pf_stack = blk: {
+            const stack_phys = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
+            errdefer pmm.free(stack_phys, stack_pages);
+            try thread.stacks.append(root.allocator, stack_phys);
+            break :blk stack_phys + stack_size + vmm.hhdm_offset;
+        };
+
+        thread.ctx.cs = gdt.user_code;
+        thread.ctx.ds = gdt.user_data;
+        thread.ctx.es = gdt.user_data;
+        thread.ctx.ss = gdt.user_data;
+        thread.ctx.rflags = @bitCast(arch.Rflags{ .IF = 1 });
+        thread.ctx.rip = @intFromPtr(func);
+        thread.ctx.rdi = @intFromPtr(args);
+        thread.ctx.rsp = stack_vma;
+        thread.cr3 = process.addr_space.cr3();
+
+        const fpu_storage_phys = pmm.alloc(arch.cpu.fpu_storage_pages, true) orelse return error.OutOfMemory;
+        thread.fpu_storage = fpu_storage_phys + vmm.hhdm_offset;
+
+        // TODO: set up FPU control word and MXCSR based on SysV ABI
+        arch.cpu.fpuRestore(thread.fpu_storage);
+        const default_fcw: u16 = 0b1100111111;
+        asm volatile (
+            \\fldcw %[fcw]
+            :
+            : [fcw] "m" (default_fcw),
+            : "memory"
+        );
+        const default_mxcsr: u32 = 0b1111110000000;
+        asm volatile (
+            \\ldmxcsr %[mxcsr]
+            :
+            : [mxcsr] "m" (default_mxcsr),
+            : "memory"
+        );
+        arch.cpu.fpuSave(thread.fpu_storage);
+
+        thread.tid = process.threads.items.len; // TODO?
+
+        if (process.threads.items.len == 0) {
+            const stack_top = stack;
+            _ = stack_top;
+
+            for (environ) |entry| {
+                const len = std.mem.len(entry);
+                stack = stack - len - 1;
+                @memcpy(@as(u8, @ptrFromInt(stack)), entry[0..len]);
+            }
+
+            for (argv) |arg| {
+                const len = std.mem.len(arg);
+                stack = stack - len - 1;
+                @memcpy(@as(u8, @ptrFromInt(stack)), arg[0..len]);
+            }
+
+            // TODO
+            stack = std.mem.alignBackward(stack, 16);
+            if ((argv.len + environ.len + 1) & 1 != 0) {
+                stack -= @sizeOf(u64);
+            }
+
+            // TODO: elf
+            // TODO: stuff
+        }
+
+        try process.threads.append(root.allocator, thread);
+
+        @compileError("not finished yet");
+        // return thread;
     }
 
     // TODO
@@ -166,12 +282,13 @@ pub const Thread = struct {
         for (self.stacks.items) |stack| {
             pmm.free(stack, stack_pages);
         }
-        // TODO: calculate this once and store it in arch.cpu.fpu_storage_pages
-        const pages = std.math.divCeil(u64, arch.cpu.fpu_storage_size, page_size) catch unreachable;
-        pmm.free(self.fpu_storage - vmm.hhdm_offset, pages);
+        self.stacks.deinit(root.allocator);
+        pmm.free(self.fpu_storage - vmm.hhdm_offset, arch.cpu.fpu_storage_pages);
         root.allocator.destroy(self);
     }
 };
+
+pub const timeslice = 1000; // reschedule every 1ms
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{};
@@ -180,7 +297,6 @@ var running_threads: std.ArrayListUnmanaged(*Thread) = .{};
 var sched_lock: SpinLock = .{};
 var total_tickets: usize = 0;
 var pcg: rand.Pcg = undefined;
-const random: rand.Random = pcg.random();
 
 pub fn init() void {
     pcg = rand.Pcg.init(rand.getSeedSlow());
@@ -200,7 +316,7 @@ pub inline fn currentThread() *Thread {
 
 // O(n)
 fn nextThread() ?*Thread {
-    const ticket = random.uintLessThan(usize, total_tickets + 1);
+    const ticket = pcg.random().uintLessThan(usize, total_tickets + 1);
     var sum: usize = 0;
 
     sched_lock.lock();
@@ -273,7 +389,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     // TODO
     if (current_thread.scheduling_off) {
         apic.eoi();
-        apic.timerOneShot(current_thread.timeslice, sched_vector);
+        apic.timerOneShot(timeslice, sched_vector);
         return;
     }
 
@@ -286,7 +402,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
         if (next_thread == null and current_thread.enqueued) {
             apic.eoi();
-            apic.timerOneShot(current_thread.timeslice, sched_vector);
+            apic.timerOneShot(timeslice, sched_vector);
             return;
         }
 
@@ -345,13 +461,13 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     current_thread.cpu = cpu;
 
     apic.eoi();
-    apic.timerOneShot(current_thread.timeslice, sched_vector);
+    apic.timerOneShot(timeslice, sched_vector);
     contextSwitch(&current_thread.ctx);
 }
 
 pub fn wait() noreturn {
     arch.disableInterrupts();
-    apic.timerOneShot(10000, sched_vector);
+    apic.timerOneShot(timeslice * 5, sched_vector);
     arch.enableInterrupts();
     arch.halt();
 }
