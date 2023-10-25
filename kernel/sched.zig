@@ -9,8 +9,10 @@ const rand = @import("rand.zig");
 const smp = @import("smp.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
+const vfs = @import("vfs.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.sched);
+pub const S = std.os.linux.S;
 
 // TODO: if a process create a lot of thread it can suck all the cpu
 //       -> check the process of the chosen thread smh to fix that
@@ -28,31 +30,30 @@ pub const Process = struct {
     // child_events
     // event: ev.Event
 
-    // cwd: // TODO
-    // fds_lock: SpinLock,
-    // umask: u32,
-    // fds
+    cwd: *vfs.VNode,
+    umask: u32,
 
+    // fds_lock: SpinLock,
+    // fds // file descriptors
     // running_time: usize,
 
-    var next_pid: u32 = 0;
+    var next_pid = std.atomic.Atomic(u32).init(0); // TODO: useful?
 
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
         const proc = try root.allocator.create(Process);
         errdefer root.allocator.destroy(proc);
 
-        proc.id = next_pid;
         proc.parent = parent;
         proc.threads = .{};
         proc.children = .{};
 
         if (parent) |p| {
             @memcpy(&proc.name, &p.name);
-            // proc.addr_space = try old_proc.addr_space.fork();
-            // proc.thread_stack_top = old_proc.thread_stack_top;
-            // proc.mmap_anon_base = old_proc.mmap_anon_base;
-            // proc.cwd = old_proc.cwd;
-            // proc.umask = old_proc.umask;
+            proc.addr_space = try p.addr_space.fork();
+            // proc.thread_stack_top = p.thread_stack_top;
+            // proc.mmap_anon_base = p.mmap_anon_base;
+            proc.cwd = p.cwd;
+            proc.umask = p.umask;
 
             try p.children.append(root.allocator, proc);
             // try old_proc.child_events.append(root.allocator, &proc.event);
@@ -61,12 +62,12 @@ pub const Process = struct {
             proc.addr_space = addr_space.?;
             // proc.thread_stack_top = 0x70000000000;
             // proc.mmap_anon_base = 0x80000000000;
-            // proc.cwd = vfs_root;
-            // proc.umask = S_IWGRP | S_IWOTH;
+            proc.cwd = vfs.root_vnode;
+            proc.umask = S.IWGRP | S.IWOTH;
         }
 
         try processes.append(root.allocator, proc);
-        next_pid += 1;
+        proc.id = next_pid.fetchAdd(1, .Release);
 
         return proc;
     }

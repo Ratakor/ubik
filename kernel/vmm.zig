@@ -79,11 +79,11 @@ pub const PTE = packed struct {
 // TODO: init and deinit func?
 const MMapRangeGlobal = struct {
     shadow_addr_space: *AddressSpace,
-    locals: std.ArrayListUnmanaged(*MMapRangeLocal),
-    // resource: *Resource,
+    locals: std.ArrayListUnmanaged(*MMapRangeLocal) = .{},
+    // resource: *Resource, // TODO: vnode?
     base: usize,
     length: usize,
-    offset: isize,
+    offset: isize, // TODO: isize?
 };
 
 // TODO: init and deinit func?
@@ -92,7 +92,7 @@ const MMapRangeLocal = struct {
     global: *MMapRangeGlobal,
     base: usize,
     length: usize,
-    offset: isize,
+    offset: isize, // TODO: isize?
     prot: i32,
     flags: i32,
 };
@@ -159,7 +159,7 @@ pub const AddressSpace = struct {
 
     pub fn deinit(self: *Self) void {
         for (self.mmap_ranges.items) |local_range| {
-            self.munmap(local_range.base, local_range.length);
+            self.munmap(local_range.base, local_range.length) catch unreachable;
         }
         self.lock.lock(); // TODO: useless or may cause deadlocks?
         destroyLevel(self.pml4, 0, 256, 4);
@@ -180,7 +180,7 @@ pub const AddressSpace = struct {
 
             const new_local_range = try root.allocator.create(MMapRangeLocal);
             new_local_range.* = local_range.*;
-            // new_local_range.addr_space = new_addr_space;
+            new_local_range.addr_space = new_addr_space; // TODO?
 
             // if (global_range.resource) |res| {
             //     res.refcount += 1;
@@ -199,14 +199,15 @@ pub const AddressSpace = struct {
             } else {
                 const new_global_range = try root.allocator.create(MMapRangeGlobal);
                 errdefer root.allocator.destroy(new_global_range);
-                new_global_range.* = global_range.*;
-                new_local_range.locals = .{};
-                new_global_range.shadow_addr_space = try AddressSpace.init();
+                new_global_range.* = .{
+                    .shadow_addr_space = try AddressSpace.init(),
+                    .base = global_range.base,
+                    .length = global_range.length,
+                    .offset = global_range.offset,
+                };
                 errdefer new_global_range.shadow_addr_space.deinit();
                 try new_global_range.locals.append(root.allocator, new_local_range);
                 errdefer new_global_range.locals.deinit(root.allocator);
-
-                new_local_range.addr_space = new_global_range;
 
                 if (local_range.flags & MAP.ANONYMOUS == 0) {
                     @panic("Non anonymous fork");
@@ -217,14 +218,14 @@ pub const AddressSpace = struct {
                     const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
                     if (old_pte.p == 0) continue;
                     const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
-                    const new_spte = new_global_range.shadow_addr_space(i, true) orelse unreachable; // TODO: free
+                    const new_spte = new_global_range.shadow_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
 
                     const old_page = old_pte.getAddress();
                     const new_page = pmm.alloc(1, false) orelse unreachable; // TODO: free
                     const slice_old_page = @as([*]u8, @ptrFromInt(old_page + hhdm_offset))[0..page_size];
                     const slice_new_page = @as([*]u8, @ptrFromInt(new_page + hhdm_offset))[0..page_size];
                     @memcpy(slice_new_page, slice_old_page);
-                    new_pte.* = old_pte.getFlags() | new_page;
+                    new_pte.* = @bitCast(old_pte.getFlags() | new_page);
                     new_spte.* = new_pte.*;
                 }
             }
@@ -280,7 +281,7 @@ pub const AddressSpace = struct {
 
         const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
         if (pte.p == 0) return error.NotMapped;
-        pte.* = @bitCast(0);
+        pte.* = @bitCast(@as(u64, 0));
         self.flush(vaddr);
     }
 
@@ -379,7 +380,7 @@ pub const AddressSpace = struct {
                 postsplit_range.global = global_range;
                 postsplit_range.base = snip_end;
                 postsplit_range.length = (local_range.base + local_range.length) - snip_end;
-                postsplit_range.offset = local_range.offset + @as(isize, snip_end - local_range.base);
+                postsplit_range.offset = local_range.offset + @as(isize, @intCast(snip_end - local_range.base));
                 postsplit_range.prot = local_range.prot;
                 postsplit_range.flags = local_range.flags;
 
@@ -390,7 +391,7 @@ pub const AddressSpace = struct {
 
             var j = snip_start;
             while (j < snip_end) : (j += page_size) {
-                self.unmapPage(j, false);
+                try self.unmapPage(j, false);
             }
 
             if (snip_size == local_range.length) {
@@ -419,7 +420,7 @@ pub const AddressSpace = struct {
                 root.allocator.destroy(local_range);
             } else {
                 if (snip_start == local_range.base) {
-                    local_range.offset += snip_size;
+                    local_range.offset += @intCast(snip_size);
                     local_range.base = snip_end;
                 }
                 local_range.length -= snip_size;
