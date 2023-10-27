@@ -82,12 +82,12 @@ const Dir = struct {
     fn read(vnode: *vfs.VNode, buf: []u8, offset: *usize) vfs.ReadDirError!usize {
         const self = @fieldParentPtr(Dir, "vnode", vnode);
 
-        var dir_ent: *vfs.Dirent = @ptrCast(@alignCast(buf.ptr));
+        var dir_ent: *vfs.DirectoryEntry = @ptrCast(@alignCast(buf.ptr));
         var buf_offset: usize = 0;
 
         while (offset.* < self.children.items.len) : (offset.* += 1) {
             const child = self.children.items[offset.*];
-            const real_size = child.name.len + 1 - (1024 - @sizeOf(vfs.Dirent));
+            const real_size = child.name.len + 1 - (1024 - @sizeOf(vfs.DirectoryEntry));
 
             if (buf_offset + real_size > buf.len) break;
 

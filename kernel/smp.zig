@@ -28,7 +28,7 @@ pub fn init() void {
         cpu_local.lapic_id = cpu.lapic_id;
 
         if (cpu.lapic_id != bsp_lapic_id) {
-            cpu.goto_address = apInit;
+            cpu.goto_address = initAp;
         } else {
             cpu_local.initCpu(true);
 
@@ -59,7 +59,7 @@ pub fn thisCpu() *CpuLocal {
     return thread.cpu.?;
 }
 
-fn apInit(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
+fn initAp(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     const cpu_local: *CpuLocal = @ptrFromInt(smp_info.extra_argument);
 
     cpu_local.initCpu(false);

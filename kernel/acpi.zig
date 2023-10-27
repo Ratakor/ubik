@@ -187,6 +187,11 @@ fn handleFADT(sdt: *const SDT) void {
     fadt = @ptrCast(sdt);
 }
 
+pub fn reboot() noreturn {
+    arch.writeRegister("cr3", 0); // cause triple fault thus reboot
+    unreachable;
+}
+
 // https://github.com/mintsuki/acpi-shutdown-hack
 pub fn shutdown() noreturn {
     const dsdt: *const SDT = if (use_xsdt)

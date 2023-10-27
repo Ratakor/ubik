@@ -70,11 +70,12 @@ export fn _start() noreturn {
         std.log.warn("Failed to initialize debug info: {}", .{err});
     };
     arch.init();
-    // event.init(); // TODO
     pmm.init();
     vmm.init();
     acpi.init();
+    // syscall.init(); // TODO
     sched.init();
+    // event.init(); // TODO
     smp.init();
     time.init();
 

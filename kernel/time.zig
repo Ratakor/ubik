@@ -1,4 +1,5 @@
 //! https://wiki.osdev.org/PIT
+// TODO: move PIT code to arch/x86_64/pit.zig
 
 const std = @import("std");
 const root = @import("root");

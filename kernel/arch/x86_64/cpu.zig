@@ -10,8 +10,6 @@ const idt = @import("idt.zig");
 const apic = @import("apic.zig");
 const log = std.log.scoped(.cpu);
 
-// TODO: move all of this in x86_64.zig?
-
 pub const CpuLocal = struct {
     id: usize,
     active: bool,
@@ -49,13 +47,6 @@ pub const CpuLocal = struct {
         self.tss.ist1 = sched_stack;
 
         initFeatures(is_bsp);
-
-        if (is_bsp) {
-            // disable PIC
-            x86.out(u8, 0xa1, 0xff);
-            x86.out(u8, 0x21, 0xff);
-        }
-
         apic.init(); // smp safe
     }
 };
@@ -211,6 +202,7 @@ const XCR0 = enum(u64) {
     pkru = 1 << 9,
 };
 
+// TODO: should be in CpuLocal
 pub var use_xsave = false;
 pub var fpu_storage_size: usize = 512; // 512 = fxsave storage
 // TODO: replace with @divCeil

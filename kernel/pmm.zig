@@ -24,14 +24,15 @@ pub fn init() void {
     const entries = memory_map.entries();
     var highest_addr: u64 = 0;
 
-    // calculate the size of the bitmap
+    log.info("memory_map[{}] dump:", .{entries.len});
     for (entries) |entry| {
-        log.info("base: 0x{x}, length: 0x{x}, kind: {s}", .{
+        log.info("0x{x}-0x{x} {s}", .{
             entry.base,
-            entry.length,
+            entry.base + entry.length,
             @tagName(entry.kind),
         });
 
+        // calculate the size of the bitmap
         if (entry.kind == .usable) {
             usable_pages += entry.length / page_size;
             highest_addr = @max(highest_addr, entry.base + entry.length);

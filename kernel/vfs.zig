@@ -5,6 +5,7 @@ const tmpfs = @import("fs/tmpfs.zig");
 const isAbsolute = std.fs.path.isAbsolute;
 
 // TODO: flags and offset as usize?
+// TODO: move to ../servers/vfs/vfs.zig
 
 const AllocatorError = std.mem.Allocator.Error;
 pub const OpenError = std.os.OpenError || AllocatorError;
@@ -16,7 +17,7 @@ pub const IoctlError = AllocatorError; // TODO
 pub const StatError = std.os.FStatAtError || AllocatorError;
 
 pub const Stat = std.os.linux.Stat;
-pub const Dirent = std.os.linux.dirent64;
+pub const DirectoryEntry = std.os.linux.dirent64;
 pub const DT = std.os.linux.DT;
 pub const O = std.os.linux.O;
 
@@ -45,6 +46,7 @@ pub const VNode = struct {
 
     /// https://en.wikipedia.org/wiki/Unix_file_types
     pub const Kind = enum(u64) {
+        unknown = DT.UNKNOWN,
         file = DT.REG,
         directory = DT.DIR,
         symlink = DT.LNK,
