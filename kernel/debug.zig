@@ -11,7 +11,7 @@ const readIntLittle = std.mem.readIntLittle;
 var log_lock: SpinLock = .{};
 var panic_lock: SpinLock = .{};
 
-var fba_buffer: [32 * 1024 * 1024]u8 = undefined; // 32MiB
+var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MiB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.dwarf.DwarfInfo = null;
@@ -22,35 +22,7 @@ var dmesg = blk: {
 };
 const dmesg_writer = dmesg.writer();
 
-pub fn init() !void {
-    errdefer debug_info = null;
-    const kernel_file = root.kernel_file_request.response.?.kernel_file;
-
-    debug_info = .{
-        .endian = .Little,
-        .sections = .{
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_info"), .owned = true },
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_abbrev"), .owned = true },
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_str"), .owned = true },
-            null, // debug_str_offsets
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_line"), .owned = true },
-            null, // debug_line_str
-            .{ .data = try getSectionSlice(kernel_file.address, ".debug_ranges"), .owned = true },
-            null, // debug_loclists
-            null, // debug_rnglists
-            null, // debug_addr
-            null, // debug_names
-            null, // debug_frame
-            null, // eh_frame
-            null, // eh_frame_hdr
-        },
-        .is_macho = false,
-    };
-
-    try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
-}
-
-pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
     @setCold(true);
 
     arch.disableInterrupts();
@@ -62,7 +34,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     smp.stopAll();
 
     const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
-    const stack_iter = StackIterator.init(@returnAddress(), @frameAddress());
+    const stack_iter = StackIterator.init(ret_addr orelse @returnAddress(), @frameAddress());
 
     dmesg_writer.print(fmt, .{msg}) catch {};
     printStackIterator(dmesg_writer, stack_iter);
@@ -103,61 +75,207 @@ pub fn log(
 }
 
 fn printStackIterator(writer: anytype, stack_iter: StackIterator) void {
-    writer.writeAll("Stack trace: ") catch {};
-    if (debug_info == null) {
-        writer.writeAll("Unavailable") catch {};
+    if (builtin.strip_debug_info) {
+        writer.writeAll("Unable to dump stack trace: Debug info stripped\n") catch {};
         return;
-    } else {
-        writer.writeAll("\n") catch {};
+    }
+    if (debug_info == null) {
+        initDebugInfo() catch |err| {
+            writer.print("Unable to dump stack trace: Unable to init debug info: {s}\n", .{@errorName(err)}) catch {};
+            return;
+        };
     }
 
     var iter = stack_iter;
-    while (iter.next()) |addr| {
-        printSymbol(writer, addr);
+    while (iter.next()) |return_address| {
+        const address = if (return_address == 0) continue else return_address - 1;
+        printSymbolInfo(writer, address) catch |err| {
+            writer.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch {};
+            return;
+        };
     }
 }
 
-fn printStackTrace(writer: anytype, stack_trace: *std.builtin.StackTrace) void {
-    writer.writeAll("Stack trace: ") catch {};
-    if (debug_info == null) {
-        writer.writeAll("Unavailable") catch {};
-        return;
-    } else {
-        writer.writeAll("\n") catch {};
-    }
+fn printSymbolInfo(writer: anytype, address: u64) !void {
+    const symbol_info: std.debug.SymbolInfo = if (debug_info.?.findCompileUnit(address)) |compile_unit| .{
+        .symbol_name = debug_info.?.getSymbolName(address) orelse "???",
+        .compile_unit_name = compile_unit.die.getAttrString(
+            &debug_info.?,
+            std.dwarf.AT.name,
+            debug_info.?.section(.debug_str),
+            compile_unit.*,
+        ) catch "???",
+        .line_info = debug_info.?.getLineNumberInfo(debug_allocator, compile_unit.*, address) catch |err| switch (err) {
+            error.MissingDebugInfo, error.InvalidDebugInfo => null,
+            else => return err,
+        },
+    } else |err| switch (err) {
+        error.MissingDebugInfo, error.InvalidDebugInfo => .{},
+        else => return err,
+    };
+    defer symbol_info.deinit(debug_allocator);
 
-    var frame_index: usize = 0;
-    var frames_left: usize = @min(stack_trace.index, stack_trace.instruction_addresses.len);
-    while (frames_left != 0) : (frames_left -= 1) {
-        const return_address = stack_trace.instruction_addresses[frame_index];
-        printSymbol(writer, return_address);
-        frame_index = (frame_index + 1) % stack_trace.instruction_addresses.len;
-    }
-}
+    if (symbol_info.line_info) |li| {
+        try writer.print("\x1b[1m{s}:{d}:{d}\x1b[m: \x1b[2m0x{x:0>16} in {s} ({s})\x1b[m\n", .{
+            li.file_name,
+            li.line,
+            li.column,
+            address,
+            symbol_info.symbol_name,
+            symbol_info.compile_unit_name,
+        });
 
-fn printSymbol(writer: anytype, address: u64) void {
-    var symbol_name: []const u8 = "<no symbol info>";
-    var file_name: []const u8 = "??";
-    var line: usize = 0;
-
-    if (debug_info) |*info| blk: {
-        if (info.getSymbolName(address)) |name| {
-            symbol_name = name;
+        if (printLineFromFile(writer, li)) {
+            if (li.column > 0) {
+                try writer.writeByteNTimes(' ', li.column - 1);
+                try writer.writeAll("\x1b[32m^\x1b[m");
+            }
+            try writer.writeAll("\n");
+        } else |err| switch (err) {
+            error.EndOfFile, error.FileNotFound => {},
+            else => return err,
         }
+    } else {
+        try writer.print("\x1b[1m???:?:?\x1b[m: \x1b[2m0x{x:0>16} in {s} ({s})\x1b[m\n", .{
+            address,
+            symbol_info.symbol_name,
+            symbol_info.compile_unit_name,
+        });
+    }
+}
 
-        const compile_unit = info.findCompileUnit(address) catch break :blk;
-        const line_info = info.getLineNumberInfo(debug_allocator, compile_unit.*, address) catch break :blk;
+const source_files = [_][]const u8{
+    "arch/x86_64/apic.zig",
+    "arch/x86_64/cpu.zig",
+    "arch/x86_64/gdt.zig",
+    "arch/x86_64/idt.zig",
+    "arch/x86_64/mem.zig",
+    "arch/x86_64/x86_64.zig",
+    "arch/x86_64.zig",
+    "fs/tmpfs.zig",
+    "acpi.zig",
+    "arch.zig",
+    "debug.zig",
+    "elf.zig",
+    "event.zig",
+    "main.zig",
+    "pmm.zig",
+    "ps2.zig",
+    "rand.zig",
+    "sched.zig",
+    "serial.zig",
+    "smp.zig",
+    "SpinLock.zig",
+    "STANDARD.F16",
+    "time.zig",
+    "TTY.zig",
+    "vfs.zig",
+    "vmm.zig",
+};
 
-        file_name = line_info.file_name;
-        line = line_info.line;
+// TODO: get source files from filesystem instead + zig std lib files
+fn printLineFromFile(writer: anytype, line_info: std.debug.LineInfo) !void {
+    var contents: []const u8 = undefined;
+
+    inline for (source_files) |src_path| {
+        if (std.mem.endsWith(u8, line_info.file_name, src_path)) {
+            contents = @embedFile(src_path);
+            break;
+        }
+    } else return error.FileNotFound;
+
+    var line: usize = 1;
+    for (contents) |byte| {
+        if (line == line_info.line) {
+            try writer.writeByte(byte);
+            if (byte == '\n') return;
+        }
+        if (byte == '\n') {
+            line += 1;
+        }
     }
 
-    writer.print("0x{x:0>16}: {s} at {s}:{d}\n", .{
-        address,
-        symbol_name,
-        file_name,
-        line,
-    }) catch {};
+    return error.EndOfFile;
+
+    // var f = try fs.openFile(line_info.file_name);
+    // defer f.close();
+
+    // var buf: [std.mem.page_size]u8 = undefined;
+    // var line: usize = 1;
+    // while (true) {
+    //     const amt_read = try f.read(buf[0..]);
+    //     const slice = buf[0..amt_read];
+
+    //     for (slice) |byte| {
+    //         if (line == line_info.line) {
+    //             try writer.writeByte(byte);
+    //             if (byte == '\n') return;
+    //         }
+    //         if (byte == '\n') {
+    //             line += 1;
+    //         }
+    //     }
+
+    //     if (amt_read < buf.len) return error.EndOfFile;
+    // }
+}
+
+fn initDebugInfo() !void {
+    errdefer debug_info = null;
+    const kernel_file = root.kernel_file_request.response.?.kernel_file;
+
+    debug_info = .{
+        .endian = .Little,
+        .sections = .{
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_info"), .owned = true },
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_abbrev"), .owned = true },
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_str"), .owned = true },
+            null, // debug_str_offsets
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_line"), .owned = true },
+            null, // debug_line_str
+            .{ .data = try getSectionSlice(kernel_file.address, ".debug_ranges"), .owned = true },
+            null, // debug_loclists
+            null, // debug_rnglists
+            null, // debug_addr
+            null, // debug_names
+            null, // debug_frame
+            null, // eh_frame
+            null, // eh_frame_hdr
+        },
+        .is_macho = false,
+    };
+
+    try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
+}
+
+fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
+    const sh_strndx = readIntLittle(u16, elf[62 .. 62 + 2]);
+    const sh_num = readIntLittle(u16, elf[60 .. 60 + 2]);
+
+    if (sh_strndx > sh_num) {
+        return error.ShstrndxOutOfRange;
+    }
+
+    const section_names = getSectionData(elf, getShdr(elf, sh_strndx));
+
+    var i: u16 = 0;
+    while (i < sh_num) : (i += 1) {
+        const header = getShdr(elf, i);
+
+        if (std.mem.eql(u8, getSectionName(section_names, header) orelse continue, section_name)) {
+            return getSectionData(elf, header);
+        }
+    }
+
+    return error.SectionNotFound;
+}
+
+fn getShdr(elf: [*]const u8, idx: u16) []const u8 {
+    const sh_offset = readIntLittle(u64, elf[40 .. 40 + 8]);
+    const sh_entsize = readIntLittle(u16, elf[58 .. 58 + 2]);
+    const off = sh_offset + sh_entsize * idx;
+
+    return elf[off .. off + sh_entsize];
 }
 
 fn getSectionData(elf: [*]const u8, shdr: []const u8) []const u8 {
@@ -172,35 +290,4 @@ fn getSectionName(names: []const u8, shdr: []const u8) ?[]const u8 {
     const len = std.mem.indexOf(u8, names[offset..], "\x00") orelse return null;
 
     return names[offset .. offset + len];
-}
-
-fn getShdr(elf: [*]const u8, idx: u16) []const u8 {
-    const sh_offset = readIntLittle(u64, elf[40 .. 40 + 8]);
-    const sh_entsize = readIntLittle(u16, elf[58 .. 58 + 2]);
-    const off = sh_offset + sh_entsize * idx;
-
-    return elf[off .. off + sh_entsize];
-}
-
-fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
-    const sh_strndx = readIntLittle(u16, elf[62 .. 62 + 2]);
-    const sh_num = readIntLittle(u16, elf[60 .. 60 + 2]);
-
-    if (sh_strndx > sh_num) {
-        return error.ShstrndxOutOfRange;
-    }
-
-    const section_names = getSectionData(elf, getShdr(elf, sh_strndx));
-
-    var i: u16 = 0;
-
-    while (i < sh_num) : (i += 1) {
-        const header = getShdr(elf, i);
-
-        if (std.mem.eql(u8, getSectionName(section_names, header) orelse continue, section_name)) {
-            return getSectionData(elf, header);
-        }
-    }
-
-    return error.SectionNotFound;
 }

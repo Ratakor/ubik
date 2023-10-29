@@ -66,9 +66,6 @@ export fn _start() noreturn {
     arch.disableInterrupts();
 
     serial.init();
-    debug.init() catch |err| {
-        std.log.warn("Failed to initialize debug info: {}", .{err});
-    };
     arch.init();
     pmm.init();
     vmm.init();

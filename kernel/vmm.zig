@@ -128,9 +128,7 @@ pub const AddressSpace = struct {
     lock: SpinLock,
     mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal),
 
-    const Self = @This();
-
-    pub fn init() !*Self {
+    pub fn init() !*AddressSpace {
         const addr_space = try root.allocator.create(AddressSpace);
         errdefer root.allocator.destroy(addr_space);
 
@@ -157,7 +155,7 @@ pub const AddressSpace = struct {
         pmm.free(@intFromPtr(pml) - hhdm_offset, 1);
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *AddressSpace) void {
         for (self.mmap_ranges.items) |local_range| {
             self.munmap(local_range.base, local_range.length) catch unreachable;
         }
@@ -167,7 +165,7 @@ pub const AddressSpace = struct {
     }
 
     // TODO
-    pub fn fork(self: *Self) !*Self {
+    pub fn fork(self: *AddressSpace) !*AddressSpace {
         self.lock.lock();
         defer self.lock.unlock();
         errdefer self.lock.unlock();
@@ -234,7 +232,7 @@ pub const AddressSpace = struct {
         return new_addr_space;
     }
 
-    pub fn virt2pte(self: *const Self, vaddr: u64, allocate: bool) ?*PTE {
+    pub fn virt2pte(self: *const AddressSpace, vaddr: u64, allocate: bool) ?*PTE {
         const pml4_idx = (vaddr & (0x1ff << 39)) >> 39;
         const pml3_idx = (vaddr & (0x1ff << 30)) >> 30;
         const pml2_idx = (vaddr & (0x1ff << 21)) >> 21;
@@ -248,13 +246,13 @@ pub const AddressSpace = struct {
         return &pml1[pml1_idx];
     }
 
-    pub fn virt2phys(self: *const Self, vaddr: u64) MapError!u64 {
+    pub fn virt2phys(self: *const AddressSpace, vaddr: u64) MapError!u64 {
         const pte = self.virt2pte(vaddr, false) orelse unreachable;
         if (pte.p == 0) return error.NotMapped;
         return pte.getAddress();
     }
 
-    pub fn mapPage(self: *Self, vaddr: u64, paddr: u64, flags: u64) MapError!void {
+    pub fn mapPage(self: *AddressSpace, vaddr: u64, paddr: u64, flags: u64) MapError!void {
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -265,7 +263,7 @@ pub const AddressSpace = struct {
         self.flush(vaddr);
     }
 
-    pub fn remapPage(self: *Self, vaddr: u64, flags: u64) MapError!void {
+    pub fn remapPage(self: *AddressSpace, vaddr: u64, flags: u64) MapError!void {
         self.lock.lock();
         defer self.lock.unlock();
 
@@ -275,7 +273,7 @@ pub const AddressSpace = struct {
         self.flush(vaddr);
     }
 
-    pub fn unmapPage(self: *Self, vaddr: u64, lock: bool) MapError!void {
+    pub fn unmapPage(self: *AddressSpace, vaddr: u64, lock: bool) MapError!void {
         if (lock) self.lock.lock();
         defer if (lock) self.lock.unlock();
 
@@ -285,7 +283,7 @@ pub const AddressSpace = struct {
         self.flush(vaddr);
     }
 
-    inline fn mapSection(self: *Self, comptime section: []const u8, flags: u64) void {
+    inline fn mapSection(self: *AddressSpace, comptime section: []const u8, flags: u64) void {
         const start: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_start" }));
         const end: u64 = @intFromPtr(@extern([*]u8, .{ .name = section ++ "_end" }));
         const start_addr = alignBackward(u64, start, page_size);
@@ -299,17 +297,24 @@ pub const AddressSpace = struct {
         }
     }
 
-    pub inline fn cr3(self: *const Self) u64 {
+    pub inline fn cr3(self: *const AddressSpace) u64 {
         return @intFromPtr(self.pml4) - hhdm_offset;
     }
 
-    inline fn flush(self: *Self, vaddr: u64) void {
+    inline fn flush(self: *AddressSpace, vaddr: u64) void {
         if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
             arch.invlpg(vaddr);
         }
     }
 
-    pub fn mmapRange(self: *Self, vaddr: u64, paddr: u64, len: usize, prot: i32, flags: i32) !void {
+    pub fn mmapRange(
+        self: *AddressSpace,
+        vaddr: u64,
+        paddr: u64,
+        len: usize,
+        prot: i32,
+        flags: i32,
+    ) !void {
         flags |= MAP.ANONYMOUS; // TODO
 
         const aligned_vaddr = alignBackward(vaddr, page_size);
@@ -350,7 +355,7 @@ pub const AddressSpace = struct {
     }
 
     // TODO
-    pub fn munmap(self: *Self, addr: u64, constlen: usize) !void {
+    pub fn munmap(self: *AddressSpace, addr: u64, constlen: usize) !void {
         if (constlen == 0) return error.EINVAL;
         const len = alignForward(usize, constlen, page_size);
 

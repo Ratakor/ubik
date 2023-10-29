@@ -26,21 +26,19 @@ const IOAPIC = extern struct {
     addr: u32 align(1),
     base_gsi: u32 align(1),
 
-    const Self = @This();
-
-    fn read(self: Self, reg: u32) u32 {
+    fn read(self: IOAPIC, reg: u32) u32 {
         const base: [*]volatile u32 = @ptrFromInt(self.addr + vmm.hhdm_offset);
         base[0] = reg;
         return base[4];
     }
 
-    fn write(self: Self, reg: u32, value: u32) void {
+    fn write(self: IOAPIC, reg: u32, value: u32) void {
         const base: [*]volatile u32 = @ptrFromInt(self.addr + vmm.hhdm_offset);
         base[0] = reg;
         base[4] = value;
     }
 
-    fn gsiCount(self: Self) u32 {
+    fn gsiCount(self: IOAPIC) u32 {
         return (self.read(1) & 0xff0000) >> 16;
     }
 };
