@@ -49,12 +49,12 @@ const File = struct {
         return buf.len;
     }
 
-    fn stat(vnode: *vfs.VNode, buf: *vfs.Stat) vfs.StatError!void {
+    fn stat(vnode: *vfs.VNode, buf: *std.os.Stat) vfs.StatError!void {
         const self = @fieldParentPtr(File, "vnode", vnode);
 
-        buf.* = std.mem.zeroes(vfs.Stat);
+        buf.* = std.mem.zeroes(std.os.Stat);
         buf.ino = vnode.inode;
-        buf.mode = 0o777 | std.os.linux.S.IFREG; // TODO
+        buf.mode = 0o777 | std.os.S.IFREG; // TODO
         buf.size = @intCast(self.data.items.len);
         buf.blksize = page_size;
         buf.blocks = @intCast(std.mem.alignForward(usize, self.data.items.len, page_size) / page_size);
@@ -82,12 +82,12 @@ const Dir = struct {
     fn read(vnode: *vfs.VNode, buf: []u8, offset: *usize) vfs.ReadDirError!usize {
         const self = @fieldParentPtr(Dir, "vnode", vnode);
 
-        var dir_ent: *vfs.DirectoryEntry = @ptrCast(@alignCast(buf.ptr));
+        var dir_ent: *std.os.system.DirectoryEntry = @ptrCast(@alignCast(buf.ptr));
         var buf_offset: usize = 0;
 
         while (offset.* < self.children.items.len) : (offset.* += 1) {
             const child = self.children.items[offset.*];
-            const real_size = child.name.len + 1 - (1024 - @sizeOf(vfs.DirectoryEntry));
+            const real_size = child.name.len + 1 - (1024 - @sizeOf(std.os.system.DirectoryEntry));
 
             if (buf_offset + real_size > buf.len) break;
 
@@ -114,10 +114,10 @@ const Dir = struct {
         try self.children.append(root.allocator, new_child);
     }
 
-    fn stat(vnode: *vfs.VNode, buf: *vfs.Stat) vfs.StatError!void {
-        buf.* = std.mem.zeroes(vfs.Stat);
+    fn stat(vnode: *vfs.VNode, buf: *std.os.Stat) vfs.StatError!void {
+        buf.* = std.mem.zeroes(std.os.Stat);
         buf.ino = vnode.inode;
-        buf.mode = 0o777 | std.os.linux.S.IFDIR; // TODO
+        buf.mode = 0o777 | std.os.S.IFDIR; // TODO
     }
 };
 

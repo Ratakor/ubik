@@ -16,10 +16,14 @@ pub const InsertError = std.os.MakeDirError || AllocatorError;
 pub const IoctlError = AllocatorError; // TODO
 pub const StatError = std.os.FStatAtError || AllocatorError;
 
-pub const Stat = std.os.linux.Stat;
-pub const DirectoryEntry = std.os.linux.dirent64;
-pub const DT = std.os.linux.DT;
-pub const O = std.os.linux.O;
+// TODO
+pub const FileDescriptor = struct {
+    refcount: usize,
+    offset: isize,
+    flags: i32,
+    lock: SpinLock = .{}, // TODO remove lock in VNode
+    node: *VNode,
+};
 
 pub const VNode = struct {
     vtable: *const VTable,
@@ -41,11 +45,13 @@ pub const VNode = struct {
         write: ?*const fn (self: *VNode, buf: []const u8, offset: usize, flags: usize) WriteError!usize = null,
         insert: ?*const fn (self: *VNode, new_child: *VNode) InsertError!void = null, // TODO: rename mkdir?
         ioctl: ?*const fn (self: *VNode, request: u64, arg: u64) IoctlError!u64 = null,
-        stat: ?*const fn (self: *VNode, buf: *Stat) StatError!void = null,
+        stat: ?*const fn (self: *VNode, buf: *std.os.Stat) StatError!void = null,
     };
 
     /// https://en.wikipedia.org/wiki/Unix_file_types
     pub const Kind = enum(u64) {
+        const DT = std.os.DT;
+
         unknown = DT.UNKNOWN,
         file = DT.REG,
         directory = DT.DIR,
@@ -179,10 +185,10 @@ fn resolve(cwd: ?*VNode, path: []const u8, flags: usize) (OpenError || InsertErr
         } else {
             next_vnode = next.open(component, 0) catch |err| switch (err) {
                 error.FileNotFound => blk: {
-                    if (flags & O.CREAT == 0) return error.FileNotFound;
+                    if (flags & std.os.O.CREAT == 0) return error.FileNotFound;
 
                     const fs = next; // TODO
-                    const vnode = if (flags & O.DIRECTORY != 0 or iter.rest().len > 0)
+                    const vnode = if (flags & std.os.O.DIRECTORY != 0 or iter.rest().len > 0)
                         try fs.createDir(component)
                     else
                         try fs.createFile(component);
@@ -193,7 +199,7 @@ fn resolve(cwd: ?*VNode, path: []const u8, flags: usize) (OpenError || InsertErr
             };
         }
 
-        if (flags & O.NOFOLLOW == 0 and next_vnode.kind == .symlink) {
+        if (flags & std.os.O.NOFOLLOW == 0 and next_vnode.kind == .symlink) {
             const old_vnode = next_vnode;
             const target = next_vnode.symlink_target.?;
             // TODO: check if isAbsolute?

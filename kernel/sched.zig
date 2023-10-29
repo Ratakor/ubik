@@ -12,7 +12,6 @@ const vmm = @import("vmm.zig");
 const vfs = @import("vfs.zig");
 const SpinLock = @import("SpinLock.zig");
 const log = std.log.scoped(.sched);
-pub const S = std.os.linux.S;
 
 // TODO: if a process create a lot of thread it can suck all the cpu
 //       -> check the process of the chosen thread smh to fix that
@@ -23,7 +22,7 @@ pub const Process = struct {
     name: [127:0]u8,
     parent: ?*Process,
     addr_space: *vmm.AddressSpace,
-    // mmap_anon_base: usize,
+    mmap_anon_base: usize, // TODO
     thread_stack_top: usize, // TODO
     threads: std.ArrayListUnmanaged(*Thread),
     children: std.ArrayListUnmanaged(*Process),
@@ -33,10 +32,13 @@ pub const Process = struct {
     cwd: *vfs.VNode,
     umask: u32,
 
-    // fds_lock: SpinLock,
-    // fds // file descriptors
-    // running_time: usize,
+    // TODO
+    fds_lock: SpinLock,
+    fds: [max_fds]?*vfs.FileDescriptor,
 
+    // running_time: usize, // TODO
+
+    pub const max_fds = 256;
     var next_pid = std.atomic.Atomic(u32).init(0); // TODO: useful?
 
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
@@ -63,7 +65,7 @@ pub const Process = struct {
             // proc.thread_stack_top = 0x70000000000;
             // proc.mmap_anon_base = 0x80000000000;
             proc.cwd = vfs.root_vnode;
-            proc.umask = S.IWGRP | S.IWOTH;
+            proc.umask = std.os.S.IWGRP | std.os.S.IWOTH;
         }
 
         try processes.append(root.allocator, proc);
@@ -80,7 +82,7 @@ pub const Process = struct {
 
 pub const Thread = struct {
     self: *Thread,
-    errno: usize,
+    errno: u64,
 
     tid: usize,
     lock: SpinLock = .{},
@@ -130,7 +132,7 @@ pub const Thread = struct {
         thread.ctx.ds = gdt.kernel_data;
         thread.ctx.es = gdt.kernel_data;
         thread.ctx.ss = gdt.kernel_data;
-        thread.ctx.rflags = @bitCast(arch.Rflags{ .IF = 1 });
+        thread.ctx.rflags = @bitCast(arch.RFlags{ .IF = 1 });
         thread.ctx.rip = @intFromPtr(func);
         thread.ctx.rdi = @intFromPtr(arg);
         thread.ctx.rsp = blk: {
@@ -149,6 +151,7 @@ pub const Thread = struct {
         // TODO
         // kernel_process.threads.append(root.allocator, thread);
 
+        // TODO: Thread -> extern struct
         std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
         std.debug.assert(@intFromPtr(thread) + 8 == @intFromPtr(&thread.errno));
 
@@ -217,7 +220,7 @@ pub const Thread = struct {
         thread.ctx.ds = gdt.user_data;
         thread.ctx.es = gdt.user_data;
         thread.ctx.ss = gdt.user_data;
-        thread.ctx.rflags = @bitCast(arch.Rflags{ .IF = 1 });
+        thread.ctx.rflags = @bitCast(arch.RFlags{ .IF = 1 });
         thread.ctx.rip = @intFromPtr(func);
         thread.ctx.rdi = @intFromPtr(args);
         thread.ctx.rsp = stack_vma;
@@ -313,6 +316,10 @@ pub inline fn currentThread() *Thread {
         \\mov %%gs:0x0, %[thr]
         : [thr] "=r" (-> *Thread),
     );
+}
+
+pub inline fn setErrno(errno: std.os.E) void {
+    currentThread().errno = errno;
 }
 
 // O(n)

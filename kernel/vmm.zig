@@ -14,8 +14,7 @@ const log = std.log.scoped(.vmm);
 const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
-pub const PROT = std.os.linux.PROT;
-pub const MAP = std.os.linux.MAP;
+const MAP = std.os.MAP;
 
 // TODO: TLB shootdown?
 // TODO: mapRange/unmapRange?
@@ -517,10 +516,10 @@ pub fn handlePageFault(cr2: u64, reason: u64) !void {
 
 fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) !void {
     var flags = PTE.present | PTE.user;
-    if ((prot & PROT.WRITE) != 0) {
+    if ((prot & std.os.PROT.WRITE) != 0) {
         flags |= PTE.writable;
     }
-    if ((prot & PROT.EXEC) == 0) {
+    if ((prot & std.os.PROT.EXEC) == 0) {
         flags |= PTE.noexec;
     }
 

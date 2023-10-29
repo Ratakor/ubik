@@ -14,9 +14,9 @@ pub const Listener = struct {
 };
 
 pub const Event = struct {
-    lock: SpinLock,
-    pending: usize,
-    listeners_i: usize,
+    lock: SpinLock = .{},
+    pending: usize = 0,
+    listeners_i: usize = 0,
     listeners: [max_listeners]Listener,
 };
 

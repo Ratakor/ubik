@@ -1,6 +1,6 @@
 const assert = @import("std").debug.assert;
 
-pub const Rflags = packed struct {
+pub const RFlags = packed struct {
     CF: u1 = 0,
     reserved: u1 = 1,
     PF: u1 = 0,
@@ -25,8 +25,8 @@ pub const Rflags = packed struct {
     reserved4: u42 = 0,
 
     comptime {
-        assert(@sizeOf(Rflags) == @sizeOf(u64));
-        assert(@bitSizeOf(Rflags) == @bitSizeOf(u64));
+        assert(@sizeOf(RFlags) == @sizeOf(u64));
+        assert(@bitSizeOf(RFlags) == @bitSizeOf(u64));
     }
 };
 

@@ -16,3 +16,14 @@ Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
 % git clone https://github.com/ratakor/ubik --recursive
 % zig build run -Doptimize=ReleaseFast
 ```
+
+# File structure
+This shouldn't be in readme.
+
+1. imports
+2. type definitions
+3. constants
+4. variables
+5. init function
+6. pub functions
+7. other functions

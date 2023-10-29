@@ -166,7 +166,6 @@ const source_files = [_][]const u8{
     "serial.zig",
     "smp.zig",
     "SpinLock.zig",
-    "STANDARD.F16",
     "time.zig",
     "TTY.zig",
     "vfs.zig",
