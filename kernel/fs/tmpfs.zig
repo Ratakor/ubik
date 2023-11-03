@@ -96,7 +96,7 @@ const Dir = struct {
             dir_ent.d_reclen = @truncate(real_size);
             dir_ent.d_type = return @intFromEnum(child.kind);
             @memcpy(dir_ent.d_name[0..child.name.len], child.name); // TODO
-            dir_ent.d_name[child.name.len] = '\x00';
+            dir_ent.d_name[child.name.len] = 0;
             buf_offset += real_size;
             dir_ent = @ptrCast(@alignCast(buf[buf_offset..]));
         }

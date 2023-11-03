@@ -6,7 +6,6 @@ const arch = @import("arch.zig");
 const apic = arch.apic;
 const vmm = @import("vmm.zig");
 const log = std.log.scoped(.acpi);
-const readIntNative = std.mem.readIntNative;
 
 /// System Description Table
 const SDT = extern struct {
@@ -148,16 +147,16 @@ fn parse(comptime T: type, addr: u64) void {
         const sdt: *const SDT = @ptrFromInt(entry + vmm.hhdm_offset);
         sdt.doChecksum();
 
-        switch (readIntNative(u32, &sdt.signature)) {
-            readIntNative(u32, "APIC") => handleMADT(sdt),
-            readIntNative(u32, "FACP") => handleFADT(sdt),
+        switch (std.mem.readInt(u32, &sdt.signature, .little)) {
+            std.mem.readInt(u32, "APIC", .little) => handleMADT(sdt),
+            std.mem.readInt(u32, "FACP", .little) => handleFADT(sdt),
             else => log.warn("unhandled ACPI table: {s}", .{sdt.signature}),
         }
     }
 }
 
 fn handleMADT(madt: *const SDT) void {
-    apic.lapic_base = readIntNative(u32, madt.data()[0..4]);
+    apic.lapic_base = std.mem.readInt(u32, madt.data()[0..4], .little);
     log.info("lapic base: 0x{x}", .{apic.lapic_base});
     var data = madt.data()[8..]; // discard madt header
 
@@ -260,15 +259,15 @@ inline fn parseInt(s5_addr: []const u8, value: *u64) usize {
             return 2;
         },
         0xb => {
-            value.* = readIntNative(u16, s5_addr[1..3]);
+            value.* = std.mem.readInt(u16, s5_addr[1..3], .little);
             return 3;
         },
         0xc => {
-            value.* = readIntNative(u32, s5_addr[1..5]);
+            value.* = std.mem.readInt(u32, s5_addr[1..5], .little);
             return 5;
         },
         0xe => {
-            value.* = readIntNative(u64, s5_addr[1..9]);
+            value.* = std.mem.readInt(u64, s5_addr[1..9], .little);
             return 9;
         },
         else => unreachable,
