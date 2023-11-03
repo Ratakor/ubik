@@ -243,68 +243,68 @@ fn makeStubHandler(vector: u8) *const fn () callconv(.Naked) void {
 export fn commonStub() callconv(.Naked) void {
     asm volatile (
     // if (cs != gdt.kernel_code) -> swapgs
-        \\cmpq $0x08, 24(%%rsp)
+        \\cmpq $0x08, 0x18(%rsp)
         \\je 1f
         \\swapgs
         \\1:
-        \\push %%r15
-        \\push %%r14
-        \\push %%r13
-        \\push %%r12
-        \\push %%r11
-        \\push %%r10
-        \\push %%r9
-        \\push %%r8
-        \\push %%rbp
-        \\push %%rdi
-        \\push %%rsi
-        \\push %%rdx
-        \\push %%rcx
-        \\push %%rbx
-        \\push %%rax
-        \\mov %%es, %%ax
-        \\push %%rax
-        \\mov %%ds, %%ax
-        \\push %%rax
+        \\push %r15
+        \\push %r14
+        \\push %r13
+        \\push %r12
+        \\push %r11
+        \\push %r10
+        \\push %r9
+        \\push %r8
+        \\push %rbp
+        \\push %rdi
+        \\push %rsi
+        \\push %rdx
+        \\push %rcx
+        \\push %rbx
+        \\push %rax
+        \\mov %es, %ax
+        \\push %rax
+        \\mov %ds, %ax
+        \\push %rax
     );
 
     asm volatile (
-        \\mov 0x88(%%rsp), %%rdi
-        \\imul $8, %%rdi
-        \\add %%rdi, %%rax
-        \\mov %%rsp, %%rdi
-        \\call *(%%rax)
+        \\mov 0x88(%rsp), %rdi
+        \\imul $8, %rdi
+        \\add %rdi, %rax
+        \\mov %rsp, %rdi
+        \\call *(%rax)
         :
         : [_] "{rax}" (&isr),
     );
 
     asm volatile (
-        \\pop %%rax
-        \\mov %%ax, %%ds
-        \\pop %%rax
-        \\mov %%ax, %%es
-        \\pop %%rax
-        \\pop %%rbx
-        \\pop %%rcx
-        \\pop %%rdx
-        \\pop %%rsi
-        \\pop %%rdi
-        \\pop %%rbp
-        \\pop %%r8
-        \\pop %%r9
-        \\pop %%r10
-        \\pop %%r11
-        \\pop %%r12
-        \\pop %%r13
-        \\pop %%r14
-        \\pop %%r15
+        \\pop %rax
+        \\mov %ax, %ds
+        \\pop %rax
+        \\mov %ax, %es
+        \\pop %rax
+        \\pop %rbx
+        \\pop %rcx
+        \\pop %rdx
+        \\pop %rsi
+        \\pop %rdi
+        \\pop %rbp
+        \\pop %r8
+        \\pop %r9
+        \\pop %r10
+        \\pop %r11
+        \\pop %r12
+        \\pop %r13
+        \\pop %r14
+        \\pop %r15
         // if (cs != gdt.kernel_code) -> swapgs
-        \\cmpq $0x08, 24(%%rsp)
+        \\cmpq $0x08, 24(%rsp)
         \\je 1f
         \\swapgs
         \\1:
         // restore stack
-        \\add $16, %%rsp
+        \\add $16, %rsp
         \\iretq
     );
 }

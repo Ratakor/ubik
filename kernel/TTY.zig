@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const root = @import("root");
-const SpinLock = @import("SpinLock.zig");
+const SpinLock = root.SpinLock;
 
 // TODO: termios
 // TODO: user_write_lock -> user write on buffer + framebuffer, log user write?

@@ -4,7 +4,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const serial = @import("serial.zig");
 const smp = @import("smp.zig");
-const SpinLock = @import("SpinLock.zig");
+const SpinLock = root.SpinLock;
 const StackIterator = std.debug.StackIterator;
 const readIntLittle = std.mem.readIntLittle;
 
@@ -43,7 +43,7 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) nor
         const writer = tty.writer();
         writer.print(fmt, .{msg}) catch {};
         printStackIterator(writer, stack_iter);
-        std.os.system.term.hideCursor(writer) catch {};
+        root.term.hideCursor(writer) catch {};
     } else {
         serial.print(fmt, .{msg});
         printStackIterator(serial.writer, stack_iter);
@@ -152,12 +152,18 @@ const source_files = [_][]const u8{
     "arch/x86_64/mem.zig",
     "arch/x86_64/x86_64.zig",
     "arch/x86_64.zig",
+    "fs/initramfs.zig",
     "fs/tmpfs.zig",
+    "fs/zero.zig",
+    "lib/lock.zig",
+    "lib/term.zig",
+    "lib/tree.zig",
     "acpi.zig",
     "arch.zig",
     "debug.zig",
     "elf.zig",
     "event.zig",
+    "lib.zig",
     "main.zig",
     "pmm.zig",
     "ps2.zig",
@@ -165,7 +171,6 @@ const source_files = [_][]const u8{
     "sched.zig",
     "serial.zig",
     "smp.zig",
-    "SpinLock.zig",
     "time.zig",
     "TTY.zig",
     "vfs.zig",

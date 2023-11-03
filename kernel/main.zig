@@ -15,7 +15,9 @@ pub const time = @import("time.zig");
 pub const vfs = @import("vfs.zig");
 const ps2 = @import("ps2.zig");
 const TTY = @import("TTY.zig");
-pub const SpinLock = @import("SpinLock.zig");
+const lib = @import("lib.zig");
+
+pub usingnamespace lib;
 
 pub const panic = debug.panic;
 pub const std_options = struct {
@@ -32,7 +34,7 @@ pub const os = struct {
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
     .thread_safe = false,
-    .MutexType = SpinLock, // TODO: remove?
+    .MutexType = lib.SpinLock,
     .verbose_log = if (builtin.mode == .Debug) true else false,
 }){};
 pub const allocator = gpa.allocator();
@@ -85,16 +87,6 @@ fn main() noreturn {
     arch.disableInterrupts();
     std.log.debug("in main with cpu {}", .{smp.thisCpu().id});
     arch.enableInterrupts();
-
-    if (module_request.response) |resp| {
-        std.log.debug("found {} modules", .{resp.module_count});
-        for (resp.modules()) |module| {
-            std.log.debug("file \"{s}\" contains \"{s}\"", .{ module.path, module.data() });
-            // std.log.debug("loading {s}", .{module.cmdline});
-            // const thr = sched.Thread.initUser(
-            // sched.enqueue(thr) catch unreachable;
-        }
-    }
 
     vfs.init(); // TODO
     // ps2.init();

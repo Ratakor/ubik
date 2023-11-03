@@ -3,7 +3,7 @@ const root = @import("root");
 const sched = @import("sched.zig");
 const ev = @import("event.zig");
 const vfs = @import("vfs.zig");
-const SpinLock = @import("SpinLock.zig");
+const SpinLock = root.SpinLock;
 
 // TODO: merge with vfs
 // TODO: replace -1 returns and wrong bool with correct error

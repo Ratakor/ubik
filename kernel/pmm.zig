@@ -1,20 +1,18 @@
 const std = @import("std");
 const root = @import("root");
 const vmm = @import("vmm.zig");
-const SpinLock = @import("SpinLock.zig");
+const SpinLock = root.SpinLock;
 const log = std.log.scoped(.pmm);
 const page_size = std.mem.page_size;
-
 const free_page = false;
-// TODO: use u64 and bitwise operation to speed up the process?
+
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
 var usable_pages: u64 = 0;
 var used_pages: u64 = 0;
 var reserved_pages: u64 = 0;
 var lock: SpinLock = .{}; // TODO: remove lock on pmm and only use
-//                                 root.allocator for risky allocations,
-//                                 or remove lock on root.allocator?
+//                                 root.allocator for allocations
 
 pub fn init() void {
     const memory_map = root.memory_map_request.response.?;
@@ -119,6 +117,7 @@ pub fn free(address: u64, pages: usize) void {
 
     const page = address / page_size;
     for (page..page + pages) |i| {
+        std.debug.assert(bitmap[i] == !free_page);
         bitmap[i] = free_page;
     }
     used_pages -= pages;

@@ -8,7 +8,7 @@ const smp = @import("smp.zig");
 const idt = arch.idt;
 const apic = arch.apic;
 const ev = @import("event.zig");
-const SpinLock = @import("SpinLock.zig");
+const SpinLock = root.SpinLock;
 
 pub const timespec = extern struct {
     tv_sec: isize = 0,
@@ -164,4 +164,8 @@ pub fn nanosleep(ns: u64) void {
     // TODO
     // const events = [1]*ev.Event{ &timer.event };
     // _ = ev.awaitEvent(events[0..], true);
+}
+
+pub fn now() u64 {
+    return @intCast(realtime.tv_sec);
 }

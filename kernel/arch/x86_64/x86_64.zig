@@ -117,7 +117,7 @@ pub inline fn in(comptime T: type, port: u16) T {
 }
 
 pub inline fn readRegister(comptime reg: []const u8) u64 {
-    return asm volatile ("mov %%" ++ reg ++ ", %[res]"
+    return asm volatile ("mov %" ++ reg ++ ", %[res]"
         : [res] "=r" (-> u64),
         :
         : "memory"
@@ -125,7 +125,7 @@ pub inline fn readRegister(comptime reg: []const u8) u64 {
 }
 
 pub inline fn writeRegister(comptime reg: []const u8, value: u64) void {
-    asm volatile ("mov %[val], %%" ++ reg
+    asm volatile ("mov %[val], %" ++ reg
         :
         : [val] "r" (value),
         : "memory"

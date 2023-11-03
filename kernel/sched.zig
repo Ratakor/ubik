@@ -10,7 +10,7 @@ const smp = @import("smp.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const vfs = @import("vfs.zig");
-const SpinLock = @import("SpinLock.zig");
+const SpinLock = root.SpinLock;
 const log = std.log.scoped(.sched);
 
 // TODO: if a process create a lot of thread it can suck all the cpu
@@ -18,7 +18,7 @@ const log = std.log.scoped(.sched);
 // TODO: use a (red-black) tree instead of an arraylist
 
 pub const Process = struct {
-    id: u32,
+    id: std.os.pid_t,
     name: [127:0]u8,
     parent: ?*Process,
     addr_space: *vmm.AddressSpace,
@@ -29,17 +29,17 @@ pub const Process = struct {
     // child_events
     // event: ev.Event
 
-    cwd: *vfs.VNode,
+    // cwd: *vfs.Node,
     umask: u32,
 
     // TODO
     fds_lock: SpinLock,
-    fds: [max_fds]?*vfs.FileDescriptor,
+    // fds: [max_fds]?*vfs.FileDescriptor,
 
     // running_time: usize, // TODO
 
     pub const max_fds = 256;
-    var next_pid = std.atomic.Atomic(u32).init(0); // TODO: useful?
+    var next_pid = std.atomic.Atomic(std.os.pid_t).init(0);
 
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
         const proc = try root.allocator.create(Process);
@@ -54,7 +54,7 @@ pub const Process = struct {
             proc.addr_space = try p.addr_space.fork();
             // proc.thread_stack_top = p.thread_stack_top;
             // proc.mmap_anon_base = p.mmap_anon_base;
-            proc.cwd = p.cwd;
+            // proc.cwd = p.cwd;
             proc.umask = p.umask;
 
             try p.children.append(root.allocator, proc);
@@ -64,7 +64,7 @@ pub const Process = struct {
             proc.addr_space = addr_space.?;
             // proc.thread_stack_top = 0x70000000000;
             // proc.mmap_anon_base = 0x80000000000;
-            proc.cwd = vfs.root_vnode;
+            // proc.cwd = vfs.root_node;
             proc.umask = std.os.S.IWGRP | std.os.S.IWOTH;
         }
 
@@ -110,7 +110,7 @@ pub const Thread = struct {
 
     // running_time: usize,
 
-    pub const stack_size = 1024 * 1024; // 1MiB
+    pub const stack_size = 8 * 1024 * 1024; // 8MiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
     // TODO: improve
@@ -313,13 +313,13 @@ pub fn init() void {
 // TODO: save cpu in gs not thread
 pub inline fn currentThread() *Thread {
     return asm volatile (
-        \\mov %%gs:0x0, %[thr]
+        \\mov %gs:0x0, %[thr]
         : [thr] "=r" (-> *Thread),
     );
 }
 
 pub inline fn setErrno(errno: std.os.E) void {
-    currentThread().errno = errno;
+    currentThread().errno = @intFromEnum(errno);
 }
 
 // O(n)
@@ -507,29 +507,29 @@ pub fn yield(save_ctx: bool) void {
 
 fn contextSwitch(ctx: *arch.Context) noreturn {
     asm volatile (
-        \\mov %[ctx], %%rsp
-        \\pop %%rax
-        \\mov %%ax, %%ds
-        \\pop %%rax
-        \\mov %%ax, %%es
-        \\pop %%rax
-        \\pop %%rbx
-        \\pop %%rcx
-        \\pop %%rdx
-        \\pop %%rsi
-        \\pop %%rdi
-        \\pop %%rbp
-        \\pop %%r8
-        \\pop %%r9
-        \\pop %%r10
-        \\pop %%r11
-        \\pop %%r12
-        \\pop %%r13
-        \\pop %%r14
-        \\pop %%r15
+        \\mov %[ctx], %rsp
+        \\pop %rax
+        \\mov %ax, %ds
+        \\pop %rax
+        \\mov %ax, %es
+        \\pop %rax
+        \\pop %rbx
+        \\pop %rcx
+        \\pop %rdx
+        \\pop %rsi
+        \\pop %rdi
+        \\pop %rbp
+        \\pop %r8
+        \\pop %r9
+        \\pop %r10
+        \\pop %r11
+        \\pop %r12
+        \\pop %r13
+        \\pop %r14
+        \\pop %r15
         // TODO: check if user?
         \\swapgs
-        \\add $16, %%rsp
+        \\add $16, %rsp
         \\iretq
         :
         : [ctx] "rm" (ctx),
