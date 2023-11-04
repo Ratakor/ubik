@@ -15,7 +15,6 @@ const log = std.log.scoped(.sched);
 
 // TODO: if a process create a lot of thread it can suck all the cpu
 //       -> check the process of the chosen thread smh to fix that
-// TODO: use a (red-black) tree instead of an arraylist
 
 pub const Process = struct {
     id: std.os.pid_t,
@@ -105,6 +104,7 @@ pub const Thread = struct {
 
     // running_time: usize, // TODO
 
+    const Set = std.AutoArrayHashMapUnmanaged(*Thread, void);
     pub const stack_size = 8 * 1024 * 1024; // 8MiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
@@ -287,7 +287,6 @@ pub const Thread = struct {
         // return thread;
     }
 
-    // TODO
     pub fn deinit(self: *Thread) void {
         for (self.stacks.items) |stack| {
             pmm.free(stack, stack_pages);
@@ -304,7 +303,7 @@ pub const timeslice = 1000;
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{};
-var running_threads: std.ArrayListUnmanaged(*Thread) = .{};
+var running_threads: Thread.Set = .{};
 var total_tickets: usize = 0;
 
 var sched_vector: u8 = undefined;
@@ -331,7 +330,7 @@ pub inline fn setErrno(errno: std.os.E) void {
     currentThread().errno = @intFromEnum(errno);
 }
 
-// O(n)
+// TODO: improve speed
 fn nextThread() ?*Thread {
     const ticket = pcg.random().uintLessThan(usize, total_tickets + 1);
     var sum: usize = 0;
@@ -339,7 +338,9 @@ fn nextThread() ?*Thread {
     sched_lock.lock();
     defer sched_lock.unlock();
 
-    for (running_threads.items) |thread| {
+    var iter = running_threads.iterator();
+    while (iter.next()) |entry| {
+        const thread = entry.key_ptr.*;
         sum += thread.tickets;
         if (sum >= ticket) {
             return if (thread.lock.tryLock()) thread else null;
@@ -348,14 +349,13 @@ fn nextThread() ?*Thread {
     return null;
 }
 
-// O(1)
 pub fn enqueue(thread: *Thread) !void {
     if (thread.enqueued) return;
 
     sched_lock.lock();
     errdefer sched_lock.unlock();
 
-    try running_threads.append(root.allocator, thread);
+    try running_threads.putNoClobber(root.allocator, thread, {});
     total_tickets += thread.tickets;
     thread.enqueued = true;
     log.info("enqueued thread: {*}", .{thread});
@@ -370,22 +370,19 @@ pub fn enqueue(thread: *Thread) !void {
     }
 }
 
-// O(n)
 pub fn dequeue(thread: *Thread) void {
     if (!thread.enqueued) return;
 
     sched_lock.lock();
     defer sched_lock.unlock();
 
-    const i = std.mem.indexOfScalar(*Thread, running_threads.items, thread) orelse {
+    if (running_threads.swapRemove(thread)) {
+        total_tickets -= thread.tickets;
+        thread.enqueued = false;
+        log.info("dequeued thread: {*}", .{thread});
+    } else {
         log.warn("trying to dequeue unknown thread: {*}", .{thread});
-        return;
-    };
-
-    _ = running_threads.swapRemove(i);
-    total_tickets -= thread.tickets;
-    thread.enqueued = false;
-    log.info("dequeued thread: {*}", .{thread});
+    }
 }
 
 pub fn die() noreturn {
