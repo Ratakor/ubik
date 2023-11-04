@@ -46,14 +46,13 @@ pub fn Tree(comptime T: type) type {
             }
 
             // TODO: very slow
-            pub fn find(self: *Node, value: T, compareFn: fn (T, T) std.math.Order) ?*Node {
-                // TODO: if (self.value == value) {
-                if (compareFn(self.value, value) == .eq) {
+            pub fn find(self: *Node, value: T) ?*Node {
+                if (std.meta.eql(self.value, value)) {
                     return self;
                 }
 
                 return for (self.children.items) |child| {
-                    if (child.find(value, compareFn)) |node| {
+                    if (child.find(value)) |node| {
                         break node;
                     }
                 } else null;
@@ -175,8 +174,8 @@ pub fn Tree(comptime T: type) type {
             }
         }
 
-        pub fn find(self: *Self, value: T, compareFn: fn (T, T) std.math.Order) ?*Node {
-            return if (self.root) |root| root.find(value, compareFn) else null;
+        pub fn find(self: *Self, value: T) ?*Node {
+            return if (self.root) |root| root.find(value) else null;
         }
     };
 }

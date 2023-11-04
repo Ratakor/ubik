@@ -28,17 +28,12 @@ pub const Process = struct {
     children: std.ArrayListUnmanaged(*Process),
     // child_events
     // event: ev.Event
-
     // cwd: *vfs.Node,
     umask: u32,
-
-    // TODO
     fds_lock: SpinLock,
-    // fds: [max_fds]?*vfs.FileDescriptor,
-
+    fds: std.ArrayListUnmanaged(*vfs.FileDescriptor), // TODO
     // running_time: usize, // TODO
 
-    pub const max_fds = 256;
     var next_pid = std.atomic.Atomic(std.os.pid_t).init(0);
 
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
@@ -100,33 +95,49 @@ pub const Thread = struct {
     fs_base: u64,
     cr3: u64,
     fpu_storage: u64,
-    stacks: std.ArrayListUnmanaged(u64),
+    stacks: std.ArrayListUnmanaged(u64) = .{},
     pf_stack: u64,
     kernel_stack: u64,
 
     which_event: usize,
     attached_events_i: usize,
-    attached_events: [ev.max_events]*ev.Event,
+    attached_events: [ev.max_events]*ev.Event, // TODO: use arraylist
 
-    // running_time: usize,
+    // running_time: usize, // TODO
 
     pub const stack_size = 8 * 1024 * 1024; // 8MiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
-    // TODO: improve
-    //       use root.allocator instead of pmm.alloc?
+    // TODO: merge initUser and initKernel?
     pub fn initKernel(func: *const anyopaque, arg: ?*anyopaque, tickets: usize) !*Thread {
         const thread = try root.allocator.create(Thread);
-        errdefer thread.deinit();
-        @memset(std.mem.asBytes(thread), 0);
+        errdefer root.allocator.destroy(thread);
 
-        thread.self = thread;
-        thread.process = kernel_process;
-        thread.tickets = tickets;
-        // thread.tid = undefined; // normal
-        thread.lock = .{};
-        thread.yield_await = .{};
-        thread.stacks = .{};
+        thread.* = .{
+            .self = thread,
+            .errno = 0,
+            .tid = undefined,
+            .cpu = null,
+            .process = kernel_process,
+            .ctx = undefined, // defined after
+            .tickets = tickets,
+            .scheduling_off = false,
+            .enqueued = false,
+            .gs_base = @intFromPtr(thread),
+            .fs_base = undefined,
+            .cr3 = kernel_process.addr_space.cr3(),
+            .fpu_storage = undefined, // defined after
+            .pf_stack = undefined,
+            .kernel_stack = undefined,
+            .which_event = undefined,
+            .attached_events_i = undefined,
+            .attached_events = undefined,
+        };
+
+        const fpu_storage = try root.allocator.alloc(u8, arch.cpu.fpu_storage_size);
+        errdefer root.allocator.free(fpu_storage);
+        @memset(fpu_storage, 0);
+        thread.fpu_storage = @intFromPtr(fpu_storage.ptr);
 
         thread.ctx.cs = gdt.kernel_code;
         thread.ctx.ds = gdt.kernel_data;
@@ -136,29 +147,24 @@ pub const Thread = struct {
         thread.ctx.rip = @intFromPtr(func);
         thread.ctx.rdi = @intFromPtr(arg);
         thread.ctx.rsp = blk: {
+            // TODO: use root.allocator
             const stack_phys = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
             errdefer pmm.free(stack_phys, stack_pages);
             try thread.stacks.append(root.allocator, stack_phys);
             break :blk stack_phys + stack_size + vmm.hhdm_offset;
         };
 
-        thread.cr3 = kernel_process.addr_space.cr3();
-        thread.gs_base = @intFromPtr(thread);
-
-        const fpu_storage_phys = pmm.alloc(arch.cpu.fpu_storage_pages, true) orelse return error.OutOfMemory;
-        thread.fpu_storage = fpu_storage_phys + vmm.hhdm_offset;
-
         // TODO
         // kernel_process.threads.append(root.allocator, thread);
 
-        // TODO: Thread -> extern struct
+        // TODO: comptime or test assert
         std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
         std.debug.assert(@intFromPtr(thread) + 8 == @intFromPtr(&thread.errno));
 
         return thread;
     }
 
-    // TODO: idk if this should be in kernel, it is pthread
+    // TODO: idk if this should be in kernel or userspace
     pub fn initUser(
         process: *Process,
         func: *const anyopaque,
@@ -226,8 +232,8 @@ pub const Thread = struct {
         thread.ctx.rsp = stack_vma;
         thread.cr3 = process.addr_space.cr3();
 
-        const fpu_storage_phys = pmm.alloc(arch.cpu.fpu_storage_pages, true) orelse return error.OutOfMemory;
-        thread.fpu_storage = fpu_storage_phys + vmm.hhdm_offset;
+        // const fpu_storage_phys = pmm.alloc(arch.cpu.fpu_storage_pages, true) orelse return error.OutOfMemory;
+        // thread.fpu_storage = fpu_storage_phys + vmm.hhdm_offset;
 
         // TODO: set up FPU control word and MXCSR based on SysV ABI
         arch.cpu.fpuRestore(thread.fpu_storage);
@@ -287,19 +293,22 @@ pub const Thread = struct {
             pmm.free(stack, stack_pages);
         }
         self.stacks.deinit(root.allocator);
-        pmm.free(self.fpu_storage - vmm.hhdm_offset, arch.cpu.fpu_storage_pages);
+        const fpu_storage: [*]u8 = @ptrFromInt(self.fpu_storage);
+        root.allocator.free(fpu_storage[0..arch.cpu.fpu_storage_size]);
         root.allocator.destroy(self);
     }
 };
 
-pub const timeslice = 1000; // reschedule every 1ms
+/// reschedule every 1ms
+pub const timeslice = 1000;
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{};
-var sched_vector: u8 = undefined;
 var running_threads: std.ArrayListUnmanaged(*Thread) = .{};
-var sched_lock: SpinLock = .{};
 var total_tickets: usize = 0;
+
+var sched_vector: u8 = undefined;
+var sched_lock: SpinLock = .{};
 var pcg: rand.Pcg = undefined;
 
 pub fn init() void {
@@ -310,7 +319,7 @@ pub fn init() void {
     idt.setIST(sched_vector, 1);
 }
 
-// TODO: save cpu in gs not thread
+// TODO: save cpu in gs not thread -> remove .cpu from Thread
 pub inline fn currentThread() *Thread {
     return asm volatile (
         \\mov %gs:0x0, %[thr]
@@ -330,10 +339,10 @@ fn nextThread() ?*Thread {
     sched_lock.lock();
     defer sched_lock.unlock();
 
-    for (running_threads.items) |thr| {
-        sum += thr.tickets;
+    for (running_threads.items) |thread| {
+        sum += thread.tickets;
         if (sum >= ticket) {
-            return if (thr.lock.tryLock()) thr else null;
+            return if (thread.lock.tryLock()) thread else null;
         }
     }
     return null;
@@ -368,26 +377,27 @@ pub fn dequeue(thread: *Thread) void {
     sched_lock.lock();
     defer sched_lock.unlock();
 
-    for (running_threads.items, 0..) |thr, i| {
-        if (thr == thread) {
-            _ = running_threads.swapRemove(i);
-            total_tickets -= thread.tickets;
-            thread.enqueued = false;
-            log.info("dequeued thread: {*}", .{thread});
-            return;
-        }
-    }
-    log.warn("trying to dequeue unknown thread: {*}", .{thread});
+    const i = std.mem.indexOfScalar(*Thread, running_threads.items, thread) orelse {
+        log.warn("trying to dequeue unknown thread: {*}", .{thread});
+        return;
+    };
+
+    _ = running_threads.swapRemove(i);
+    total_tickets -= thread.tickets;
+    thread.enqueued = false;
+    log.info("dequeued thread: {*}", .{thread});
 }
 
 pub fn die() noreturn {
     arch.disableInterrupts();
-    dequeue(currentThread());
-    // TODO: deinit current thread
+    const current_thread = currentThread();
+    dequeue(current_thread);
+    current_thread.deinit();
     yield(false);
     unreachable;
 }
 
+// TODO: improve
 fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     apic.timerStop();
 
@@ -401,7 +411,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
         return;
     }
 
-    const cpu = smp.thisCpu(); // TODO: current_thread.cpu
+    const cpu = smp.thisCpu();
     cpu.active = true;
     const next_thread = nextThread();
 
@@ -480,12 +490,13 @@ pub fn wait() noreturn {
     arch.halt();
 }
 
+// TODO: is save_ctx useful?
 pub fn yield(save_ctx: bool) void {
     arch.disableInterrupts();
     apic.timerStop();
 
     const thread = currentThread();
-    const cpu = smp.thisCpu(); // TODO: thread.cpu
+    const cpu = smp.thisCpu();
 
     if (save_ctx) {
         thread.yield_await.lock();

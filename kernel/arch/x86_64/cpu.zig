@@ -12,13 +12,18 @@ const log = std.log.scoped(.cpu);
 
 pub const CpuLocal = struct {
     id: usize,
-    active: bool,
+    active: bool, // TODO: useless
     idle_thread: *sched.Thread,
-    current_thread: *sched.Thread, // TODO
+    current_thread: *volatile sched.Thread,
 
     lapic_id: u32,
     lapic_freq: u64,
     tss: gdt.TSS,
+
+    cpu_model: u32,
+    cpu_family: u32,
+    cpu_manufacturer: [12]u8,
+    cpu_name: [48]u8,
 
     pub const stack_size = 0x10000; // 64KiB
     pub const stack_pages = stack_size / std.mem.page_size;
@@ -30,7 +35,6 @@ pub const CpuLocal = struct {
 
         vmm.switchPageTable(vmm.kaddr_space.cr3());
 
-        // TODO: use null for idle?
         const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
         idle_thread.self = idle_thread;
         idle_thread.cpu = self;
@@ -47,7 +51,50 @@ pub const CpuLocal = struct {
         self.tss.ist1 = sched_stack;
 
         initFeatures(is_bsp);
+        self.setCpuInfo();
         apic.init(); // smp safe
+    }
+
+    fn setCpuInfo(self: *CpuLocal) void {
+        var regs = x86.cpuid(0, 0);
+        _ = std.fmt.bufPrint(self.cpu_manufacturer[0..], "{s}{s}{s}", .{
+            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+        }) catch unreachable;
+
+        regs = x86.cpuid(1, 0);
+        self.cpu_model = (regs.eax >> 4) & 0x0f;
+        self.cpu_family = (regs.eax >> 8) & 0x0f;
+
+        regs = x86.cpuid(0x80000000, 0);
+        if (regs.eax >= 0x80000004) {
+            regs = x86.cpuid(0x80000002, 0);
+            _ = std.fmt.bufPrint(self.cpu_name[0..], "{s}{s}{s}{s}", .{
+                @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+                @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+                @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+                @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+            }) catch unreachable;
+
+            regs = x86.cpuid(0x80000003, 0);
+            _ = std.fmt.bufPrint(self.cpu_name[16..], "{s}{s}{s}{s}", .{
+                @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+                @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+                @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+                @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+            }) catch unreachable;
+
+            regs = x86.cpuid(0x80000004, 0);
+            _ = std.fmt.bufPrint(self.cpu_name[32..], "{s}{s}{s}{s}", .{
+                @as([*]const u8, @ptrCast(&regs.eax))[0..4],
+                @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
+                @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
+                @as([*]const u8, @ptrCast(&regs.edx))[0..4],
+            }) catch unreachable;
+        } else {
+            @memcpy(self.cpu_name[0..7], "Unknown");
+        }
     }
 };
 
@@ -202,11 +249,16 @@ const XCR0 = enum(u64) {
     pkru = 1 << 9,
 };
 
-// TODO: should be in CpuLocal
 pub var use_xsave = false;
 pub var fpu_storage_size: usize = 512; // 512 = fxsave storage
-// TODO: replace with @divCeil
-pub var fpu_storage_pages: usize = 1;
+
+pub inline fn fpuSave(ctx: u64) void {
+    if (use_xsave) x86.xsave(ctx) else x86.fxsave(ctx);
+}
+
+pub inline fn fpuRestore(ctx: u64) void {
+    if (use_xsave) x86.xrstor(ctx) else x86.fxrstor(ctx);
+}
 
 inline fn hasFeature(features: u64, feat: Feature) bool {
     return features & @intFromEnum(feat) != 0;
@@ -258,20 +310,9 @@ fn initFeatures(is_bsp: bool) void {
         }
 
         x86.wrxcr(0, xcr0);
-
         fpu_storage_size = x86.cpuid(0xd, 0).ecx;
-        // TODO: replace with @divCeil
-        fpu_storage_pages = std.math.divCeil(usize, fpu_storage_size, std.mem.page_size) catch unreachable;
     }
 
     // TODO
     // asm volatile ("fninit");
-}
-
-pub inline fn fpuSave(ctx: u64) void {
-    if (use_xsave) x86.xsave(ctx) else x86.fxsave(ctx);
-}
-
-pub inline fn fpuRestore(ctx: u64) void {
-    if (use_xsave) x86.xrstor(ctx) else x86.fxrstor(ctx);
 }

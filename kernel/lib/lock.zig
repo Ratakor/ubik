@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-// TODO: rename Mutex because lock.lock() is ugly
+// TODO: rename Mutex because lock.lock() is ugly?
 pub const SpinLock = struct {
     state: State = State.init(unlocked),
 

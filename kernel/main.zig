@@ -112,37 +112,12 @@ fn main() noreturn {
         boot_info.version,
     }) catch unreachable;
 
-    var regs = arch.cpuid(0, 0);
-    std.log.debug("vendor string: {s}{s}{s}", .{
-        @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-        @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-    });
-
-    regs = arch.cpuid(0x80000000, 0);
-    if (regs.eax >= 0x80000004) {
-        regs = arch.cpuid(0x80000002, 0);
-        serial.writer.print("cpu name: {s}{s}{s}{s}", .{
-            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        }) catch unreachable;
-        regs = arch.cpuid(0x80000003, 0);
-        serial.writer.print("{s}{s}{s}{s}", .{
-            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        }) catch unreachable;
-        regs = arch.cpuid(0x80000004, 0);
-        serial.writer.print("{s}{s}{s}{s}\n", .{
-            @as([*]const u8, @ptrCast(&regs.eax))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ebx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.ecx))[0..4],
-            @as([*]const u8, @ptrCast(&regs.edx))[0..4],
-        }) catch unreachable;
-    }
+    arch.disableInterrupts();
+    std.log.debug("cpu model: {}", .{smp.thisCpu().cpu_model});
+    std.log.debug("cpu family: {}", .{smp.thisCpu().cpu_family});
+    std.log.debug("cpu manufacturer: {s}", .{smp.thisCpu().cpu_manufacturer});
+    std.log.debug("cpu name: {s}", .{smp.thisCpu().cpu_name});
+    arch.enableInterrupts();
 
     sched.die();
 }

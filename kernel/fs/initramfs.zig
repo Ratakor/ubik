@@ -3,33 +3,28 @@ const root = @import("root");
 const log = std.log.scoped(.initramfs);
 
 /// https://wiki.osdev.org/USTAR
+/// If the first byte of `prefix` is 0, the file name is `name` otherwise it is `prefix/name`
 const Tar = extern struct {
-    name: [100]u8,
-    mode: [7:0]u8,
-    uid: [7:0]u8,
-    gid: [7:0]u8,
-    size: [11:0]u8,
-    mtime: [11:0]u8,
+    name: [99:0]u8, // can be 100 bytes long with no sentinel
+    mode: [8]u8,
+    uid: [8]u8,
+    gid: [8]u8,
+    size: [12]u8,
+    mtime: [12]u8,
     checksum: [8]u8,
-    typeflag: TypeFlag,
-    link_name: [100]u8,
+    type_flag: std.tar.Header.FileType,
+    link_name: [99:0]u8, // can be 100 bytes long with no sentinel
     magic: [5:0]u8,
     version: [2]u8,
-    uname: [32]u8,
-    gname: [32]u8,
+    uname: [31:0]u8,
+    gname: [31:0]u8,
     dev_major: [8]u8,
     dev_minor: [8]u8,
-    prefix: [155]u8,
+    prefix: [154:0]u8, // can be 155 bytes long with no sentinel
 
-    const TypeFlag = enum(u8) {
-        normal = '0',
-        hard_link = '1',
-        symlink = '2',
-        char_dev = '3',
-        block_dev = '4',
-        directory = '5',
-        fifo = '6',
-    };
+    comptime {
+        std.debug.assert(@sizeOf(Tar) == 500);
+    }
 };
 
 pub fn init() void {

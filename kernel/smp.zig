@@ -53,7 +53,7 @@ pub fn stopAll() void {
     }
 }
 
-pub fn thisCpu() *CpuLocal {
+pub inline fn thisCpu() *CpuLocal {
     const thread = sched.currentThread();
     std.debug.assert(thread.scheduling_off or arch.interruptState() == false);
     return thread.cpu.?;

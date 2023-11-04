@@ -12,16 +12,18 @@ const AllocatorError = std.mem.Allocator.Error;
 pub const OpenError = os.OpenError || AllocatorError;
 pub const ReadError = os.ReadError || AllocatorError;
 pub const ReadDirError = ReadError || error{IsNotDir};
+pub const ReadLinkError = ReadError || error{IsNotLink};
 pub const WriteError = os.WriteError || AllocatorError;
 pub const CreateError = os.MakeDirError || AllocatorError;
 pub const IoctlError = AllocatorError || os.UnexpectedError; // TODO
 pub const StatError = os.FStatAtError || AllocatorError;
 
 // TODO: move atime, mtime, ctime, inode, uid, gid, ... to stat
+// TODO: Node as function with device as T?
 pub const Node = struct {
     vtable: *const VTable = &.{}, // TODO: ptr?
     name: []const u8,
-    device: ?*anyopaque = null, // TODO
+    device: ?*anyopaque = null, // TODO: context
     mode: os.mode_t = 0o666,
     uid: os.uid_t,
     gid: os.gid_t,
@@ -55,8 +57,9 @@ pub const Node = struct {
         chown: ?*const fn (self: *Node, uid: os.uid_t, gid: os.gid_t) error{}!void = null,
         truncate: ?*const fn (self: *Node) error{}!void = null,
         unlink: ?*const fn (self: *Node, name: []const u8) error{}!void = null,
-        symLink: ?*const fn (self: *Node, name: []const u8, target: []const u8) error{}!void = null,
-        readLink: ?*const fn (self: *Node, buf: []u8) error{}!void = null,
+        // TODO: not self but parent
+        symLink: ?*const fn (self: *Node, name: []const u8, target: []const u8) CreateError!void = null,
+        readLink: ?*const fn (self: *Node, buf: []u8) ReadLinkError!usize = null,
         stat: ?*const fn (self: *Node, buf: *os.Stat) StatError!void = null,
     };
 
@@ -192,11 +195,17 @@ pub const Entry = struct {
     fs_type: ?[]u8 = null, // TODO
 };
 
+pub const FileDescriptor = struct {
+    node: *Node,
+    offset: os.off_t,
+    mode: os.mode_t,
+};
+
 pub const MountFn = *const fn (arg: []const u8, mount_point: []const u8) *Node;
 
 var filesystems: std.StringHashMapUnmanaged(MountFn) = .{};
 var tree = Tree(*Entry).init(root.allocator);
-var lock: SpinLock = .{};
+var vfs_lock: SpinLock = .{};
 
 pub fn init() void {
     const root_node = root.allocator.create(Entry) catch unreachable;
@@ -232,46 +241,38 @@ pub fn unlink(name: []const u8) !void {
 pub fn mount(path: []const u8, file: *Node) !*anyopaque {
     std.debug.assert(std.fs.path.isAbsolute(path));
 
-    defer log.info("mounted `{s}` to `{s}`", .{ file.name, path });
-
-    lock.lock();
-    defer lock.unlock();
+    vfs_lock.lock();
+    defer vfs_lock.unlock();
 
     file.refcount = -1;
 
-    var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
     var node = tree.root.?;
+    var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
 
-    const entry = if (iter.peek() == null) blk: {
-        break :blk node.value;
-    } else value: {
-        while (iter.next()) |component| {
-            var found: bool = false; // TODO: use continue/break
-
-            for (node.children.items) |child| {
-                const entry = child.value;
-                if (std.mem.eql(u8, entry.name, component)) {
-                    found = true;
-                    node = child;
-                    break;
-                }
+    while (iter.next()) |component| {
+        for (node.children.items) |child| {
+            const entry = child.value;
+            if (std.mem.eql(u8, entry.name, component)) {
+                node = child;
+                break;
             }
-
-            if (!found) {
-                const entry = try root.allocator.create(Entry);
-                entry.* = .{ .name = try root.allocator.dupe(u8, component) };
-                node = try tree.insert(node, entry);
-            }
+        } else {
+            // component not found in node.children so we create it
+            const entry = try root.allocator.create(Entry);
+            entry.* = .{ .name = try root.allocator.dupe(u8, component) };
+            node = try tree.insert(node, entry);
         }
+    }
 
-        break :value node.value;
-    };
+    const entry = node.value;
 
     if (entry.file) |_| {
         log.warn("path {s} is already mounted!", .{path});
         // TODO: return or throw err?
     }
     entry.file = file;
+
+    log.info("mounted `{s}` to `{s}`", .{ file.name, path });
 
     return node;
 }
