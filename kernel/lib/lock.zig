@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-// TODO: rename Mutex because lock.lock() is ugly?
 pub const SpinLock = struct {
     state: State = State.init(unlocked),
 
@@ -11,11 +10,11 @@ pub const SpinLock = struct {
     const contended = 0b11; // TODO: use contended for lockSlow / unlock
 
     /// return true on success
-    pub fn tryLock(self: *SpinLock) bool {
+    pub inline fn tryLock(self: *SpinLock) bool {
         return self.lockFast("compareAndSwap");
     }
 
-    pub fn lock(self: *SpinLock) void {
+    pub inline fn lock(self: *SpinLock) void {
         if (!self.lockFast("tryCompareAndSwap")) {
             self.lockSlow();
         }
@@ -24,7 +23,7 @@ pub const SpinLock = struct {
     inline fn lockFast(self: *SpinLock, comptime cas_fn_name: []const u8) bool {
         // optimization for x86
         if (comptime builtin.target.cpu.arch.isX86()) {
-            const locked_bit = comptime @ctz(@as(u32, locked));
+            const locked_bit = @ctz(@as(u32, locked));
             return self.state.bitSet(locked_bit, .Acquire) == 0;
         }
 
@@ -45,9 +44,8 @@ pub const SpinLock = struct {
         @panic("Deadlock");
     }
 
-    pub fn unlock(self: *SpinLock) void {
+    pub inline fn unlock(self: *SpinLock) void {
         const state = self.state.swap(unlocked, .Release);
-        _ = state;
-        // std.debug.assert(state == locked);
+        std.debug.assert(state != unlocked);
     }
 };

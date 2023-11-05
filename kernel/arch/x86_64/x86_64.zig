@@ -30,6 +30,14 @@ pub const RFlags = packed struct {
     }
 };
 
+pub const MSR = enum(u32) {
+    apic = 0x1b,
+    pat = 0x277,
+    fs_base = 0xc0000100,
+    gs_base = 0xc0000101,
+    kernel_gs_base = 0xc0000102,
+};
+
 pub const CPUID = struct {
     eax: u32,
     ebx: u32,
@@ -151,7 +159,7 @@ pub inline fn cpuid(leaf: u32, subleaf: u32) CPUID {
     return CPUID{ .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx };
 }
 
-pub inline fn rdmsr(msr: u32) u64 {
+pub inline fn rdmsr(msr: MSR) u64 {
     var low: u32 = undefined;
     var high: u32 = undefined;
     asm volatile (
@@ -165,7 +173,7 @@ pub inline fn rdmsr(msr: u32) u64 {
     return @as(u64, low) | (@as(u64, high) << 32);
 }
 
-pub inline fn wrmsr(msr: u32, value: u64) void {
+pub inline fn wrmsr(msr: MSR, value: u64) void {
     asm volatile (
         \\wrmsr
         :
@@ -174,30 +182,6 @@ pub inline fn wrmsr(msr: u32, value: u64) void {
           [_] "{ecx}" (msr),
         : "memory"
     );
-}
-
-pub inline fn setKernelGsBase(addr: u64) void {
-    wrmsr(0xc0000102, addr);
-}
-
-pub inline fn setGsBase(addr: u64) void {
-    wrmsr(0xc0000101, addr);
-}
-
-pub inline fn setFsBase(addr: u64) void {
-    wrmsr(0xc0000100, addr);
-}
-
-pub inline fn getKernelGsBase() u64 {
-    return rdmsr(0xc0000102);
-}
-
-pub inline fn getGsBase() u64 {
-    return rdmsr(0xc0000101);
-}
-
-pub inline fn getFsBase() u64 {
-    return rdmsr(0xc0000100);
 }
 
 pub inline fn wrxcr(reg: u32, value: u64) void {

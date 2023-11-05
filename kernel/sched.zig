@@ -75,22 +75,17 @@ pub const Process = struct {
 };
 
 pub const Thread = struct {
-    self: *Thread,
     errno: u64,
-
     tid: usize,
     lock: SpinLock = .{},
-    cpu: ?*arch.cpu.CpuLocal,
     process: *Process,
     ctx: arch.Context,
 
     tickets: usize,
 
-    scheduling_off: bool, // TODO: for TLB
     enqueued: bool,
     // enqueued_by_signal: bool, // TODO: for events
     yield_await: SpinLock = .{},
-    gs_base: u64,
     fs_base: u64,
     cr3: u64,
     fpu_storage: u64,
@@ -114,16 +109,12 @@ pub const Thread = struct {
         errdefer root.allocator.destroy(thread);
 
         thread.* = .{
-            .self = thread,
             .errno = 0,
             .tid = undefined,
-            .cpu = null,
             .process = kernel_process,
             .ctx = undefined, // defined after
             .tickets = tickets,
-            .scheduling_off = false,
             .enqueued = false,
-            .gs_base = @intFromPtr(thread),
             .fs_base = undefined,
             .cr3 = kernel_process.addr_space.cr3(),
             .fpu_storage = undefined, // defined after
@@ -174,7 +165,6 @@ pub const Thread = struct {
         errdefer thread.deinit();
         @memset(std.mem.asBytes(thread), 0);
 
-        thread.self = thread;
         thread.process = process;
         thread.tickets = tickets;
         thread.lock = .{};
@@ -293,12 +283,6 @@ pub const Thread = struct {
         root.allocator.free(fpu_storage[0..arch.cpu.fpu_storage_size]);
         root.allocator.destroy(self);
     }
-
-    comptime {
-        const thread: *Thread = @ptrFromInt(0xdead69420);
-        std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
-        std.debug.assert(@intFromPtr(thread) + 8 == @intFromPtr(&thread.errno)); // TODO: needed?
-    }
 };
 
 /// reschedule every 1ms
@@ -321,19 +305,14 @@ pub fn init() void {
     idt.setIST(sched_vector, 1);
 }
 
-// TODO: save cpu in gs not thread -> remove .cpu from Thread
 pub inline fn currentThread() *Thread {
-    return asm volatile (
-        \\mov %gs:0x0, %[thr]
-        : [thr] "=r" (-> *Thread),
-    );
+    return @volatileCast(smp.thisCpu().current_thread);
 }
 
 pub inline fn setErrno(errno: std.os.E) void {
     currentThread().errno = @intFromEnum(errno);
 }
 
-// TODO: improve speed
 fn nextThread() ?*Thread {
     const ticket = pcg.random().uintLessThan(usize, total_tickets + 1);
     var sum: usize = 0;
@@ -345,8 +324,8 @@ fn nextThread() ?*Thread {
     while (iter.next()) |entry| {
         const thread = entry.key_ptr.*;
         sum += thread.tickets;
-        if (sum >= ticket) {
-            return if (thread.lock.tryLock()) thread else null;
+        if (sum >= ticket and thread.lock.tryLock()) {
+            return thread;
         }
     }
     return null;
@@ -366,7 +345,9 @@ pub fn enqueue(thread: *Thread) !void {
     sched_lock.unlock();
 
     for (smp.cpus) |cpu| {
-        if (!cpu.active) {
+        // TODO: can this append when a cpu start scheduling causing it to
+        // reschedule right after
+        if (cpu.is_idle()) {
             apic.sendIPI(cpu.lapic_id, sched_vector);
             break;
         }
@@ -392,33 +373,30 @@ pub fn die() noreturn {
     arch.disableInterrupts();
     const current_thread = currentThread();
     dequeue(current_thread);
-    current_thread.deinit();
-    yield(false);
-    unreachable;
+    current_thread.deinit(); // TODO: ?
+    yield();
 }
 
-// TODO: improve
 fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     apic.timerStop();
 
-    var current_thread = currentThread();
-    std.debug.assert(@intFromPtr(current_thread) != 0); // TODO
-
-    // TODO
-    if (current_thread.scheduling_off) {
-        apic.eoi();
-        apic.timerOneShot(timeslice, sched_vector);
-        return;
-    }
-
     const cpu = smp.thisCpu();
-    cpu.active = true;
-    const next_thread = nextThread();
 
-    if (current_thread != cpu.idle_thread) {
-        current_thread.yield_await.unlock();
+    // if (cpu.scheduling_disabled) {
+    //     apic.eoi();
+    //     apic.timerOneShot(timeslice, sched_vector);
+    //     return;
+    // }
 
-        if (next_thread == null and current_thread.enqueued) {
+    // cpu.active = true;
+
+    const current_thread = currentThread();
+    const maybe_next_thread = nextThread();
+
+    if (!cpu.is_idle()) {
+        // current_thread.yield_await.unlock(); // TODO
+
+        if (maybe_next_thread == null and current_thread.enqueued) {
             apic.eoi();
             apic.timerOneShot(timeslice, sched_vector);
             return;
@@ -426,94 +404,84 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
         current_thread.ctx = ctx.*;
 
-        if (arch.arch == .x86_64) {
-            current_thread.gs_base = arch.getKernelGsBase();
-            current_thread.fs_base = arch.getFsBase();
+        if (comptime arch.arch == .x86_64) {
+            current_thread.fs_base = arch.rdmsr(.fs_base);
             current_thread.cr3 = arch.readRegister("cr3");
             arch.cpu.fpuSave(current_thread.fpu_storage);
         }
 
-        current_thread.cpu = null;
         current_thread.lock.unlock();
     }
 
-    if (next_thread == null) {
-        apic.eoi();
-        if (arch.arch == .x86_64) {
-            arch.setGsBase(@intFromPtr(cpu.idle_thread));
-            arch.setKernelGsBase(@intFromPtr(cpu.idle_thread));
+    if (maybe_next_thread) |next_thread| {
+        if (comptime arch.arch == .x86_64) {
+            arch.wrmsr(.fs_base, next_thread.fs_base);
+            cpu.current_thread = next_thread;
+
+            // TODO: SYSENTER
+            // if (sysenter) {
+            //     arch.wrmsr(0x175, @intFromPtr(next_thread.kernel_stack));
+            // } else {
+            //     cpu.tss.ist[3] = @intFromPtr(next_thread.kernel_stack);
+            // }
+
+            // TODO: set page fault stack
+            // cpu.tss.ist[2] = next_thread.pf_stack;
+
+            if (arch.readRegister("cr3") != next_thread.cr3) {
+                arch.writeRegister("cr3", next_thread.cr3);
+            }
+
+            arch.cpu.fpuRestore(next_thread.fpu_storage);
         }
-        cpu.active = false;
+
+        apic.eoi();
+        apic.timerOneShot(timeslice, sched_vector);
+        contextSwitch(&next_thread.ctx);
+    } else {
+        // cpu.active = false;
+        cpu.current_thread = cpu.idle_thread;
         vmm.switchPageTable(vmm.kaddr_space.cr3());
+        apic.eoi();
         wait();
     }
-
-    current_thread = next_thread.?;
-
-    if (arch.arch == .x86_64) {
-        arch.setGsBase(@intFromPtr(current_thread));
-        if (current_thread.ctx.cs == gdt.kernel_code) {
-            arch.setKernelGsBase(@intFromPtr(current_thread));
-        } else {
-            arch.setKernelGsBase(current_thread.gs_base);
-        }
-        arch.setFsBase(current_thread.fs_base);
-
-        // TODO: SYSENTER
-        // if (sysenter) {
-        //     arch.wrmsr(0x175, @intFromPtr(current_thread.kernel_stack));
-        // } else {
-        //     cpu.tss.ist[3] = @intFromPtr(current_thread.kernel_stack);
-        // }
-
-        // TODO: set page fault stack
-        // cpu.tss.ist[2] = current_thread.pf_stack;
-
-        if (arch.readRegister("cr3") != current_thread.cr3) {
-            arch.writeRegister("cr3", current_thread.cr3);
-        }
-
-        arch.cpu.fpuRestore(current_thread.fpu_storage);
-    }
-
-    current_thread.cpu = cpu;
-
-    apic.eoi();
-    apic.timerOneShot(timeslice, sched_vector);
-    contextSwitch(&current_thread.ctx);
+    unreachable;
 }
 
 pub fn wait() noreturn {
     arch.disableInterrupts();
-    apic.timerOneShot(timeslice * 5, sched_vector);
+    apic.timerOneShot(timeslice * 10, sched_vector);
     arch.enableInterrupts();
     arch.halt();
 }
 
-// TODO: is save_ctx useful?
-pub fn yield(save_ctx: bool) void {
+pub fn yield() noreturn {
+    arch.disableInterrupts();
+    apic.timerStop();
+
+    const cpu = smp.thisCpu();
+    cpu.current_thread = cpu.idle_thread;
+    apic.sendIPI(cpu.lapic_id, sched_vector);
+
+    arch.enableInterrupts();
+    arch.halt();
+}
+
+// TODO
+pub fn yieldAwait() void {
     arch.disableInterrupts();
     apic.timerStop();
 
     const thread = currentThread();
     const cpu = smp.thisCpu();
 
-    if (save_ctx) {
-        thread.yield_await.lock();
-    } else {
-        arch.setGsBase(@intFromPtr(cpu.idle_thread));
-        arch.setKernelGsBase(@intFromPtr(cpu.idle_thread));
-    }
+    thread.yield_await.lock();
 
     apic.sendIPI(cpu.lapic_id, sched_vector);
     arch.enableInterrupts();
 
-    if (save_ctx) {
-        thread.yield_await.lock();
-        thread.yield_await.unlock();
-    } else {
-        arch.halt();
-    }
+    thread.yield_await.lock();
+    thread.yield_await.unlock();
 }
 
 fn contextSwitch(ctx: *arch.Context) noreturn {
@@ -538,8 +506,11 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         \\pop %r13
         \\pop %r14
         \\pop %r15
-        // TODO: check if user?
+        // if (cs != gdt.kernel_code) -> swapgs TODO: is cs always user_code?
+        \\cmpq $0x08, 0x18(%rsp)
+        \\je 1f
         \\swapgs
+        \\1:
         \\add $16, %rsp
         \\iretq
         :

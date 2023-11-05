@@ -300,7 +300,7 @@ export fn commonStub() callconv(.Naked) void {
         \\pop %r14
         \\pop %r15
         // if (cs != gdt.kernel_code) -> swapgs
-        \\cmpq $0x08, 24(%rsp)
+        \\cmpq $0x08, 0x18(%rsp)
         \\je 1f
         \\swapgs
         \\1:

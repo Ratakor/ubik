@@ -9,7 +9,6 @@ const CpuLocal = arch.cpu.CpuLocal;
 const log = std.log.scoped(.smp);
 
 // TODO: use SYSENTER/SYSEXIT?
-// TODO: use FSGSBASE?
 
 pub var bsp_lapic_id: u32 = undefined; // bootstrap processor lapic id
 pub var cpus: []CpuLocal = undefined;
@@ -54,9 +53,9 @@ pub fn stopAll() void {
 }
 
 pub inline fn thisCpu() *CpuLocal {
-    const thread = sched.currentThread();
-    std.debug.assert(thread.scheduling_off or arch.interruptState() == false);
-    return thread.cpu.?;
+    std.debug.assert(arch.interruptState() == false); // or cpu.schedulin_disabled
+    // TODO: use rdmsr or rdgsbase?
+    return @ptrFromInt(arch.readRegister("gs:0x0"));
 }
 
 fn initAp(smp_info: *limine.SmpInfo) callconv(.C) noreturn {

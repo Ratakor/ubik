@@ -122,6 +122,7 @@ const Addr2Range = struct {
     }
 };
 
+// TODO: rename Pagemap?
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
     lock: SpinLock,

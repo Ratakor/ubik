@@ -11,7 +11,7 @@ const StackIterator = std.debug.StackIterator;
 var log_lock: SpinLock = .{};
 var panic_lock: SpinLock = .{};
 
-var fba_buffer: [16 * 1024 * 1024]u8 = undefined; // 16MiB
+var fba_buffer: [32 * 1024 * 1024]u8 = undefined; // 32MiB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.dwarf.DwarfInfo = null;

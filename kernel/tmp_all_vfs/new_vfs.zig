@@ -20,7 +20,7 @@ pub const StatError = os.FStatAtError || AllocatorError;
 
 // TODO: Node as function with device as T?
 pub const Node = struct {
-    vtable: *const VTable = &.{}, // TODO: ptr?
+    vtable: *const VTable = &.{},
     name: []const u8,
     kind: Kind,
     device: ?*anyopaque = null, // TODO: context, in stat?

@@ -51,6 +51,7 @@ pub const Event = struct {
     }
 };
 
+// TODO: this can be simplified
 pub var int_events: [256]Event = undefined;
 
 pub fn init() void {
@@ -76,7 +77,7 @@ pub fn awaitEvents(events: []*Event, block: bool) isize {
     attachListeners(events, thread);
     sched.dequeue(thread);
     unlockEvents(events);
-    sched.yield(true);
+    sched.yieldAwait();
 
     arch.disableInterrupts();
 

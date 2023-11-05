@@ -11,8 +11,9 @@ const apic = @import("apic.zig");
 const log = std.log.scoped(.cpu);
 
 pub const CpuLocal = struct {
+    this: *CpuLocal,
+
     id: usize,
-    active: bool, // TODO: useless
     idle_thread: *sched.Thread,
     current_thread: *volatile sched.Thread,
 
@@ -28,19 +29,26 @@ pub const CpuLocal = struct {
     pub const stack_size = 0x10000; // 64KiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
+    pub inline fn is_idle(self: *const CpuLocal) bool {
+        return self.current_thread == self.idle_thread;
+    }
+
     pub fn initCpu(self: *CpuLocal, is_bsp: bool) void {
+        self.this = self;
+
         gdt.reload();
         idt.reload();
         gdt.loadTSS(&self.tss);
 
         vmm.switchPageTable(vmm.kaddr_space.cr3());
 
+        x86.wrmsr(.gs_base, @intFromPtr(self));
+        x86.wrmsr(.kernel_gs_base, @intFromPtr(self));
+
         const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
-        idle_thread.self = idle_thread;
-        idle_thread.cpu = self;
         idle_thread.process = sched.kernel_process;
         self.idle_thread = idle_thread;
-        x86.setGsBase(@intFromPtr(idle_thread));
+        self.current_thread = idle_thread;
 
         const common_int_stack_phys = pmm.alloc(stack_pages, true) orelse unreachable;
         const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
@@ -95,6 +103,11 @@ pub const CpuLocal = struct {
         } else {
             @memcpy(self.cpu_name[0..7], "Unknown");
         }
+    }
+
+    comptime {
+        const cpu: *CpuLocal = @ptrFromInt(0xdead69420);
+        std.debug.assert(@intFromPtr(cpu) == @intFromPtr(&cpu.this));
     }
 };
 
@@ -268,22 +281,24 @@ fn initFeatures(is_bsp: bool) void {
     const regs = x86.cpuid(1, 0);
     const features: u64 = @as(u64, regs.edx) << 32 | regs.ecx;
 
-    // enable SSE/SSE2
+    // TODO: check if sse, sse2, pat, msr, ... features are available?
+
     var cr0: u64 = x86.readRegister("cr0");
     cr0 &= ~@intFromEnum(CR0.em);
     cr0 |= @intFromEnum(CR0.mp);
     x86.writeRegister("cr0", cr0);
 
+    // enable SSE/SSE2
     var cr4: u64 = x86.readRegister("cr4");
     cr4 |= @intFromEnum(CR4.osfxsr);
     cr4 |= @intFromEnum(CR4.osxmmexcpt);
     x86.writeRegister("cr4", cr4);
 
     // init PAT
-    var pat: PAT = @bitCast(x86.rdmsr(0x277));
+    var pat: PAT = @bitCast(x86.rdmsr(.pat));
     pat.pat4 = PAT.Flags.write_protect;
     pat.pat5 = PAT.Flags.write_combining;
-    x86.wrmsr(0x277, @bitCast(pat));
+    x86.wrmsr(.pat, @bitCast(pat));
 
     if (hasFeature(features, .xsave)) {
         if (is_bsp) log.info("xsave is supported", .{});
@@ -313,6 +328,5 @@ fn initFeatures(is_bsp: bool) void {
         fpu_storage_size = x86.cpuid(0xd, 0).ecx;
     }
 
-    // TODO
-    // asm volatile ("fninit");
+    asm volatile ("fninit");
 }
