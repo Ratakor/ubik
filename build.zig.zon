@@ -8,12 +8,10 @@
         },
     },
     .paths = .{
-        "kernel",
         "lib",
         "build.zig",
         "build.zig.zon",
         "LICENSE",
-        "limine.cfg",
         "README.md",
     },
 }

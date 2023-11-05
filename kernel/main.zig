@@ -72,9 +72,9 @@ export fn _start() noreturn {
     pmm.init();
     vmm.init();
     acpi.init();
+    event.init();
     // syscall.init(); // TODO
     sched.init();
-    // event.init(); // TODO
     smp.init();
     time.init();
 
@@ -89,7 +89,7 @@ fn main() noreturn {
     arch.enableInterrupts();
 
     vfs.init(); // TODO
-    // ps2.init();
+    ps2.init();
     // TODO: init random here instead of in sched?
     // TODO: pci
     // TODO: basic syscalls

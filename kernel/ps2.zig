@@ -5,6 +5,8 @@ const idt = arch.idt;
 const apic = arch.apic;
 const smp = @import("smp.zig");
 
+pub var keyboard_vector: u8 = undefined;
+
 pub fn init() void {
     // disable primary and secondary PS/2 ports
     write(0x64, 0xad);
@@ -26,7 +28,7 @@ pub fn init() void {
         write(0x64, 0xa8);
     }
 
-    const keyboard_vector = idt.allocVector();
+    keyboard_vector = idt.allocVector();
     apic.setIRQRedirect(smp.bsp_lapic_id, keyboard_vector, 1);
 
     _ = arch.in(u8, 0x60);
@@ -37,7 +39,7 @@ pub fn read() u8 {
     return arch.in(u8, 0x60);
 }
 
-pub fn write(port: u16, value: u8) void {
+fn write(port: u16, value: u8) void {
     // while ((arch.in(u8, 0x64) & 2) == 0) {}
     arch.out(u8, port, value);
 }

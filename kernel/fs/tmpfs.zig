@@ -25,9 +25,7 @@ const fs_vtable: vfs.FileSystem.VTable = .{
 
 const File = struct {
     vnode: vfs.VNode,
-    data: Data = Data.init(root.allocator),
-
-    const Data = std.ArrayListAligned(u8, page_size);
+    data: std.ArrayListAlignedUnmanaged(u8, page_size) = .{},
 
     fn read(vnode: *vfs.VNode, buf: []u8, offset: usize, flags: usize) vfs.ReadError!usize {
         _ = flags;
@@ -45,7 +43,7 @@ const File = struct {
         _ = flags;
 
         const self = @fieldParentPtr(File, "vnode", vnode);
-        try self.data.insertSlice(offset, buf);
+        try self.data.insertSlice(root.allocator, offset, buf);
         return buf.len;
     }
 

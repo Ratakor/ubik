@@ -59,7 +59,7 @@ const IDTEntry = extern struct {
     }
 };
 
-const IDTRegister = extern struct {
+const IDTDescriptor = extern struct {
     limit: u16 align(1) = @sizeOf(@TypeOf(idt)) - 1,
     base: u64 align(1) = undefined,
 };
@@ -103,7 +103,7 @@ var isr = [_]InterruptHandler{defaultHandler} ** 256;
 var next_vector: u8 = exceptions.len;
 pub var panic_ipi_vector: u8 = undefined;
 
-var idtr: IDTRegister = .{};
+var idtr: IDTDescriptor = .{};
 var idt: [256]IDTEntry = undefined;
 
 pub fn init() void {
@@ -134,7 +134,8 @@ pub fn reload() void {
 
 pub fn allocVector() u8 {
     const vector = @atomicRmw(u8, &next_vector, .Add, 1, .AcqRel);
-    if (vector >= 256 - 16) { // TODO - 16 ? also u8 so care about overflows
+    // 0xf0 in a non maskable interrupt from APIC
+    if (vector == 0xf0) {
         @panic("IDT exhausted");
     }
     return vector;

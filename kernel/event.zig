@@ -1,138 +1,137 @@
+const std = @import("std");
+const root = @import("root");
 const arch = @import("arch.zig");
-const Thread = @import("sched.zig").Thread;
-const SpinLock = @import("root").SpinLock;
-
-// TODO: this is really ugly, also need threads to work
-// TODO: using i as variable is ugly, use slices
-
-pub const max_events = 32;
-pub const max_listeners = 32;
+const sched = @import("sched.zig");
+const SpinLock = root.SpinLock;
 
 pub const Listener = struct {
-    thread: *Thread,
+    thread: *sched.Thread,
     which: usize,
 };
 
 pub const Event = struct {
-    lock: SpinLock = .{},
-    pending: usize = 0,
-    listeners_i: usize = 0,
-    listeners: [max_listeners]Listener,
+    lock: SpinLock,
+    pending: usize,
+    listeners: std.ArrayListUnmanaged(Listener),
+
+    pub const max_listeners = 32;
+
+    pub fn init() !Event {
+        return .{
+            .lock = .{},
+            .pending = 0,
+            .listeners = try std.ArrayListUnmanaged(Listener).initCapacity(root.allocator, max_listeners),
+        };
+    }
+
+    pub fn deinit(self: *Event) void {
+        self.listeners.deinit(root.allocator);
+    }
+
+    pub fn trigger(self: *Event, drop: bool) void {
+        const old_state = arch.toggleInterrupts(false);
+        defer _ = arch.toggleInterrupts(old_state);
+
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (self.listeners.items.len == 0) {
+            if (!drop) {
+                self.pending += 1;
+            }
+        } else {
+            for (self.listeners.items) |listener| {
+                const thread = listener.thread;
+                thread.which_event = listener.which;
+                sched.enqueue(thread) catch unreachable;
+            }
+
+            self.listeners.clearRetainingCapacity();
+        }
+    }
 };
 
+pub var int_events: [256]Event = undefined;
+
 pub fn init() void {
-    // TODO: init events handler like isr
+    for (32..0xef) |vec| {
+        arch.idt.registerHandler(@intCast(vec), intEventHandler);
+        int_events[vec] = Event.init() catch unreachable;
+    }
 }
 
-pub fn awaitEvent(events: []*Event, block: bool) isize {
-    // const thread = sched.currentThread;
+pub fn awaitEvents(events: []*Event, block: bool) isize {
+    const thread = sched.currentThread();
 
-    // const old_ints = arch.toggleInterrupts(false);
-    // defer _ = arch.toggleInterrupts(old_ints);
-    lockEvents(events);
-    defer unlockEvents(events);
-
-    var i = checkForPending(events);
-    if (i != -1) return i;
-    if (!block) return -1;
-
-    attachListeners(events);
-    // thread.dequeue();
-    unlockEvents(events);
-    // sched.yield(true);
-
-    // _ = arch.toggleInterrupts(false);
-
-    // const ret = if (thread.enqueued_by_signal) -1 else thread.which_event;
-
-    lockEvents(events);
-    // detachListeners(thread);
-
-    // return ret;
-}
-
-pub fn trigger(event: Event, drop: bool) usize {
     const old_state = arch.toggleInterrupts(false);
     defer _ = arch.toggleInterrupts(old_state);
 
-    event.lock.lock();
-    defer event.lock.unlock();
+    lockEvents(events);
+    defer unlockEvents(events);
 
-    if (event.listeners_i == 0) {
-        if (!drop) {
-            event.pending += 1;
-        }
-        return 0;
-    }
+    const i = checkForPending(events);
+    if (i != -1) return i;
+    if (!block) return -1;
 
-    for (0..event.listeners_i) |i| {
-        const listener = &event.listeners[i];
-        const thread = listener.thread;
+    attachListeners(events, thread);
+    sched.dequeue(thread);
+    unlockEvents(events);
+    sched.yield(true);
 
-        thread.which_event = listener.which;
-        // sched.enqueueThread(thread, false);
-    }
+    arch.disableInterrupts();
 
-    const ret = event.listeners_i;
-    event.listeners_i = 0;
-    return ret;
+    // const ret = if (thread.enqueued_by_signal) -1 else thread.which_event;
+    const ret = thread.which_event;
+
+    lockEvents(events);
+    detachListeners(thread);
+
+    return @intCast(ret);
+}
+
+fn intEventHandler(ctx: *arch.Context) callconv(.SysV) void {
+    int_events[ctx.vector].trigger(false);
+    arch.apic.eoi();
 }
 
 fn checkForPending(events: []*Event) isize {
-    for (events, 0..) |*event, i| {
+    for (events, 0..) |event, i| {
         if (event.pending > 0) {
             event.pending -= 1;
-            return i;
+            return @intCast(i);
         }
     }
     return -1;
 }
 
-fn attachListeners(events: []*Event, thread: *Thread) void {
-    thread.attached_events_i = 0;
+fn attachListeners(events: []*Event, thread: *sched.Thread) void {
+    thread.attached_events.clearRetainingCapacity();
 
-    for (events, 0..) |*event, i| {
-        if (event.listeners_i == max_listeners) {
-            @panic("Event listeners exhausted");
-        }
-
-        const listener = event.listeners[event.listeners_i];
-        event.listeners_i += 1;
-        listener.thread = thread;
-        listener.which = i;
-
-        if (thread.attached_events_i == max_events) {
-            @panic("Listening on too many events");
-        }
-
-        thread.attached_events[thread.attached_events_i] = event;
-        thread.attached_events_i += 1;
+    for (events, 0..) |event, i| {
+        event.listeners.appendAssumeCapacity(.{ .thread = thread, .which = i });
+        thread.attached_events.appendAssumeCapacity(event);
     }
 }
 
-fn detachListeners(thread: *Thread) void {
-    for (0..thread.attached_events_i) |i| {
-        const event = thread.attached_events[i];
-
-        for (0..event.listeners_i) |j| {
-            const listener = &event.listeners[j];
-            if (listener.thread != thread) continue;
-
-            event.listeners_i -= 1;
-            event.listeners[j] = event.listeners[event.listeners_i];
-            break;
+fn detachListeners(thread: *sched.Thread) void {
+    for (thread.attached_events.items) |event| {
+        for (event.listeners.items, 0..) |listener, i| {
+            if (listener.thread == thread) {
+                _ = event.listeners.swapRemove(i); // TODO: weird (loop)
+            }
         }
     }
-    thread.attached_events_i = 0;
+
+    thread.attached_events.clearRetainingCapacity();
 }
 
-fn lockEvents(events: []*Event) void {
+inline fn lockEvents(events: []*Event) void {
     for (events) |event| {
         event.lock.lock();
     }
 }
 
-fn unlockEvents(events: []*Event) void {
+inline fn unlockEvents(events: []*Event) void {
     for (events) |event| {
         event.lock.unlock();
     }

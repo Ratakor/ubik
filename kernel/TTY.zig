@@ -30,7 +30,7 @@ g_select: u8,
 charsets: [2]u8,
 current_charset: usize,
 escape_offset: usize,
-esc_values_i: usize,
+esc_values_i: usize, // TODO: ArrayList
 esc_values: [MAX_ESC_VALUES]u32,
 current_primary: usize,
 current_bg: usize,
@@ -48,7 +48,7 @@ height: usize,
 
 grid: []Char,
 queue: []QueueItem,
-queue_i: usize,
+queue_i: usize, // TODO: ArrayList
 map: []?*QueueItem,
 
 text_fg: Color,
@@ -1659,6 +1659,18 @@ fn putChar(self: *Context, c: u8) void {
     }
 }
 
+// TODO: unfinished + doesn't work well yet + should be somewhere else
+pub fn keyboardHandler(self: *Context) noreturn {
+    const ev = @import("event.zig");
+    const ps2 = @import("ps2.zig");
+
+    while (true) {
+        var events = [_]*ev.Event{&ev.int_events[ps2.keyboard_vector]};
+        _ = ev.awaitEvents(events[0..], true);
+        self.readKey(ps2.read());
+    }
+}
+
 // TODO: tell kernel to grab input instead of doing it like that
 //       also do the things instead of using term.zig
 pub fn readKey(self: *Context, input: u8) void {
@@ -1689,19 +1701,19 @@ pub fn readKey(self: *Context, input: u8) void {
             },
             // TODO for arrows we could also output A, B, C or D depending on termios settings
             .arrow_up => {
-                root.os.system.term.cursorUp(self.writer(), 1) catch unreachable;
+                root.term.cursorUp(self.writer(), 1) catch unreachable;
                 return;
             },
             .arrow_left => {
-                root.os.system.term.cursorBackward(self.writer(), 1) catch unreachable;
+                root.term.cursorBackward(self.writer(), 1) catch unreachable;
                 return;
             },
             .arrow_down => {
-                root.os.system.term.cursorDown(self.writer(), 1) catch unreachable;
+                root.term.cursorDown(self.writer(), 1) catch unreachable;
                 return;
             },
             .arrow_right => {
-                root.os.system.term.cursorForward(self.writer(), 1) catch unreachable;
+                root.term.cursorForward(self.writer(), 1) catch unreachable;
                 return;
             },
             .insert, .home, .end, .pgup, .pgdown, .delete => return,

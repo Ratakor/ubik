@@ -18,28 +18,23 @@ pub const CreateError = os.MakeDirError || AllocatorError;
 pub const IoctlError = AllocatorError || os.UnexpectedError; // TODO
 pub const StatError = os.FStatAtError || AllocatorError;
 
-// TODO: move atime, mtime, ctime, inode, uid, gid, ... to stat
 // TODO: Node as function with device as T?
 pub const Node = struct {
     vtable: *const VTable = &.{}, // TODO: ptr?
     name: []const u8,
-    device: ?*anyopaque = null, // TODO: context
-    mode: os.mode_t = 0o666,
-    uid: os.uid_t,
-    gid: os.gid_t,
     kind: Kind,
-    inode: u64,
-    length: u64 = 0, // TODO: size of the file in byte
-    filesystem: u64 = 0, // TODO
+    device: ?*anyopaque = null, // TODO: context, in stat?
+    stat: std.os.Stat = .{
+        .dev = undefined,
+        .ino = undefined,
+        .rdev = undefined,
+        .blksize = undefined,
+    },
+    filesystem: u64 = 0, // TODO: ptr
     open_flags: u64 = 0, // TODO: read/write/append, ...
 
-    atime: os.time_t = 0, // TODO: accessed
-    mtime: os.time_t = 0, // TODO: modified
-    ctime: os.time_t = 0, // TODO: created
-
     ptr: ?*Node = null, // TODO: symlinks
-    refcount: i64 = 0, //std.atomic.Atomic(i64), // TODO
-    nlink: u64 = 0, // TODO
+    refcount: isize = 0, //std.atomic.Atomic(isize), // TODO
 
     // TODO: fill all entry with stub func instead of null?
     pub const VTable = struct {
@@ -61,6 +56,20 @@ pub const Node = struct {
         symLink: ?*const fn (self: *Node, name: []const u8, target: []const u8) CreateError!void = null,
         readLink: ?*const fn (self: *Node, buf: []u8) ReadLinkError!usize = null,
         stat: ?*const fn (self: *Node, buf: *os.Stat) StatError!void = null,
+
+        // // TODO: this or set all field to @ptrCast(&stubFn)?
+        // pub const default = blk: {
+        //     var stub: VTable = undefined;
+        //     for (std.meta.fields(VTable)) |field| {
+        //         @field(stub, field.name) = @ptrCast(&stubFn);
+        //     }
+        //     break :blk stub;
+        // };
+
+        // fn stubFn() !void {
+        //     // sched.setErrno(.NOSYS);
+        //     return error.Unexpected;
+        // }
     };
 
     /// https://en.wikipedia.org/wiki/Unix_file_types
@@ -80,7 +89,7 @@ pub const Node = struct {
 
     var refcount_lock: SpinLock = .{};
 
-    // TODO
+    // TODO: use a spin lock instead lol
     pub fn lock(self: *Node) void {
         refcount_lock.lock();
         self.refcount = -1;
@@ -238,7 +247,7 @@ pub fn unlink(name: []const u8) !void {
     // TODO
 }
 
-pub fn mount(path: []const u8, file: *Node) !*anyopaque {
+pub fn mount(path: []const u8, file: *Node) !*Node {
     std.debug.assert(std.fs.path.isAbsolute(path));
 
     vfs_lock.lock();
@@ -249,6 +258,7 @@ pub fn mount(path: []const u8, file: *Node) !*anyopaque {
     var node = tree.root.?;
     var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
 
+    // TODO: this is makePath, extract it?
     while (iter.next()) |component| {
         for (node.children.items) |child| {
             const entry = child.value;

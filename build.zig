@@ -83,7 +83,8 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
                 "--efi-boot limine-uefi-cd.bin ",
                 "-efi-boot-part --efi-boot-image --protective-msdos-label ",
                 image_dir, " -o ", image_name, " && ",
-            "./limine/limine bios-install ", image_name,
+            "./limine/limine bios-install ", image_name, " && ",
+            "rm -rf ", image_dir,
         })
     };
 

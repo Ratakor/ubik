@@ -15,7 +15,7 @@ A kernel
 Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
 
 ```console
-% git clone https://github.com/ratakor/ubik --recursive
+% git clone git@github.com:ratakor/ubik --recursive
 % zig build run -Doptimize=ReleaseFast
 ```
 

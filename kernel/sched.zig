@@ -4,12 +4,12 @@ const arch = @import("arch.zig");
 const gdt = arch.gdt;
 const idt = arch.idt;
 const apic = arch.apic;
-const ev = @import("event.zig");
 const rand = @import("rand.zig");
 const smp = @import("smp.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const vfs = @import("vfs.zig");
+const Event = @import("event.zig").Event;
 const SpinLock = root.SpinLock;
 const log = std.log.scoped(.sched);
 
@@ -26,11 +26,11 @@ pub const Process = struct {
     threads: std.ArrayListUnmanaged(*Thread),
     children: std.ArrayListUnmanaged(*Process),
     // child_events
-    // event: ev.Event
+    // event: Event
     // cwd: *vfs.Node,
     umask: u32,
     fds_lock: SpinLock,
-    fds: std.ArrayListUnmanaged(*vfs.FileDescriptor), // TODO
+    fds: std.ArrayListUnmanaged(*vfs.FileDescriptor), // TODO: hashmap?
     // running_time: usize, // TODO
 
     var next_pid = std.atomic.Atomic(std.os.pid_t).init(0);
@@ -99,12 +99,12 @@ pub const Thread = struct {
     kernel_stack: u64,
 
     which_event: usize,
-    attached_events_i: usize,
-    attached_events: [ev.max_events]*ev.Event, // TODO: use arraylist
+    attached_events: std.ArrayListUnmanaged(*Event),
 
     // running_time: usize, // TODO
 
     const Set = std.AutoArrayHashMapUnmanaged(*Thread, void);
+    pub const max_events = 32;
     pub const stack_size = 8 * 1024 * 1024; // 8MiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
@@ -130,9 +130,9 @@ pub const Thread = struct {
             .pf_stack = undefined,
             .kernel_stack = undefined,
             .which_event = undefined,
-            .attached_events_i = undefined,
-            .attached_events = undefined,
+            .attached_events = try std.ArrayListUnmanaged(*Event).initCapacity(root.allocator, max_events),
         };
+        errdefer thread.attached_events.deinit(root.allocator);
 
         const fpu_storage = try root.allocator.alloc(u8, arch.cpu.fpu_storage_size);
         errdefer root.allocator.free(fpu_storage);
@@ -156,10 +156,6 @@ pub const Thread = struct {
 
         // TODO
         // kernel_process.threads.append(root.allocator, thread);
-
-        // TODO: comptime or test assert
-        std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
-        std.debug.assert(@intFromPtr(thread) + 8 == @intFromPtr(&thread.errno));
 
         return thread;
     }
@@ -292,9 +288,16 @@ pub const Thread = struct {
             pmm.free(stack, stack_pages);
         }
         self.stacks.deinit(root.allocator);
+        self.attached_events.deinit(root.allocator);
         const fpu_storage: [*]u8 = @ptrFromInt(self.fpu_storage);
         root.allocator.free(fpu_storage[0..arch.cpu.fpu_storage_size]);
         root.allocator.destroy(self);
+    }
+
+    comptime {
+        const thread: *Thread = @ptrFromInt(0xdead69420);
+        std.debug.assert(@intFromPtr(thread) == @intFromPtr(&thread.self));
+        std.debug.assert(@intFromPtr(thread) + 8 == @intFromPtr(&thread.errno)); // TODO: needed?
     }
 };
 

@@ -4,6 +4,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const serial = @import("serial.zig");
 const smp = @import("smp.zig");
+const time = @import("time.zig");
 const SpinLock = root.SpinLock;
 const StackIterator = std.debug.StackIterator;
 
@@ -69,8 +70,21 @@ pub fn log(
     log_lock.lock();
     defer log_lock.unlock();
 
-    if (comptime scope != .gpa) dmesg_writer.print(fmt, args) catch {};
-    if (comptime builtin.mode == .Debug) serial.print(fmt, args);
+    if (comptime scope != .gpa) {
+        dmesg_writer.print("[{d: >5}.{d:0>6}] ", .{
+            @as(usize, @intCast(time.monotonic.tv_sec)),
+            @as(usize, @intCast(time.monotonic.tv_nsec)) / std.time.ns_per_ms,
+        }) catch {};
+        dmesg_writer.print(fmt, args) catch {};
+    }
+
+    if (comptime builtin.mode == .Debug) {
+        serial.print("[{d: >5}.{d:0>6}] ", .{
+            @as(usize, @intCast(time.monotonic.tv_sec)),
+            @as(usize, @intCast(time.monotonic.tv_nsec)) / std.time.ns_per_ms,
+        });
+        serial.print(fmt, args);
+    }
 }
 
 fn printStackIterator(writer: anytype, stack_iter: StackIterator) void {

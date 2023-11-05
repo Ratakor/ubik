@@ -9,41 +9,7 @@ const idt = arch.idt;
 const apic = arch.apic;
 const ev = @import("event.zig");
 const SpinLock = root.SpinLock;
-
-pub const timespec = extern struct {
-    tv_sec: isize = 0,
-    tv_nsec: isize = 0,
-
-    pub inline fn add(self: *timespec, ts: timespec) void {
-        if (self.tv_nsec + ts.tv_nsec > max_ns) {
-            self.tv_nsec = (self.tv_nsec + ts.tv_nsec) - ns_per_s;
-            self.tv_sec += 1;
-        } else {
-            self.tv_nsec += ts.tv_nsec;
-        }
-        self.tv_sec += ts.tv_sec;
-    }
-
-    pub inline fn sub(self: *timespec, ts: timespec) void {
-        if (ts.tv_nsec > self.tv_nsec) {
-            self.tv_nsec = max_ns - (ts.tv_nsec - self.tv_nsec);
-            if (self.tv_sec == 0) {
-                self.tv_nsec = 0;
-                return;
-            }
-            self.tv_sec -= 1;
-        } else {
-            self.tv_nsec -= ts.tv_nsec;
-        }
-
-        if (ts.tv_sec > self.tv_sec) {
-            self.tv_sec = 0;
-            self.tv_nsec = 0;
-        } else {
-            self.tv_sec -= ts.tv_sec;
-        }
-    }
-};
+const timespec = root.os.system.timespec;
 
 pub const Timer = struct {
     idx: usize,
@@ -55,10 +21,16 @@ pub const Timer = struct {
 
     pub fn init(when: timespec) !*Timer {
         var timer = try root.allocator.create(Timer);
+        errdefer root.allocator.destroy(timer);
+
         timer.idx = bad_idx;
         timer.when = when;
         timer.done = false;
+        timer.event = try ev.Event.init();
+        errdefer timer.event.deinit();
+
         try timer.arm();
+
         return timer;
     }
 
@@ -81,18 +53,15 @@ pub const Timer = struct {
         defer timers_lock.unlock();
 
         if (self.idx < armed_timers.items.len) {
-            armed_timers.items[self.idx] = armed_timers.getLast();
+            _ = armed_timers.swapRemove(self.idx);
             armed_timers.items[self.idx].idx = self.idx;
-            _ = armed_timers.pop();
             self.idx = bad_idx;
         }
     }
 };
 
 pub const dividend = 1_193_182;
-pub const timer_freq = 100;
-pub const ns_per_s = std.time.ns_per_s;
-pub const max_ns = ns_per_s - 1;
+pub const timer_freq = 1000;
 
 pub var monotonic: timespec = .{};
 pub var realtime: timespec = .{};
@@ -111,11 +80,11 @@ pub fn init() void {
 }
 
 fn setFrequency(divisor: u64) void {
-    var count: u16 = @truncate(dividend / divisor);
+    var count = dividend / divisor;
     if (dividend % divisor > divisor / 2) {
         count += 1;
     }
-    setReloadValue(count);
+    setReloadValue(@truncate(count));
 }
 
 pub fn setReloadValue(count: u16) void {
@@ -135,7 +104,9 @@ pub fn getCurrentCount() u16 {
 fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
     _ = ctx;
 
-    const interval: timespec = .{ .tv_nsec = ns_per_s / timer_freq };
+    defer apic.eoi();
+
+    const interval: timespec = .{ .tv_nsec = std.time.ns_per_s / timer_freq };
     monotonic.add(interval);
     realtime.add(interval);
 
@@ -145,27 +116,23 @@ fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
 
             timer.when.sub(interval);
             if (timer.when.tv_sec == 0 and timer.when.tv_nsec == 0) {
-                // _ = timer.event.trigger(false); // TODO
+                timer.event.trigger(false);
                 timer.done = true;
             }
         }
+
         timers_lock.unlock();
     }
 }
 
 pub fn nanosleep(ns: u64) void {
     const duration: timespec = .{
-        .tv_sec = @intCast(ns / ns_per_s),
-        .tv_nsec = @intCast(ns % ns_per_s),
+        .tv_sec = @intCast(ns / std.time.ns_per_s),
+        .tv_nsec = @intCast(ns % std.time.ns_per_s),
     };
     const timer = Timer.init(duration) catch return;
     defer timer.deinit();
 
-    // TODO
-    // const events = [1]*ev.Event{ &timer.event };
-    // _ = ev.awaitEvent(events[0..], true);
-}
-
-pub fn now() u64 {
-    return @intCast(realtime.tv_sec);
+    var events = [_]*ev.Event{&timer.event};
+    _ = ev.awaitEvents(events[0..], true);
 }
