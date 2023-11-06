@@ -25,52 +25,60 @@ pub const Process = struct {
     thread_stack_top: usize, // TODO
     threads: std.ArrayListUnmanaged(*Thread),
     children: std.ArrayListUnmanaged(*Process),
-    // child_events
-    // event: Event
-    // cwd: *vfs.Node,
-    umask: u32,
+    child_events: std.ArrayListUnmanaged(*Event),
+    event: Event,
+    cwd: *vfs.Node,
+    umask: std.os.mode_t,
     fds_lock: SpinLock,
     fds: std.ArrayListUnmanaged(*vfs.FileDescriptor), // TODO: hashmap?
     // running_time: usize, // TODO
 
     var next_pid = std.atomic.Atomic(std.os.pid_t).init(0);
 
+    // TODO: more errdefer
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
-        const proc = try root.allocator.create(Process);
-        errdefer root.allocator.destroy(proc);
+        const process = try root.allocator.create(Process);
+        errdefer root.allocator.destroy(process);
 
-        proc.parent = parent;
-        proc.threads = .{};
-        proc.children = .{};
+        process.parent = parent;
+        process.threads = .{};
+        process.children = .{};
+        process.child_events = .{};
 
         if (parent) |p| {
-            @memcpy(&proc.name, &p.name);
-            proc.addr_space = try p.addr_space.fork();
-            // proc.thread_stack_top = p.thread_stack_top;
-            // proc.mmap_anon_base = p.mmap_anon_base;
-            // proc.cwd = p.cwd;
-            proc.umask = p.umask;
+            @memcpy(&process.name, &p.name);
+            process.addr_space = try p.addr_space.fork();
+            process.thread_stack_top = p.thread_stack_top;
+            process.mmap_anon_base = p.mmap_anon_base;
+            process.cwd = p.cwd;
+            process.umask = p.umask;
 
-            try p.children.append(root.allocator, proc);
-            // try old_proc.child_events.append(root.allocator, &proc.event);
+            try p.children.append(root.allocator, process);
+            try p.child_events.append(root.allocator, &process.event);
         } else {
-            @memset(&proc.name, 0);
-            proc.addr_space = addr_space.?;
-            // proc.thread_stack_top = 0x70000000000;
-            // proc.mmap_anon_base = 0x80000000000;
-            // proc.cwd = vfs.root_node;
-            proc.umask = std.os.S.IWGRP | std.os.S.IWOTH;
+            @memset(&process.name, 0);
+            process.addr_space = addr_space.?;
+            // TODO
+            process.thread_stack_top = 0x70000000000;
+            process.mmap_anon_base = 0x80000000000;
+            // process.cwd = vfs.tree.root.?;
+            process.umask = std.os.S.IWGRP | std.os.S.IWOTH;
         }
 
-        try processes.append(root.allocator, proc);
-        proc.id = next_pid.fetchAdd(1, .Release);
+        try processes.append(root.allocator, process);
+        process.id = next_pid.fetchAdd(1, .Release);
 
-        return proc;
+        return process;
     }
 
     pub fn deinit(self: *Process) void {
-        _ = self;
-        // TODO
+        // TODO: items of each arraylist + addr_space + parent + processes
+
+        self.threads.deinit();
+        self.children.deinit();
+        self.child_events.deinit();
+        self.fds.deinit();
+        root.allocator.destroy(self);
     }
 };
 
@@ -289,7 +297,7 @@ pub const Thread = struct {
 pub const timeslice = 1000;
 
 pub var kernel_process: *Process = undefined;
-pub var processes: std.ArrayListUnmanaged(*Process) = .{};
+pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
 var running_threads: Thread.Set = .{};
 var total_tickets: usize = 0;
 
@@ -306,7 +314,7 @@ pub fn init() void {
 }
 
 pub inline fn currentThread() *Thread {
-    return @volatileCast(smp.thisCpu().current_thread);
+    return smp.thisCpu().current_thread;
 }
 
 pub inline fn setErrno(errno: std.os.E) void {
@@ -418,15 +426,14 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
             arch.wrmsr(.fs_base, next_thread.fs_base);
             cpu.current_thread = next_thread;
 
-            // TODO: SYSENTER
+            // TODO: SYSENTER: syscall
             // if (sysenter) {
             //     arch.wrmsr(0x175, @intFromPtr(next_thread.kernel_stack));
             // } else {
-            //     cpu.tss.ist[3] = @intFromPtr(next_thread.kernel_stack);
+            //     cpu.tss.ist3 = @intFromPtr(next_thread.kernel_stack);
             // }
 
-            // TODO: set page fault stack
-            // cpu.tss.ist[2] = next_thread.pf_stack;
+            cpu.tss.ist2 = next_thread.pf_stack;
 
             if (arch.readRegister("cr3") != next_thread.cr3) {
                 arch.writeRegister("cr3", next_thread.cr3);
@@ -485,6 +492,7 @@ pub fn yieldAwait() void {
 }
 
 fn contextSwitch(ctx: *arch.Context) noreturn {
+    std.debug.assert(ctx.cs == gdt.kernel_code);
     asm volatile (
         \\mov %[ctx], %rsp
         \\pop %rax
@@ -506,11 +514,7 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         \\pop %r13
         \\pop %r14
         \\pop %r15
-        // if (cs != gdt.kernel_code) -> swapgs TODO: is cs always user_code?
-        \\cmpq $0x08, 0x18(%rsp)
-        \\je 1f
         \\swapgs
-        \\1:
         \\add $16, %rsp
         \\iretq
         :

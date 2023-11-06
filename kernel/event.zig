@@ -62,10 +62,10 @@ pub fn init() void {
 }
 
 pub fn awaitEvents(events: []*Event, block: bool) isize {
-    const thread = sched.currentThread();
-
     const old_state = arch.toggleInterrupts(false);
     defer _ = arch.toggleInterrupts(old_state);
+
+    const thread = sched.currentThread();
 
     lockEvents(events);
     defer unlockEvents(events);

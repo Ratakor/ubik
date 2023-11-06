@@ -31,7 +31,7 @@ pub const SpinLock = struct {
         return casFn(&self.state, unlocked, locked, .Acquire, .Monotonic) == null;
     }
 
-    fn lockSlow(self: *SpinLock) void {
+    noinline fn lockSlow(self: *SpinLock) void {
         @setCold(true);
 
         for (0..100_000_000) |_| {

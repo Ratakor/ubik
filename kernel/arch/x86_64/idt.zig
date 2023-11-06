@@ -244,7 +244,7 @@ fn makeStubHandler(vector: u8) *const fn () callconv(.Naked) void {
 export fn commonStub() callconv(.Naked) void {
     asm volatile (
     // if (cs != gdt.kernel_code) -> swapgs
-        \\cmpq $0x08, 0x18(%rsp)
+        \\cmpq %[kcode], 0x18(%rsp)
         \\je 1f
         \\swapgs
         \\1:
@@ -267,6 +267,8 @@ export fn commonStub() callconv(.Naked) void {
         \\push %rax
         \\mov %ds, %ax
         \\push %rax
+        :
+        : [kcode] "i" (gdt.kernel_code),
     );
 
     asm volatile (
@@ -300,12 +302,14 @@ export fn commonStub() callconv(.Naked) void {
         \\pop %r14
         \\pop %r15
         // if (cs != gdt.kernel_code) -> swapgs
-        \\cmpq $0x08, 0x18(%rsp)
+        \\cmpq %[kcode], 0x18(%rsp)
         \\je 1f
         \\swapgs
         \\1:
         // restore stack
         \\add $16, %rsp
         \\iretq
+        :
+        : [kcode] "i" (gdt.kernel_code),
     );
 }

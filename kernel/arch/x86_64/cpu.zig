@@ -15,7 +15,7 @@ pub const CpuLocal = struct {
 
     id: usize,
     idle_thread: *sched.Thread,
-    current_thread: *volatile sched.Thread,
+    current_thread: *sched.Thread,
 
     lapic_id: u32,
     lapic_freq: u64,
@@ -299,6 +299,19 @@ fn initFeatures(is_bsp: bool) void {
     pat.pat4 = PAT.Flags.write_protect;
     pat.pat5 = PAT.Flags.write_combining;
     x86.wrmsr(.pat, @bitCast(pat));
+
+    // TODO
+    // if (use_sysenter) {
+    //     if (is_bsp) log.info("sysenter is supported\n");
+
+    //     wrmsr(0x174, gdt.kernel_code);
+    //     wrmsr(0x176, syscall_sysenter_entry);
+    // } else {
+    //     if (is_bsp) {
+    //         idt.registerHandler(0x6, syscall.UDHandler);
+    //         idt.setIST(0x6, 3);
+    //     }
+    // }
 
     if (hasFeature(features, .xsave)) {
         if (is_bsp) log.info("xsave is supported", .{});

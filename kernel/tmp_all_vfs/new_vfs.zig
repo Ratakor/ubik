@@ -208,6 +208,7 @@ pub const FileDescriptor = struct {
     node: *Node,
     offset: os.off_t,
     mode: os.mode_t,
+    // TODO
 };
 
 pub const MountFn = *const fn (arg: []const u8, mount_point: []const u8) *Node;

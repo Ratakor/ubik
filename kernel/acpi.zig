@@ -65,11 +65,13 @@ const GAS = extern struct {
 
 /// Fixed ACPI Description Table
 const FADT = extern struct {
-    header: SDT align(1), // revision is fadt major version
+    /// header.revision is fadt_major_version
+    header: SDT align(1),
     firmware_ctrl: u32 align(1),
     dsdt: u32 align(1),
     reserved1: u8 align(1), // ACPI 1 only
-    ppmp: u8 align(1), // preferred power management profile
+    /// preferred power management profile
+    ppmp: u8 align(1),
     sci_interrupt: u16 align(1),
     smi_command_port: u32 align(1),
     acpi_enable: u8 align(1),
@@ -150,11 +152,14 @@ fn parse(comptime T: type, addr: u64) void {
         switch (std.mem.readInt(u32, &sdt.signature, .little)) {
             std.mem.readInt(u32, "APIC", .little) => handleMADT(sdt),
             std.mem.readInt(u32, "FACP", .little) => handleFADT(sdt),
+            std.mem.readInt(u32, "HPET", .little) => {}, // ignored
+            std.mem.readInt(u32, "WAET", .little) => {}, // ignored
             else => log.warn("unhandled ACPI table: {s}", .{sdt.signature}),
         }
     }
 }
 
+/// https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#multiple-apic-description-table-madt
 fn handleMADT(madt: *const SDT) void {
     apic.lapic_base = std.mem.readInt(u32, madt.data()[0..4], .little);
     log.info("lapic base: 0x{x}", .{apic.lapic_base});
@@ -168,14 +173,18 @@ fn handleMADT(madt: *const SDT) void {
 
         const entry = data[2..size];
         switch (kind) {
-            0 => {}, // log.warn("unhandled LAPIC: {any}", .{entry}),
-            1 => apic.io_apics.append(root.allocator, @ptrCast(entry)) catch unreachable,
-            2 => apic.isos.append(root.allocator, @ptrCast(entry)) catch unreachable,
-            3 => log.warn("unhandled IO/APIC NMI source: {any}", .{entry}),
-            4 => log.warn("unhandled LAPIC NMI: {any}", .{entry}),
-            5 => log.warn("unhandled LAPIC Address Override: {any}", .{entry}),
-            9 => log.warn("unhandled x2LAPIC: {any}", .{entry}),
-            else => unreachable,
+            0x0 => {}, // already done by limine
+            0x1 => apic.io_apics.append(root.allocator, @ptrCast(entry)) catch unreachable,
+            0x2 => apic.isos.append(root.allocator, @ptrCast(entry)) catch unreachable,
+            0x3 => log.warn("unhandled I/O APIC NMI source: {any}", .{entry}),
+            0x4 => log.warn("unhandled Local APIC NMI: {any}", .{entry}),
+            0x5 => log.warn("unhandled Local APIC Address Override: {any}", .{entry}),
+            0x6 => log.warn("unhandled I/O SAPIC: {any}", .{entry}),
+            0x7 => log.warn("unhandled Local SAPIC: {any}", .{entry}),
+            0x8 => log.warn("unhandled Platform Interrupt Sources: {any}", .{entry}),
+            0x9 => log.warn("unhandled Local x2APIC: {any}", .{entry}),
+            0xa => log.warn("unhandled Local x2APIC NMI: {any}", .{entry}),
+            else => log.warn("unhandled MADT entry of kind 0x{x}: {any}", .{ kind, entry }),
         }
 
         data = data[@max(2, size)..];

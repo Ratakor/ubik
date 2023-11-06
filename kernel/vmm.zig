@@ -27,20 +27,22 @@ pub const MapError = error{
 
 /// Page Table Entry
 pub const PTE = packed struct {
-    p: u1, // present
-    rw: u1, // read/write
-    us: u1, // user/supervisor
-    pwt: u1, // write-through
-    pcd: u1, // cache disable
-    a: u1, // accessed
-    d: u1, // dirty
-    pat: u1, // page attribute table
-    g: u1, // global
+    present: u1,
+    writable: u1,
+    user: u1,
+    write_through: u1,
+    cache_disable: u1,
+    accessed: u1,
+    dirty: u1,
+    /// page attribute table
+    pat: u1,
+    global: u1,
     ignored1: u3,
-    address: u40, // between u24 and u39 based on MAXPHYADDR from cpuid, the rest must be 0s
+    /// between u24 and u39 based on MAXPHYADDR from cpuid, the rest must be 0s
+    address: u40,
     ignored2: u7,
-    pk: u4, // protection key
-    xd: u1, // execute disable
+    protection_key: u4,
+    execute_disable: u1,
 
     const present: u64 = 1 << 0;
     const writable: u64 = 1 << 1;
@@ -56,7 +58,7 @@ pub const PTE = packed struct {
     }
 
     inline fn getNextLevel(self: *PTE, allocate: bool) ?[*]PTE {
-        if (self.p != 0) {
+        if (self.present != 0) {
             return @ptrFromInt(self.getAddress() + hhdm_offset);
         }
 
@@ -214,7 +216,7 @@ pub const AddressSpace = struct {
                 var i = local_range.base;
                 while (i < local_range.base + local_range.length) : (i += page_size) {
                     const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
-                    if (old_pte.p == 0) continue;
+                    if (old_pte.present == 0) continue;
                     const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
                     const new_spte = new_global_range.shadow_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
 
@@ -248,7 +250,7 @@ pub const AddressSpace = struct {
 
     pub fn virt2phys(self: *const AddressSpace, vaddr: u64) MapError!u64 {
         const pte = self.virt2pte(vaddr, false) orelse unreachable;
-        if (pte.p == 0) return error.NotMapped;
+        if (pte.present == 0) return error.NotMapped;
         return pte.getAddress();
     }
 
@@ -258,7 +260,7 @@ pub const AddressSpace = struct {
 
         // TODO: when virt2pte fails the memory it allocated is not freed
         const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
-        if (pte.p != 0) return error.AlreadyMapped;
+        if (pte.present != 0) return error.AlreadyMapped;
         pte.* = @bitCast(paddr | flags);
         self.flush(vaddr);
     }
@@ -268,7 +270,7 @@ pub const AddressSpace = struct {
         defer self.lock.unlock();
 
         const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
-        if (pte.p == 0) return error.NotMapped;
+        if (pte.present == 0) return error.NotMapped;
         pte.* = @bitCast(pte.getAddress() | flags);
         self.flush(vaddr);
     }
@@ -278,7 +280,7 @@ pub const AddressSpace = struct {
         defer if (lock) self.lock.unlock();
 
         const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
-        if (pte.p == 0) return error.NotMapped;
+        if (pte.present == 0) return error.NotMapped;
         pte.* = @bitCast(@as(u64, 0));
         self.flush(vaddr);
     }

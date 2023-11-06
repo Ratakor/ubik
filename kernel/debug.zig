@@ -22,36 +22,6 @@ var dmesg = blk: {
 };
 const dmesg_writer = dmesg.writer();
 
-pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    @setCold(true);
-
-    arch.disableInterrupts();
-
-    if (!panic_lock.tryLock()) {
-        arch.halt();
-    }
-
-    smp.stopAll();
-
-    const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
-    const stack_iter = StackIterator.init(ret_addr orelse @returnAddress(), @frameAddress());
-
-    dmesg_writer.print(fmt, .{msg}) catch {};
-    printStackIterator(dmesg_writer, stack_iter);
-
-    if (root.tty0) |tty| {
-        const writer = tty.writer();
-        writer.print(fmt, .{msg}) catch {};
-        printStackIterator(writer, stack_iter);
-        root.term.hideCursor(writer) catch {};
-    } else {
-        serial.print(fmt, .{msg});
-        printStackIterator(serial.writer, stack_iter);
-    }
-
-    arch.halt();
-}
-
 pub fn log(
     comptime level: std.log.Level,
     comptime scope: @TypeOf(.EnumLiteral),
@@ -85,6 +55,36 @@ pub fn log(
         });
         serial.print(fmt, args);
     }
+}
+
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
+    @setCold(true);
+
+    arch.disableInterrupts();
+
+    if (!panic_lock.tryLock()) {
+        arch.halt();
+    }
+
+    smp.stopAll();
+
+    const fmt = "\x1b[m\x1b[31m\nKernel panic:\x1b[m {s}\n";
+    const stack_iter = StackIterator.init(ret_addr orelse @returnAddress(), @frameAddress());
+
+    dmesg_writer.print(fmt, .{msg}) catch {};
+    printStackIterator(dmesg_writer, stack_iter);
+
+    if (root.tty0) |tty| {
+        const writer = tty.writer();
+        writer.print(fmt, .{msg}) catch {};
+        printStackIterator(writer, stack_iter);
+        root.term.hideCursor(writer) catch {};
+    } else {
+        serial.print(fmt, .{msg});
+        printStackIterator(serial.writer, stack_iter);
+    }
+
+    arch.halt();
 }
 
 fn printStackIterator(writer: anytype, stack_iter: StackIterator) void {
