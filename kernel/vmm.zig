@@ -84,7 +84,7 @@ const MMapRangeGlobal = struct {
     // resource: *Resource, // TODO: vnode?
     base: usize,
     length: usize,
-    offset: isize, // TODO: isize?
+    offset: std.os.off_t,
 };
 
 // TODO: init and deinit func?
@@ -93,7 +93,7 @@ const MMapRangeLocal = struct {
     global: *MMapRangeGlobal,
     base: usize,
     length: usize,
-    offset: isize, // TODO: isize?
+    offset: std.os.off_t,
     prot: i32,
     flags: i32,
 };
@@ -103,9 +103,7 @@ const Addr2Range = struct {
     memory_page: usize,
     file_page: usize,
 
-    const Error = error{RangeNotFound};
-
-    fn init(addr_space: *AddressSpace, vaddr: u64) Error!Addr2Range {
+    fn init(addr_space: *AddressSpace, vaddr: u64) error{RangeNotFound}!Addr2Range {
         for (addr_space.mmap_ranges.items) |local_range| {
             if (vaddr >= local_range.base and vaddr < local_range.base + local_range.length) {
                 const memory_page = vaddr / page_size;
@@ -498,7 +496,8 @@ pub inline fn switchPageTable(page_table: u64) void {
 }
 
 pub fn handlePageFault(cr2: u64, reason: u64) !void {
-    if (reason & 0x1 != 0) return error.MapIsPresent;
+    if (reason & 0b0001 != 0) return error.MapIsPresent; // page protection violation
+    // if (reason & 0b0010 != 0) "write access" else "read access";
 
     const addr_space = sched.currentThread().process.addr_space;
     addr_space.lock.lock();
@@ -508,11 +507,10 @@ pub fn handlePageFault(cr2: u64, reason: u64) !void {
     // TODO: enable interrupts?
 
     const local_range = range.range;
-    const page = if (local_range.flags & MAP.ANONYMOUS != 0) blk: {
-        break :blk pmm.alloc(1, true) orelse return error.OutOfMemory;
-    } else {
-        @panic("TODO: resource");
-    };
+    const page = if (local_range.flags & MAP.ANONYMOUS != 0)
+        pmm.alloc(1, true) orelse return error.OutOfMemory
+    else
+        @panic("TODO: map files");
 
     try mmapPageInRange(local_range.global, range.memory_page * page_size, page, local_range.prot);
 }

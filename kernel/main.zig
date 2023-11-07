@@ -116,7 +116,9 @@ fn main() noreturn {
     std.log.debug("cpu model: {}", .{smp.thisCpu().cpu_model});
     std.log.debug("cpu family: {}", .{smp.thisCpu().cpu_family});
     std.log.debug("cpu manufacturer: {s}", .{smp.thisCpu().cpu_manufacturer});
-    std.log.debug("cpu name: {s}", .{smp.thisCpu().cpu_name});
+    const cpu_name = smp.thisCpu().cpu_name;
+    const cpu_name_slice = cpu_name[0 .. std.mem.indexOfScalar(u8, cpu_name[0..], 0) orelse cpu_name.len];
+    std.log.debug("cpu name: {s}", .{cpu_name_slice});
     arch.enableInterrupts();
 
     sched.die();

@@ -4,7 +4,7 @@
     .dependencies = .{
         .limine = .{
             .url = "https://github.com/limine-bootloader/limine-zig/archive/master.tar.gz",
-            .hash = "12200618cf5955c4f0c1e4639247cd24297641f9443e4f3f183a8201d70aeac52ed2",
+            .hash = "1220ac95c572741c418a58cf3be61d5cbacfc4f1ded6fc7fd032bd385bbf4d50fff2",
         },
     },
     .paths = .{

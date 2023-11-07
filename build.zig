@@ -50,7 +50,8 @@ fn findModules(b: *std.Build) []const u8 {
     var iter = std.mem.splitAny(u8, config, &std.ascii.whitespace);
 
     while (iter.next()) |line| {
-        if (std.mem.startsWith(u8, line, "MODULE_PATH=boot://")) {
+        if (std.mem.startsWith(u8, line, "MODULE_PATH=boot://") and
+            !std.mem.endsWith(u8, line, ".tar")) {
             const i = std.mem.lastIndexOfScalar(u8, line, '/') orelse unreachable;
             modules.append(line[i + 1 ..]) catch unreachable;
         }
@@ -72,6 +73,7 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
         concat(b, &[_][]const u8{
             "make -C limine && ",
             "mkdir -p ", image_dir, " && ",
+            "tar -cf ", image_dir, "base.tar base && ",
             "cp zig-out/bin/kernel.elf limine.cfg limine/limine-bios.sys ",
                 "limine/limine-bios-cd.bin limine/limine-uefi-cd.bin ",
                 findModules(b), image_dir, " && ",
