@@ -160,7 +160,7 @@ fn defaultHandler(ctx: *Context) callconv(.SysV) void {
     if (ctx.cs == gdt.user_code) {
         switch (ctx.vector) {
             0x0e => {
-                if (vmm.handlePageFault(cr2, ctx.error_code)) {
+                if (vmm.handlePageFault(cr2, @bitCast(@as(u32, @intCast(ctx.error_code))))) {
                     return;
                 } else |err| {
                     log.err("failed to handle page fault: {}", .{err});

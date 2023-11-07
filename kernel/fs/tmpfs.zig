@@ -1,15 +1,18 @@
 const std = @import("std");
 const root = @import("root");
 const vfs = root.vfs;
-const page_size = std.mem.page_size;
+const vmm = root.vmm;
+const pmm = root.pmm;
 
-const file_vtable: vfs.VNode.VTable = .{
+// TODO
+
+const file_vtable: vfs.Node.VTable = .{
     .read = File.read,
     .write = File.write,
     .stat = File.stat,
 };
 
-const dir_vtable: vfs.VNode.VTable = .{
+const dir_vtable: vfs.Node.VTable = .{
     .open = Dir.open,
     .readDir = Dir.read,
     .insert = Dir.insert,
@@ -23,50 +26,109 @@ const fs_vtable: vfs.FileSystem.VTable = .{
     .allocInode = FileSystem.allocInode,
 };
 
+const vtable: vfs.Node.VTable = .{
+    .read = File.read,
+    .write = File.write,
+    .stat = File.stat,
+    .truncate = File.truncate,
+};
+
 const File = struct {
-    vnode: vfs.VNode,
-    data: std.ArrayListAlignedUnmanaged(u8, page_size) = .{},
+    node: vfs.Node,
+    data: std.ArrayListAlignedUnmanaged(u8, blksize) = .{},
 
-    fn read(vnode: *vfs.VNode, buf: []u8, offset: usize, flags: usize) vfs.ReadError!usize {
-        _ = flags;
+    const blksize = std.mem.page_size;
 
-        const self = @fieldParentPtr(File, "vnode", vnode);
+    fn read(node: *vfs.Node, buf: []u8, offset: std.os.off_t) vfs.ReadError!usize {
+        const self = @fieldParentPtr(File, "node", node);
         if (offset >= self.data.items.len) {
             return 0;
         }
         const bytes_read = @min(buf.len, self.data.items.len - offset);
-        @memcpy(buf[0..bytes_read], self.data.items[offset .. offset + bytes_read]);
+        const u_offset: usize = @intCast(offset);
+        @memcpy(buf[0..bytes_read], self.data.items[u_offset .. u_offset + bytes_read]);
         return bytes_read;
     }
 
-    fn write(vnode: *vfs.VNode, buf: []const u8, offset: usize, flags: usize) vfs.WriteError!usize {
-        _ = flags;
-
-        const self = @fieldParentPtr(File, "vnode", vnode);
-        try self.data.insertSlice(root.allocator, offset, buf);
+    fn write(node: *vfs.Node, buf: []const u8, offset: std.os.off_t) vfs.WriteError!usize {
+        const self = @fieldParentPtr(File, "node", node);
+        try self.data.insertSlice(root.allocator, @intCast(offset), buf);
         return buf.len;
     }
 
-    fn stat(vnode: *vfs.VNode, buf: *std.os.Stat) vfs.StatError!void {
-        const self = @fieldParentPtr(File, "vnode", vnode);
-
-        buf.* = std.mem.zeroes(std.os.Stat);
-        buf.ino = vnode.inode;
-        buf.mode = 0o777 | std.os.S.IFREG; // TODO
-        buf.size = @intCast(self.data.items.len);
-        buf.blksize = page_size;
-        buf.blocks = @intCast(std.mem.alignForward(usize, self.data.items.len, page_size) / page_size);
+    fn stat(node: *vfs.Node, buf: *std.os.Stat) vfs.StatError!void {
+        const self = @fieldParentPtr(File, "node", node);
+        buf.* = .{
+            .dev = undefined,
+            .ino = node.inode,
+            .mode = node.mode, // TODO: 0o777 | std.os.S.IFREG,
+            .nlink = node.nlink,
+            .uid = node.uid,
+            .gid = node.gid,
+            .rdev = undefined,
+            .size = @intCast(self.data.items.len),
+            .blksize = blksize,
+            .blocks = std.math.divCeil(usize, self.data.items.len, blksize), // TODO: use @divCeil
+            .atim = node.atim,
+            .mtim = node.mtim,
+            .ctim = node.ctim,
+        };
     }
+
+    // TODO
+    fn mmap(node: *vfs.Node, file_page: usize, flags: u64) !*anyopaque {
+        const self = @fieldParentPtr(File, "node", node);
+        return if (flags & std.os.MAP.SHARED != 0)
+            @intFromPtr(self.data[file_page * blksize ..].ptr) - vmm.hhdm_offset
+        else blk: {
+            const data = try root.allocator.alloc(u8, blksize);
+            @memcpy(data, self.data[file_page * blksize ..][0..blksize]);
+            break :blk @intFromPtr(data.ptr) - vmm.hhdm_offset;
+        };
+    }
+
+    fn truncate(node: *vfs.Node, length: usize) vfs.DefaultError!void {
+        const self = @fieldParentPtr(File, "node", node);
+        try self.data.resize(root.allocator, length);
+    }
+
+    fn create(parent: *vfs.Node, name: []const u8, mode: std.os.mode_t) vfs.CreateError!void {
+        _ = mode;
+        _ = name;
+        _ = parent;
+        const node = try root.allocator.create(vfs.Node);
+        node.* = .{
+            .vtable = &vtable,
+        };
+        return node;
+        // TODO
+    }
+
+    // TODO: create_resource
+    // TODO: instantiate?
+    // TODO: mount
+    // TODO: create
+    // TODO: symlink
+    // TODO: link
 };
 
-const Dir = struct {
-    vnode: vfs.VNode,
-    children: std.ArrayListUnmanaged(*vfs.VNode) = .{},
+// pub const MountFn = *const fn (arg: []const u8, mount_point: []const u8) *Node;
+fn mount(parent: *vfs.Node, name: []const u8, _: *vfs.Node) *vfs.Node {
+    _ = name;
+    _ = parent;
+    // return parent.createFile(parent,
+    // TODO
 
-    fn open(vnode: *vfs.VNode, name: []const u8, flags: usize) vfs.OpenError!*vfs.VNode {
+}
+
+const Dir = struct {
+    node: vfs.Node,
+    children: std.ArrayListUnmanaged(*vfs.Node) = .{},
+
+    fn open(node: *vfs.Node, name: []const u8, flags: u64) vfs.OpenError!*vfs.Node {
         _ = flags;
 
-        const self = @fieldParentPtr(Dir, "vnode", vnode);
+        const self = @fieldParentPtr(Dir, "node", node);
         for (self.children.items) |child| {
             if (std.mem.eql(u8, child.name, name)) {
                 return child;
@@ -77,8 +139,8 @@ const Dir = struct {
     }
 
     // TODO
-    fn read(vnode: *vfs.VNode, buf: []u8, offset: *usize) vfs.ReadDirError!usize {
-        const self = @fieldParentPtr(Dir, "vnode", vnode);
+    fn read(node: *vfs.Node, buf: []u8, offset: *usize) vfs.ReadDirError!usize {
+        const self = @fieldParentPtr(Dir, "node", node);
 
         var dir_ent: *std.os.system.DirectoryEntry = @ptrCast(@alignCast(buf.ptr));
         var buf_offset: usize = 0;
@@ -90,7 +152,7 @@ const Dir = struct {
             if (buf_offset + real_size > buf.len) break;
 
             dir_ent.d_off = 0;
-            dir_ent.d_ino = vnode.inode;
+            dir_ent.d_ino = node.inode;
             dir_ent.d_reclen = @truncate(real_size);
             dir_ent.d_type = return @intFromEnum(child.kind);
             @memcpy(dir_ent.d_name[0..child.name.len], child.name); // TODO
@@ -102,8 +164,8 @@ const Dir = struct {
         return buf_offset;
     }
 
-    fn insert(vnode: *vfs.VNode, new_child: *vfs.VNode) vfs.InsertError!void {
-        const self = @fieldParentPtr(Dir, "vnode", vnode);
+    fn insert(node: *vfs.Node, new_child: *vfs.Node) vfs.InsertError!void {
+        const self = @fieldParentPtr(Dir, "node", node);
         for (self.children.items) |child| {
             if (std.mem.eql(u8, child.name, new_child.name)) {
                 return error.PathAlreadyExists;
@@ -112,9 +174,9 @@ const Dir = struct {
         try self.children.append(root.allocator, new_child);
     }
 
-    fn stat(vnode: *vfs.VNode, buf: *std.os.Stat) vfs.StatError!void {
+    fn stat(node: *vfs.Node, buf: *std.os.Stat) vfs.StatError!void {
         buf.* = std.mem.zeroes(std.os.Stat);
-        buf.ino = vnode.inode;
+        buf.ino = node.inode;
         buf.mode = 0o777 | std.os.S.IFDIR; // TODO
     }
 };
@@ -124,12 +186,12 @@ const FileSystem = struct {
     root: Dir,
     inode_counter: u64,
 
-    fn createFile(fs: *vfs.FileSystem) !*vfs.VNode {
+    fn createFile(fs: *vfs.FileSystem) !*vfs.Node {
         const file = try root.allocator.create(File);
 
         // TODO!: are data field, parent or kind field correctly put in file?
         file.* = .{
-            .vnode = .{
+            .node = .{
                 .vtable = &file_vtable,
                 .filesystem = fs,
                 .kind = .file,
@@ -138,14 +200,14 @@ const FileSystem = struct {
             },
         };
 
-        return &file.vnode;
+        return &file.node;
     }
 
-    fn createDir(fs: *vfs.FileSystem) !*vfs.VNode {
+    fn createDir(fs: *vfs.FileSystem) !*vfs.Node {
         const dir = try root.allocator.create(Dir);
 
         dir.* = .{
-            .vnode = .{
+            .node = .{
                 .vtable = &dir_vtable,
                 .filesystem = fs,
                 .kind = .directory,
@@ -154,11 +216,11 @@ const FileSystem = struct {
             },
         };
 
-        return &dir.vnode;
+        return &dir.node;
     }
 
-    fn createSymlink(fs: *vfs.FileSystem, target: []const u8) !*vfs.VNode {
-        const symlink = try root.allocator.create(vfs.VNode);
+    fn createSymlink(fs: *vfs.FileSystem, target: []const u8) !*vfs.Node {
+        const symlink = try root.allocator.create(vfs.Node);
         errdefer root.allocator.destroy(symlink);
 
         symlink.* = .{
@@ -180,7 +242,7 @@ const FileSystem = struct {
     }
 };
 
-pub fn init(name: []const u8, parent: ?*vfs.VNode) !*vfs.VNode {
+pub fn init(name: []const u8, parent: ?*vfs.Node) !*vfs.Node {
     const fs = try root.allocator.create(FileSystem);
 
     fs.* = .{
@@ -188,7 +250,7 @@ pub fn init(name: []const u8, parent: ?*vfs.VNode) !*vfs.VNode {
             .vtable = &fs_vtable,
         },
         .root = .{
-            .vnode = .{
+            .node = .{
                 .vtable = &dir_vtable,
                 .filesystem = &fs.filesystem,
                 .kind = .directory,
@@ -200,5 +262,5 @@ pub fn init(name: []const u8, parent: ?*vfs.VNode) !*vfs.VNode {
         .inode_counter = 1,
     };
 
-    return &fs.root.vnode;
+    return &fs.root.node;
 }

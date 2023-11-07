@@ -1,3 +1,5 @@
+//! DEPRECATED (and unfinished)
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -14,14 +16,13 @@ pub fn Tree(comptime T: type) type {
                 return node;
             }
 
-            // TODO: add a comptime bool for if to free value?
-            /// Free a node, its children and their values
-            pub fn deinit(self: *Node, allocator: Allocator) void {
+            /// Free a node, its children and optionaly its value
+            pub fn deinit(self: *Node, allocator: Allocator, comptime free_value: bool) void {
                 for (self.children.items) |child| {
                     child.deinit(allocator);
                 }
 
-                if (comptime @typeInfo(T) == .Pointer) {
+                if (comptime free_value and @typeInfo(T) == .Pointer) {
                     switch (comptime @typeInfo(T).Size) {
                         .One => allocator.destroy(self.value),
                         .Slice => allocator.free(self.value),

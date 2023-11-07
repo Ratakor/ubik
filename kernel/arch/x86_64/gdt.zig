@@ -11,7 +11,7 @@ const GDT = extern struct {
     user_data: Entry align(1),
     tss: TSS.Descriptor align(1),
 
-    const Entry = packed struct {
+    const Entry = packed struct(u64) {
         limit_low: u16 = 0,
         base_low: u16 = 0,
         base_mid: u8 = 0,
@@ -27,9 +27,7 @@ const GDT = extern struct {
     };
 
     comptime {
-        std.debug.assert(@sizeOf(GDT) == 7 * 8);
-        std.debug.assert(@sizeOf(Entry) == @sizeOf(u64));
-        std.debug.assert(@bitSizeOf(Entry) == @bitSizeOf(u64));
+        std.debug.assert(@sizeOf(GDT) == 7 * @sizeOf(u64));
         std.debug.assert(@bitSizeOf(Descriptor) == 80);
     }
 };
@@ -52,7 +50,7 @@ pub const TSS = extern struct {
     reserved3: u16 align(1) = 0,
     iopb: u16 align(1),
 
-    const Descriptor = packed struct {
+    const Descriptor = packed struct(u128) {
         limit_low: u16 = @sizeOf(TSS),
         base_low: u16 = undefined,
         base_mid: u8 = undefined,
@@ -63,11 +61,6 @@ pub const TSS = extern struct {
         base_upper: u32 = undefined,
         reserved: u32 = 0,
     };
-
-    comptime {
-        std.debug.assert(@sizeOf(Descriptor) == @sizeOf(u64) * 2);
-        std.debug.assert(@bitSizeOf(Descriptor) == @bitSizeOf(u64) * 2);
-    }
 };
 
 pub const kernel_code = 0x08;

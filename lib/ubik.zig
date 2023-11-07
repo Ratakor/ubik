@@ -23,42 +23,42 @@ pub const nlink_t = linux.nlink_t;
 pub const blksize_t = linux.blksize_t;
 pub const blkcnt_t = linux.blkcnt_t;
 
-// TODO: change undefined initializers
+// TODO: initializers
 pub const Stat = extern struct {
     /// device
-    dev: dev_t = undefined,
+    dev: dev_t,
     /// file serial number
-    ino: ino_t = undefined,
+    ino: ino_t,
     /// file mode
-    mode: mode_t = 0o666,
+    mode: mode_t,
     /// hard link count
-    nlink: nlink_t = 0,
+    nlink: nlink_t,
     /// user id of the owner
-    uid: uid_t = 0,
+    uid: uid_t,
     /// group id of the owner
-    gid: gid_t = 0,
+    gid: gid_t,
     /// device number, if device
-    rdev: dev_t = undefined,
+    rdev: dev_t,
     /// size of file in bytes
-    size: off_t = 0,
+    size: off_t,
     /// optimal block size for I/O
-    blksize: blksize_t = undefined,
+    blksize: blksize_t,
     /// number of 512-byte block allocated
-    blocks: blkcnt_t = 0,
+    blocks: blkcnt_t,
     /// time of last access
-    atim: timespec = .{},
+    atim: timespec,
     /// time of last modification
-    mtim: timespec = .{},
+    mtim: timespec,
     /// time of last status change
-    ctim: timespec = .{},
+    ctim: timespec,
 };
 
 // TODO: initializers
 pub const DirectoryEntry = extern struct {
     ino: ino_t,
-    off: off_t,
-    reclen: u16,
-    type: u8,
+    off: off_t, // use?
+    reclen: u16, // use?
+    type: u8, // use?
     name: [255:0]u8 = undefined,
 };
 

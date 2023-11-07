@@ -1,6 +1,6 @@
 const assert = @import("std").debug.assert;
 
-pub const RFlags = packed struct {
+pub const RFlags = packed struct(u64) {
     CF: u1 = 0,
     reserved: u1 = 1,
     PF: u1 = 0,
@@ -23,11 +23,6 @@ pub const RFlags = packed struct {
     VIP: u1 = 0,
     ID: u1 = 0,
     reserved4: u42 = 0,
-
-    comptime {
-        assert(@sizeOf(RFlags) == @sizeOf(u64));
-        assert(@bitSizeOf(RFlags) == @bitSizeOf(u64));
-    }
 };
 
 pub const MSR = enum(u32) {

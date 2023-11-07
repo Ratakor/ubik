@@ -26,23 +26,23 @@ pub const MapError = error{
 };
 
 /// Page Table Entry
-pub const PTE = packed struct {
-    present: u1,
-    writable: u1,
-    user: u1,
-    write_through: u1,
-    cache_disable: u1,
-    accessed: u1,
-    dirty: u1,
+pub const PTE = packed struct(u64) {
+    present: bool,
+    writable: bool,
+    user: bool,
+    write_through: bool,
+    cache_disable: bool,
+    accessed: bool,
+    dirty: bool,
     /// page attribute table
-    pat: u1,
-    global: u1,
+    pat: bool,
+    global: bool,
     ignored1: u3,
     /// between u24 and u39 based on MAXPHYADDR from cpuid, the rest must be 0s
     address: u40,
     ignored2: u7,
     protection_key: u4,
-    execute_disable: u1,
+    execute_disable: bool,
 
     const present: u64 = 1 << 0;
     const writable: u64 = 1 << 1;
@@ -58,7 +58,7 @@ pub const PTE = packed struct {
     }
 
     inline fn getNextLevel(self: *PTE, allocate: bool) ?[*]PTE {
-        if (self.present != 0) {
+        if (self.present) {
             return @ptrFromInt(self.getAddress() + hhdm_offset);
         }
 
@@ -70,13 +70,22 @@ pub const PTE = packed struct {
         self.* = @bitCast(new_page_table | present | writable | user);
         return @ptrFromInt(new_page_table + hhdm_offset);
     }
-
-    comptime {
-        std.debug.assert(@sizeOf(PTE) == @sizeOf(u64));
-        std.debug.assert(@bitSizeOf(PTE) == @bitSizeOf(u64));
-    }
 };
 
+pub const PageFaultError = packed struct(u32) {
+    present: bool,
+    write: bool,
+    user: bool,
+    reserved_write: bool,
+    instruction_fetch: bool,
+    protection_key: bool,
+    shadow_stack: bool,
+    reserved1: u8,
+    software_guard_extensions: bool,
+    reserved2: u16,
+};
+
+// TODO: replace
 // TODO: init and deinit func?
 const MMapRangeGlobal = struct {
     shadow_addr_space: *AddressSpace,
@@ -87,6 +96,7 @@ const MMapRangeGlobal = struct {
     offset: std.os.off_t,
 };
 
+// TODO: replace
 // TODO: init and deinit func?
 const MMapRangeLocal = struct {
     addr_space: *AddressSpace,
@@ -98,6 +108,7 @@ const MMapRangeLocal = struct {
     flags: i32,
 };
 
+// TODO: improve
 const Addr2Range = struct {
     range: *MMapRangeLocal,
     memory_page: usize,
@@ -214,7 +225,7 @@ pub const AddressSpace = struct {
                 var i = local_range.base;
                 while (i < local_range.base + local_range.length) : (i += page_size) {
                     const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
-                    if (old_pte.present == 0) continue;
+                    if (old_pte.present == false) continue;
                     const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
                     const new_spte = new_global_range.shadow_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
 
@@ -248,7 +259,7 @@ pub const AddressSpace = struct {
 
     pub fn virt2phys(self: *const AddressSpace, vaddr: u64) MapError!u64 {
         const pte = self.virt2pte(vaddr, false) orelse unreachable;
-        if (pte.present == 0) return error.NotMapped;
+        if (!pte.present) return error.NotMapped;
         return pte.getAddress();
     }
 
@@ -258,7 +269,7 @@ pub const AddressSpace = struct {
 
         // TODO: when virt2pte fails the memory it allocated is not freed
         const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
-        if (pte.present != 0) return error.AlreadyMapped;
+        if (pte.present) return error.AlreadyMapped;
         pte.* = @bitCast(paddr | flags);
         self.flush(vaddr);
     }
@@ -268,7 +279,7 @@ pub const AddressSpace = struct {
         defer self.lock.unlock();
 
         const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
-        if (pte.present == 0) return error.NotMapped;
+        if (!pte.present) return error.NotMapped;
         pte.* = @bitCast(pte.getAddress() | flags);
         self.flush(vaddr);
     }
@@ -278,7 +289,7 @@ pub const AddressSpace = struct {
         defer if (lock) self.lock.unlock();
 
         const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
-        if (pte.present == 0) return error.NotMapped;
+        if (!pte.present) return error.NotMapped;
         pte.* = @bitCast(@as(u64, 0));
         self.flush(vaddr);
     }
@@ -495,9 +506,8 @@ pub inline fn switchPageTable(page_table: u64) void {
     arch.writeRegister("cr3", page_table);
 }
 
-pub fn handlePageFault(cr2: u64, reason: u64) !void {
-    if (reason & 0b0001 != 0) return error.MapIsPresent; // page protection violation
-    // if (reason & 0b0010 != 0) "write access" else "read access";
+pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
+    if (reason.present) return error.PageProtectionViolation;
 
     const addr_space = sched.currentThread().process.addr_space;
     addr_space.lock.lock();
