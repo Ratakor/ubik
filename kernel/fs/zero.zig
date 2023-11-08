@@ -3,6 +3,13 @@ const root = @import("root");
 const vfs = root.vfs;
 
 const Null = struct {
+    const vtable: vfs.Node.VTable = .{
+        .open = open,
+        .close = close,
+        .read = read,
+        .write = write,
+    };
+
     fn open(_: *vfs.Node, _: u64) vfs.OpenError!void {}
 
     fn close(_: *vfs.Node) void {}
@@ -19,15 +26,14 @@ const Null = struct {
         const node = try root.allocator.create(vfs.Node);
 
         node.* = .{
-            .vtable = &.{
-                .open = open,
-                .close = close,
-                .read = read,
-                .write = write,
-            },
+            .vtable = &vtable,
             .name = try root.allocator.dupe(u8, "null"),
-            .uid = 0,
-            .gid = 0,
+            .stat = .{
+                .ino = 0,
+                .mode = 0o666,
+                .uid = 0,
+                .gid = 0,
+            },
             .kind = .character_device,
             .inode = 0,
         };
@@ -37,6 +43,13 @@ const Null = struct {
 };
 
 const Zero = struct {
+    const vtable: vfs.Node.VTable = .{
+        .open = open,
+        .close = close,
+        .read = read,
+        .write = write,
+    };
+
     fn open(_: *vfs.Node, _: u64) vfs.OpenError!void {}
 
     fn close(_: *vfs.Node) void {}
@@ -54,15 +67,14 @@ const Zero = struct {
         const node = try root.allocator.create(vfs.Node);
 
         node.* = .{
-            .vtable = &.{
-                .open = open,
-                .close = close,
-                .read = read,
-                .write = write,
-            },
+            .vtable = &vtable,
             .name = try root.allocator.dupe(u8, "zero"),
-            .uid = 0,
-            .gid = 0,
+            .stat = .{
+                .ino = 0,
+                .mode = 0o666,
+                .uid = 0,
+                .gid = 0,
+            },
             .kind = .character_device,
             .inode = 0,
         };

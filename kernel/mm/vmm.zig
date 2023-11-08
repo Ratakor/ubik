@@ -3,12 +3,12 @@
 
 const std = @import("std");
 const root = @import("root");
-const arch = @import("arch.zig");
+const arch = root.arch;
 const idt = arch.idt;
 const apic = arch.apic;
-const pmm = @import("pmm.zig");
-const smp = @import("smp.zig");
-const sched = @import("sched.zig");
+const pmm = root.pmm;
+const smp = root.smp;
+const sched = root.sched;
 const SpinLock = root.SpinLock;
 const log = std.log.scoped(.vmm);
 const alignBackward = std.mem.alignBackward;
@@ -445,15 +445,6 @@ pub const AddressSpace = struct {
     }
 };
 
-pub const page_allocator = std.mem.Allocator{
-    .ptr = undefined,
-    .vtable = &.{
-        .alloc = alloc,
-        .resize = resize,
-        .free = free,
-    },
-};
-
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
 pub var kaddr_space: *AddressSpace = undefined;
 
@@ -541,38 +532,4 @@ fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) 
             try local_range.addr_space.mapPage(vaddr, paddr, flags);
         }
     }
-}
-
-// kernel page allocator functions
-
-fn alloc(_: *anyopaque, size: usize, _: u8, _: usize) ?[*]u8 {
-    std.debug.assert(size > 0);
-    std.debug.assert(size < std.math.maxInt(usize) - page_size);
-
-    const aligned_size = alignForward(usize, size, page_size);
-    const pages = @divExact(aligned_size, page_size);
-    const address = pmm.alloc(pages, false) orelse return null;
-    return @ptrFromInt(address + hhdm_offset);
-}
-
-fn resize(_: *anyopaque, buf: []u8, _: u8, new_size: usize, _: usize) bool {
-    const aligned_new_size = alignForward(usize, new_size, page_size);
-    const aligned_buf_len = alignForward(usize, buf.len, page_size);
-
-    if (aligned_new_size == aligned_buf_len) return true;
-
-    if (aligned_new_size < aligned_buf_len) {
-        const address = @intFromPtr(buf.ptr + aligned_new_size);
-        const pages = @divExact((aligned_buf_len - aligned_new_size), page_size);
-        pmm.free(address - hhdm_offset, pages);
-        return true;
-    }
-
-    return false;
-}
-
-fn free(_: *anyopaque, buf: []u8, _: u8, _: usize) void {
-    const aligned_buf_len = alignForward(usize, buf.len, page_size);
-    const pages = @divExact(aligned_buf_len, page_size);
-    pmm.free(@intFromPtr(buf.ptr) - hhdm_offset, pages);
 }

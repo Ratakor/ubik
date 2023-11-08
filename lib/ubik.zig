@@ -23,7 +23,6 @@ pub const nlink_t = linux.nlink_t;
 pub const blksize_t = linux.blksize_t;
 pub const blkcnt_t = linux.blkcnt_t;
 
-// TODO: initializers
 pub const Stat = extern struct {
     /// device
     dev: dev_t,
@@ -53,13 +52,17 @@ pub const Stat = extern struct {
     ctim: timespec,
 };
 
-// TODO: initializers
 pub const DirectoryEntry = extern struct {
+    /// file serial number
     ino: ino_t,
-    off: off_t, // use?
-    reclen: u16, // use?
-    type: u8, // use?
-    name: [255:0]u8 = undefined,
+    /// current location in directory stream
+    off: off_t,
+    /// file name length
+    reclen: u16,
+    /// type of file, same as vfs.Node.Kind and DT
+    type: u8,
+    /// file name component
+    name: [255:0]u8,
 };
 
 pub const timespec = extern struct {

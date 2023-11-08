@@ -21,15 +21,7 @@ pub const Node = struct {
     vtable: *const VTable,
     name: []u8,
     kind: Kind,
-    dev_id: u64, // device
-    inode: os.ino_t, // file serial number
-    mode: os.mode_t, // file mode
-    nlink: os.nlink_t, // hard link count
-    uid: os.uid_t, // owner user id
-    gid: os.gid_t, // owner group id
-    atim: os.timespec, // time of last access
-    mtim: os.timespec, // time of last modification
-    ctim: os.timespec, // time of last status change
+    stat: os.Stat,
     open_flags: u64, // TODO: read/write/append, ...
     mount_point: ?*Node, // TODO: symlinks <- no it's a different thing
     refcount: usize,
@@ -37,18 +29,19 @@ pub const Node = struct {
     // can_mmap: bool, // TODO
     // status: i32, // TODO
     // event: Event, // TODO
-    filesystem: ?*const FileSystem, // TODO + nullable?
+    filesystem: ?*FileSystem, // TODO + nullable? + in VTable?
     parent: ?*Node, // TODO: nullable?
     children: std.StringHashMapUnmanaged(*Node) = .{},
+    // symlink_target: ?[]u8, // TODO
+    // redirection: ?*Node // TODO
 
     pub const VTable = struct {
         open: *const fn (self: *Node, flags: u64) OpenError!void = @ptrCast(&stubFn),
         close: *const fn (self: *Node) void = @ptrCast(&stubFn),
         read: *const fn (self: *Node, buf: []u8, offset: os.off_t) ReadError!usize = @ptrCast(&stubFn),
-        write: *const fn (self: *Node, buf: []const u8, offset: os.off_t) WriteError!usize = @ptrCast(&stubFn),
         readLink: *const fn (self: *Node, buf: []u8) ReadLinkError!usize = @ptrCast(&stubFn),
         readDir: *const fn (self: *Node, index: usize) ReadDirError!*DirectoryEntry = @ptrCast(&stubFn),
-        findDir: *const fn (self: *Node, name: []const u8) DefaultError!*Node = @ptrCast(&stubFn), // TODO: error
+        write: *const fn (self: *Node, buf: []const u8, offset: os.off_t) WriteError!usize = @ptrCast(&stubFn),
         ioctl: *const fn (self: *Node, request: u64, arg: *anyopaque) DefaultError!u64 = @ptrCast(&stubFn), // return u64?
         chmod: *const fn (self: *Node, mode: os.mode_t) DefaultError!void = &stubChmod, // @ptrCast(&stubFn), // TODO: error
         chown: *const fn (self: *Node, uid: os.uid_t, gid: os.gid_t) DefaultError!void = @ptrCast(&stubFn), // TODO: error
@@ -56,15 +49,11 @@ pub const Node = struct {
         unlink: *const fn (self: *Node, name: []const u8) DefaultError!void = @ptrCast(&stubFn), // TODO: error
         stat: *const fn (self: *Node, statbuf: *os.Stat) StatError!void = @ptrCast(&stubFn),
 
-        // TODO: filesystem
-        // TODO: merge createFile and makeDir?
-        createFile: *const fn (parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void = @ptrCast(&stubFn),
-        makeDir: *const fn (parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void = @ptrCast(&stubFn),
-        symlink: *const fn (parent: *Node, name: []const u8, target: []const u8) CreateError!void = @ptrCast(&stubFn),
+        pub const stub: VTable = .{};
 
         fn stubChmod(self: *Node, mode: os.mode_t) DefaultError!void {
-            self.mode &= ~@as(os.mode_t, 0o777);
-            self.mode |= mode & 0o777;
+            self.stat.mode &= ~@as(os.mode_t, 0o777);
+            self.stat.mode |= mode & 0o777;
         }
 
         fn stubFn() !void {
@@ -72,30 +61,17 @@ pub const Node = struct {
         }
     };
 
-    pub const Kind = enum {
-        block_device,
-        character_device,
-        directory,
-        named_pipe,
-        symlink,
-        file,
-        unix_domain_socket,
-        whiteout,
-        unknown,
+    pub const Kind = enum(u8) {
+        block_device = os.DT.BLK,
+        character_device = os.DT.CHR,
+        directory = os.DT.DIR,
+        named_pipe = os.DT.FIFO,
+        symlink = os.DT.LNK,
+        file = os.DT.REG,
+        unix_domain_socket = os.DT.SOCK,
+        whiteout = os.DT.WHT,
+        unknown = os.DT.UNKNOWN,
     };
-
-    // TODO: is DT actually used
-    // pub const Kind = enum(u64) { // TODO: u64?
-    //     block_device = os.DT.BLK,
-    //     character_device = os.DT.CHR,
-    //     directory = os.DT.DIR,
-    //     named_pipe = os.DT.FIFO,
-    //     symlink = os.DT.LNK,
-    //     file = os.DT.REG,
-    //     unix_domain_socket = os.DT.SOCK,
-    //     whiteout = os.DT.WHT,
-    //     unknown = os.DT.UNKNOWN,
-    // };
 
     pub const Stream = struct {
         node: *Node,
@@ -146,21 +122,27 @@ pub const Node = struct {
         }
     };
 
-    pub fn init(name: []const u8, fs: ?*const FileSystem, parent: ?*Node) !*Node {
+    pub fn init(name: []const u8, fs: ?*FileSystem, parent: ?*Node) !*Node {
         const node = try root.allocator.create(Node);
         node.* = .{
-            .vtable = &.{},
+            .vtable = undefined,
             .name = try root.allocator.dupe(u8, name),
             .kind = undefined,
-            .dev_id = undefined,
-            .inode = undefined,
-            .mode = 0o666,
-            .nlink = 0,
-            .uid = 0,
-            .gid = 0,
-            .atim = time.realtime,
-            .mtim = time.realtime,
-            .ctim = time.realtime,
+            .stat = .{
+                .dev = undefined,
+                .ino = undefined,
+                .mode = 0o666,
+                .nlink = 0,
+                .uid = 0,
+                .gid = 0,
+                .rdev = undefined,
+                .size = undefined,
+                .blksize = undefined,
+                .blocks = undefined,
+                .atim = time.realtime,
+                .mtim = time.realtime,
+                .ctim = time.realtime,
+            },
             .open_flags = 0,
             .mount_point = null,
             .refcount = 0,
@@ -206,11 +188,6 @@ pub const Node = struct {
         return self.vtable.read(self, buf, offset);
     }
 
-    pub inline fn write(self: *Node, buf: []const u8, offset: os.off_t) WriteError!usize {
-        // TODO check flags for open for writing
-        return self.vtable.write(self, buf, offset);
-    }
-
     pub inline fn readLink(self: *Node, buf: []u8) ReadLinkError!void {
         if (self.kind != .symlink) return error.IsNotLink;
         return self.vtable.readLink(self, buf);
@@ -221,10 +198,9 @@ pub const Node = struct {
         return self.vtable.readDir(self, index);
     }
 
-    // TODO
-    pub inline fn findDir(self: *Node, name: []const u8) !*Node {
-        if (self.kind != .directory) return error.IsNotDir;
-        return self.vtable.findDir(self, name);
+    pub inline fn write(self: *Node, buf: []const u8, offset: os.off_t) WriteError!usize {
+        // TODO check flags for open for writing
+        return self.vtable.write(self, buf, offset);
     }
 
     pub inline fn ioctl(self: *Node, request: u64, arg: *anyopaque) DefaultError!u64 {
@@ -247,19 +223,36 @@ pub const Node = struct {
 // TODO
 pub const FileSystem = struct {
     vtable: *const VTable,
-    vnode_covered: *Node, // vnode we cover
-    flags: i32, // flags
-    bsize: i32, // native block size
 
     pub const VTable = struct {
-        mount: *const fn () void,
-        unmount: *const fn () void,
-        root: *const fn () void,
-        statfs: *const fn () void,
-        sync: *const fn () void,
-        fid: *const fn () void,
-        vget: *const fn () void,
+        // TODO: merge createFile and makeDir?
+        createFile: *const fn (self: *FileSystem, parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void,
+        makeDir: *const fn (self: *FileSystem, parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void,
+        symlink: *const fn (self: *FileSystem, parent: *Node, name: []const u8, target: []const u8) CreateError!void,
     };
+
+    // TODO
+    // pub fn createFile(self: *FileSystem, name: []const u8) !*VNode {
+    //     const name_dup = try root.allocator.dupe(u8, name);
+    //     errdefer root.allocator.free(name_dup);
+    //     const file = try self.vtable.createFile(self, name);
+    //     file.name = name_dup;
+    //     return file;
+    // }
+
+    // pub fn createDir(self: *FileSystem, name: []const u8) !*VNode {
+    //     const name_dup = try root.allocator.dupe(u8, name);
+    //     errdefer root.allocator.free(name_dup);
+    //     const dir = try self.vtable.createDir(self, name);
+    //     dir.name = name_dup;
+    //     return dir;
+    // }
+
+    // pub fn createSymlink(self: *FileSystem, name: []const u8, target: []const u8) !*VNode {
+    //     const symlink = try self.vtable.createSymlink(self, name, target);
+    //     symlink.name = try root.allocator.dupe(u8, name);
+    //     return symlink;
+    // }
 };
 
 pub const FileDescriptor = struct {
@@ -483,4 +476,53 @@ pub fn mount(parent: *Node, source: []const u8, target: []const u8, fs_name: []c
 //         .atime = time.now(),
 //     };
 //     return node;
+// }
+
+// TODO
+// fn resolve(cwd: ?*VNode, path: []const u8, flags: usize) (OpenError || InsertError)!*VNode {
+//     std.debug.assert(path.len != 0); //if (path.len == 0) return;
+//     if (cwd == null) {
+//         std.debug.assert(isAbsolute(path));
+//         return resolve(root_vnode, path, flags);
+//     }
+
+//     var next = if (isAbsolute(path)) root_vnode else cwd.?;
+//     var iter = std.mem.split(u8, path, std.fs.path.sep_str);
+
+//     while (iter.next()) |component| {
+//         var next_vnode: *VNode = undefined;
+
+//         if (component.len == 0 or std.mem.eql(u8, component, ".")) {
+//             continue;
+//         } else if (std.mem.eql(u8, component, "..")) {
+//             next_vnode = next.parent orelse next_vnode; // TODO
+//         } else {
+//             next_vnode = next.open(component, 0) catch |err| switch (err) {
+//                 error.FileNotFound => blk: {
+//                     if (flags & std.os.O.CREAT == 0) return error.FileNotFound;
+
+//                     const fs = next; // TODO
+//                     const vnode = if (flags & std.os.O.DIRECTORY != 0 or iter.rest().len > 0)
+//                         try fs.createDir(component)
+//                     else
+//                         try fs.createFile(component);
+//                     try next.insert(vnode);
+//                     break :blk vnode;
+//                 },
+//                 else => |e| return e,
+//             };
+//         }
+
+//         if (flags & std.os.O.NOFOLLOW == 0 and next_vnode.kind == .symlink) {
+//             const old_vnode = next_vnode;
+//             const target = next_vnode.symlink_target.?;
+//             // TODO: check if isAbsolute?
+//             next_vnode = try resolve(if (isAbsolute(target)) null else next_vnode.parent, target, 0);
+//             if (next_vnode == old_vnode) return error.SymLinkLoop;
+//         }
+
+//         next = next_vnode;
+//     }
+
+//     return next;
 // }

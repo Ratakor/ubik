@@ -56,9 +56,9 @@ const File = struct {
         return buf.len;
     }
 
-    fn stat(node: *vfs.Node, buf: *std.os.Stat) vfs.StatError!void {
+    fn stat(node: *vfs.Node, statbuf: *std.os.Stat) vfs.StatError!void {
         const self = @fieldParentPtr(File, "node", node);
-        buf.* = .{
+        statbuf.* = .{
             .dev = undefined,
             .ino = node.inode,
             .mode = node.mode, // TODO: 0o777 | std.os.S.IFREG,
@@ -68,7 +68,7 @@ const File = struct {
             .rdev = undefined,
             .size = @intCast(self.data.items.len),
             .blksize = blksize,
-            .blocks = std.math.divCeil(usize, self.data.items.len, blksize), // TODO: use @divCeil
+            .blocks = std.math.divCeil(usize, self.data.items.len, 512), // TODO: use @divCeil
             .atim = node.atim,
             .mtim = node.mtim,
             .ctim = node.ctim,
@@ -224,7 +224,7 @@ const FileSystem = struct {
         errdefer root.allocator.destroy(symlink);
 
         symlink.* = .{
-            .vtable = &.{},
+            // .vtable = &?,
             .filesystem = fs,
             .kind = .symlink,
             .symlink_target = try root.allocator.dupe(u8, target),

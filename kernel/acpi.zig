@@ -4,7 +4,7 @@ const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const apic = arch.apic;
-const vmm = @import("vmm.zig");
+const vmm = root.vmm;
 const log = std.log.scoped(.acpi);
 
 /// System Description Table
@@ -21,7 +21,7 @@ const SDT = extern struct {
 
     inline fn data(self: *const SDT) []const u8 {
         const ptr: [*]const u8 = @ptrCast(self);
-        return ptr[0..self.length][@sizeOf(SDT)..];
+        return ptr[@sizeOf(SDT)..self.length];
     }
 
     fn doChecksum(self: *const SDT) void {

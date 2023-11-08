@@ -2,12 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const limine = @import("limine");
 const ubik = @import("ubik");
-const arch = @import("arch.zig");
+pub const arch = @import("arch.zig");
 const debug = @import("debug.zig");
 const serial = @import("serial.zig");
 const event = @import("event.zig");
-pub const pmm = @import("pmm.zig");
-pub const vmm = @import("vmm.zig");
+pub const pmm = @import("mm/pmm.zig");
+pub const vmm = @import("mm/vmm.zig");
 const acpi = @import("acpi.zig");
 pub const sched = @import("sched.zig");
 pub const smp = @import("smp.zig");
@@ -15,6 +15,7 @@ pub const time = @import("time.zig");
 pub const vfs = @import("vfs.zig");
 const ps2 = @import("ps2.zig");
 const TTY = @import("TTY.zig");
+const PageAllocator = @import("mm/PageAllocator.zig");
 const lib = @import("lib.zig");
 
 pub usingnamespace lib;
@@ -28,7 +29,10 @@ pub const std_options = struct {
 pub const os = struct {
     pub const system = ubik;
     pub const heap = struct {
-        pub const page_allocator = vmm.page_allocator;
+        pub const page_allocator = std.mem.Allocator{
+            .ptr = undefined,
+            .vtable = &PageAllocator.vtable,
+        };
     };
 };
 

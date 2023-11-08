@@ -171,6 +171,8 @@ const source_files = [_][]const u8{
     "lib/lock.zig",
     "lib/term.zig",
     "lib/tree.zig",
+    "mm/pmm.zig",
+    "mm/vmm.zig",
     "acpi.zig",
     "arch.zig",
     "debug.zig",
@@ -178,7 +180,6 @@ const source_files = [_][]const u8{
     "event.zig",
     "lib.zig",
     "main.zig",
-    "pmm.zig",
     "ps2.zig",
     "rand.zig",
     "sched.zig",
@@ -187,7 +188,6 @@ const source_files = [_][]const u8{
     "time.zig",
     "TTY.zig",
     "vfs.zig",
-    "vmm.zig",
 };
 
 // TODO: get source files from filesystem instead + zig std lib files

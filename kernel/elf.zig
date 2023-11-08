@@ -1,7 +1,7 @@
 const std = @import("std");
 const root = @import("root");
-const pmm = @import("pmm.zig");
-const vmm = @import("vmm.zig");
+const pmm = root.pmm;
+const vmm = root.vmm;
 const page_size = std.mem.page_size;
 
 pub const AuxVal = struct {

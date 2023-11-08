@@ -1,6 +1,6 @@
 const std = @import("std");
 const root = @import("root");
-const vmm = @import("vmm.zig");
+const vmm = root.vmm;
 const SpinLock = root.SpinLock;
 const log = std.log.scoped(.pmm);
 const page_size = std.mem.page_size;
