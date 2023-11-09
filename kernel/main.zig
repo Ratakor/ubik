@@ -13,6 +13,7 @@ pub const sched = @import("sched.zig");
 pub const smp = @import("smp.zig");
 pub const time = @import("time.zig");
 pub const vfs = @import("vfs.zig");
+const tmpfs = @import("fs/tmpfs.zig");
 const ps2 = @import("ps2.zig");
 const TTY = @import("TTY.zig");
 const PageAllocator = @import("mm/PageAllocator.zig");
@@ -93,8 +94,10 @@ fn main() noreturn {
     arch.enableInterrupts();
 
     vfs.init(); // TODO
-    ps2.init();
-    // TODO: init random here instead of in sched?
+    tmpfs.init(); // TODO
+    vfs.mount(vfs.root_node, null, "/", "tmpfs") catch unreachable;
+    // vfs.create(
+
     // TODO: pci
     // TODO: basic syscalls
     // TODO: basic IPC
@@ -106,6 +109,8 @@ fn main() noreturn {
     // TODO: server with posix syscalls
     // TODO: filesystem
     // TODO: IPC: pipe, socket (TCP, UDP, Unix)
+
+    ps2.init();
 
     const fb = framebuffer_request.response.?.framebuffers()[0];
     tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;

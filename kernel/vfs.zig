@@ -1,63 +1,126 @@
 const std = @import("std");
 const os = std.os;
 const root = @import("root");
-const time = @import("time.zig");
+const time = root.time;
 const SpinLock = root.SpinLock;
-const DirectoryEntry = root.os.system.DirectoryEntry;
 const log = std.log.scoped(.vfs);
 
-// TODO: not sure about these errors
-pub const DefaultError = std.mem.Allocator.Error || os.UnexpectedError;
+pub const DirectoryEntry = root.os.system.DirectoryEntry;
+
+// TODO
+pub const DefaultError = error{
+    OperationNotSupported,
+    FileNotFound,
+} || std.mem.Allocator.Error || os.UnexpectedError;
 pub const OpenError = os.OpenError || DefaultError;
 pub const ReadError = os.ReadError || DefaultError;
 pub const ReadDirError = ReadError || error{IsNotDir};
 pub const ReadLinkError = ReadError || error{IsNotLink};
 pub const WriteError = os.WriteError || DefaultError;
-pub const CreateError = os.MakeDirError || DefaultError;
+pub const CreateError = os.MakeDirError || DefaultError || error{IsDir};
 pub const StatError = os.FStatError || DefaultError;
+pub const UnlinkError = DefaultError || error{IsDir};
 
-// TODO: rename VNode?
+// TODO: rename VNode
+// TODO: remove undefined/null initializer if the field are used to ensure it's initialized correcly
 pub const Node = struct {
-    vtable: *const VTable,
     name: []u8,
-    kind: Kind,
-    stat: os.Stat,
-    open_flags: u64, // TODO: read/write/append, ...
-    mount_point: ?*Node, // TODO: symlinks <- no it's a different thing
-    refcount: usize,
-    lock: SpinLock = .{}, // TODO: use
-    // can_mmap: bool, // TODO
+    context: *anyopaque,
+    vtable: *const VTable,
+
+    // filesystem: *FileSystem, // TODO
+    kind: Kind, // TODO: useless since S.IF exist?
+    stat: os.Stat, // TODO mode = 0o666 | S.IFREG by default
+    open_flags: u64 = undefined, // TODO: read/write/append, ...
+    mount_point: ?*Node = null, // TODO: idk
+    refcount: usize, // TODO
+    lock: SpinLock = .{}, // TODO: use a u64 with flags and lock with atomic OR
     // status: i32, // TODO
     // event: Event, // TODO
-    filesystem: ?*FileSystem, // TODO + nullable? + in VTable?
-    parent: ?*Node, // TODO: nullable?
-    children: std.StringHashMapUnmanaged(*Node) = .{},
-    // symlink_target: ?[]u8, // TODO
-    // redirection: ?*Node // TODO
+    parent: *Node, // undefined for root // TODO
+    // redirection: ?*Node, // TODO: only for .. and . ?
+
+    // defined in filesystems implementations
+    // children: std.StringHashMapUnmanaged(*Node) = .{},
+    // symlink_target: ?[]u8 = null,
 
     pub const VTable = struct {
-        open: *const fn (self: *Node, flags: u64) OpenError!void = @ptrCast(&stubFn),
-        close: *const fn (self: *Node) void = @ptrCast(&stubFn),
-        read: *const fn (self: *Node, buf: []u8, offset: os.off_t) ReadError!usize = @ptrCast(&stubFn),
-        readLink: *const fn (self: *Node, buf: []u8) ReadLinkError!usize = @ptrCast(&stubFn),
-        readDir: *const fn (self: *Node, index: usize) ReadDirError!*DirectoryEntry = @ptrCast(&stubFn),
-        write: *const fn (self: *Node, buf: []const u8, offset: os.off_t) WriteError!usize = @ptrCast(&stubFn),
-        ioctl: *const fn (self: *Node, request: u64, arg: *anyopaque) DefaultError!u64 = @ptrCast(&stubFn), // return u64?
-        chmod: *const fn (self: *Node, mode: os.mode_t) DefaultError!void = &stubChmod, // @ptrCast(&stubFn), // TODO: error
-        chown: *const fn (self: *Node, uid: os.uid_t, gid: os.gid_t) DefaultError!void = @ptrCast(&stubFn), // TODO: error
-        truncate: *const fn (self: *Node, length: usize) DefaultError!void = @ptrCast(&stubFn), // TODO: error
-        unlink: *const fn (self: *Node, name: []const u8) DefaultError!void = @ptrCast(&stubFn), // TODO: error
-        stat: *const fn (self: *Node, statbuf: *os.Stat) StatError!void = @ptrCast(&stubFn),
+        // read_vnode
+        // write_vnode
+        // remove_vnode
+        // secure_vnode
+        // resolve
+        // access (man 2 access)
 
-        pub const stub: VTable = .{};
+        create: *const fn (parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void = @ptrCast(&stubFn),
+        mkdir: *const fn (parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void = @ptrCast(&stubFn),
+        symlink: *const fn (parent: *Node, name: []const u8, target: []const u8) CreateError!void = @ptrCast(&stubFn),
+        link: *const fn (parent: *Node, name: []const u8, node: *Node) CreateError!void = @ptrCast(&stubFn),
+        // rename: *const fn (parent: *Node, name: []const u8, node: *Node) DefaultError!void = @ptrCast(&stubFn),
+        unlink: *const fn (parent: *Node, name: []const u8) UnlinkError!void = @ptrCast(&stubFn),
+        // rmdir: *const fn (parent: *Node, name: []const u8) DefaultError!void = @ptrCast(&stubFn),
+        readlink: *const fn (node: *Node, buf: []u8) ReadLinkError!usize = @ptrCast(&stubFn),
 
-        fn stubChmod(self: *Node, mode: os.mode_t) DefaultError!void {
-            self.stat.mode &= ~@as(os.mode_t, 0o777);
-            self.stat.mode |= mode & 0o777;
-        }
+        // opendir
+        // closedir
+        // free_context_dir
+        // rewinddir
+        readdir: *const fn (node: *Node, index: usize) ReadDirError!*DirectoryEntry = @ptrCast(&stubFn),
+
+        open: *const fn (node: *Node, flags: u64) OpenError!void = @ptrCast(&stubFn),
+        close: *const fn (node: *Node) void = @ptrCast(&stubFn),
+        // free_context
+        read: *const fn (node: *Node, buf: []u8, offset: os.off_t) ReadError!usize = @ptrCast(&stubFn),
+        write: *const fn (node: *Node, buf: []const u8, offset: os.off_t) WriteError!usize = @ptrCast(&stubFn),
+        ioctl: *const fn (node: *Node, request: u64, arg: *anyopaque) DefaultError!u64 = @ptrCast(&stubFn),
+        // setflags
+        // rstat
+        // wstat
+        // fsync
+
+        // init
+        // mount
+        // unmount
+        // sync
+
+        // rfsstat
+        // wfsstat
+
+        // open_indexdir
+        // close_indexdir
+        // free_context_indexdir
+        // rewind_indexdir
+        // read_indexdir
+
+        // create_index
+        // remove_index
+        // rename_index
+        // stat_index
+
+        // open_attrdir
+        // close_attrdir
+        // free_context_attrdir
+        // rewind_attrdir
+        // read_attrdir
+
+        // write_attr
+        // read_attr
+        // remove_attr
+        // rename_attr
+        // stat_attr
+
+        // open_query
+        // close_query
+        // free_context
+        // read_query
+
+        chmod: *const fn (node: *Node, mode: os.mode_t) DefaultError!void = @ptrCast(&stubFn),
+        chown: *const fn (node: *Node, uid: os.uid_t, gid: os.gid_t) DefaultError!void = @ptrCast(&stubFn),
+        truncate: *const fn (node: *Node, length: usize) DefaultError!void = @ptrCast(&stubFn),
+        stat: *const fn (node: *Node, statbuf: *os.Stat) StatError!void = @ptrCast(&stubFn),
 
         fn stubFn() !void {
-            return error.Unexpected;
+            return error.OperationNotSupported;
         }
     };
 
@@ -71,6 +134,19 @@ pub const Node = struct {
         unix_domain_socket = os.DT.SOCK,
         whiteout = os.DT.WHT,
         unknown = os.DT.UNKNOWN,
+
+        pub inline fn fromMode(mode: os.mode_t) Kind {
+            return switch (mode & os.S.IFMT) {
+                os.S.IFDIR => .directory,
+                os.S.IFCHR => .character_device,
+                os.S.IFBLK => .block_device,
+                os.S.IFREG => .file,
+                os.S.IFIFO => .named_pipe,
+                os.S.IFLNK => .symlink,
+                os.S.IFSOCK => .unix_domain_socket,
+                else => .unknown,
+            };
+        }
     };
 
     pub const Stream = struct {
@@ -122,34 +198,46 @@ pub const Node = struct {
         }
     };
 
-    pub fn init(name: []const u8, fs: ?*FileSystem, parent: ?*Node) !*Node {
+    pub fn init(
+        vtable: *const VTable,
+        name: []const u8,
+        parent: *Node,
+        mode: os.mode_t,
+    ) !*Node {
         const node = try root.allocator.create(Node);
+        errdefer root.allocator.destroy(node);
+
         node.* = .{
-            .vtable = undefined,
+            .vtable = vtable, // TODO
+            .context = undefined, // TODO
             .name = try root.allocator.dupe(u8, name),
-            .kind = undefined,
+            .kind = Kind.fromMode(mode),
             .stat = .{
-                .dev = undefined,
-                .ino = undefined,
-                .mode = 0o666,
-                .nlink = 0,
+                .dev = 0, // undefined,
+                .ino = 0, // undefined,
+                .mode = mode,
+                .nlink = 1,
                 .uid = 0,
                 .gid = 0,
-                .rdev = undefined,
-                .size = undefined,
-                .blksize = undefined,
-                .blocks = undefined,
+                .rdev = 0, // undefined,
+                .size = 0,
+                .blksize = 0, // undefined,
+                .blocks = 0,
                 .atim = time.realtime,
                 .mtim = time.realtime,
                 .ctim = time.realtime,
+                .birthtim = time.realtime,
             },
-            .open_flags = 0,
-            .mount_point = null,
             .refcount = 0,
-            .filesystem = fs,
             .parent = parent,
         };
+
         return node;
+    }
+
+    // TODO
+    pub inline fn can_mmap(self: *Node) bool {
+        return std.os.S.ISREG(self.stat.mode);
     }
 
     pub fn getEffectiveNode(self: *Node, follow_symlinks: bool) *Node {
@@ -168,14 +256,28 @@ pub const Node = struct {
         return self;
     }
 
+    // TODO: lock defer unlock by default for everything
+    // TODO: modify atime too?
+    // TODO: asserts
+
+    pub inline fn readlink(self: *Node, buf: []u8) ReadLinkError!void {
+        if (self.kind != .symlink) return error.IsNotLink;
+        return self.vtable.readlink(self, buf);
+    }
+
+    pub inline fn readdir(self: *Node, index: usize) ReadDirError!*DirectoryEntry {
+        if (self.kind != .directory) return error.IsNotDir;
+        return self.vtable.readdir(self, index);
+    }
+
     // TODO
-    pub fn open(self: *Node, flags: u64) OpenError!*Node {
+    pub inline fn open(self: *Node, flags: u64) OpenError!*Node {
         self.refcount += 1;
         return self.vtable.open(self, flags);
     }
 
     // TODO
-    pub fn close(self: *Node) void {
+    pub inline fn close(self: *Node) void {
         self.refcount -= 1;
         if (self.refcount == 0) {
             self.vtable.close(self);
@@ -186,16 +288,6 @@ pub const Node = struct {
     pub inline fn read(self: *Node, buf: []u8, offset: os.off_t) ReadError!usize {
         // TODO check flags for open for reading + merge with readLink and readDir?
         return self.vtable.read(self, buf, offset);
-    }
-
-    pub inline fn readLink(self: *Node, buf: []u8) ReadLinkError!void {
-        if (self.kind != .symlink) return error.IsNotLink;
-        return self.vtable.readLink(self, buf);
-    }
-
-    pub inline fn readDir(self: *Node, index: usize) ReadDirError!*DirectoryEntry {
-        if (self.kind != .directory) return error.IsNotDir;
-        return self.vtable.readDir(self, index);
     }
 
     pub inline fn write(self: *Node, buf: []const u8, offset: os.off_t) WriteError!usize {
@@ -218,41 +310,34 @@ pub const Node = struct {
     pub inline fn truncate(self: *Node) DefaultError!void {
         return self.vtable.truncate(self);
     }
+
+    pub inline fn stat(self: *Node, statbuf: *os.Stat) StatError!void {
+        return self.vtable.stat(self, statbuf);
+    }
 };
 
-// TODO
+// TODO: unused
 pub const FileSystem = struct {
     vtable: *const VTable,
+    context: *anyopaque,
 
     pub const VTable = struct {
-        // TODO: merge createFile and makeDir?
-        createFile: *const fn (self: *FileSystem, parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void,
-        makeDir: *const fn (self: *FileSystem, parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void,
-        symlink: *const fn (self: *FileSystem, parent: *Node, name: []const u8, target: []const u8) CreateError!void,
+        create: *const fn (self: *FileSystem, parent: *Node, name: []const u8, mode: os.mode_t) CreateError!*Node,
+        symlink: *const fn (self: *FileSystem, parent: *Node, name: []const u8, target: []const u8) CreateError!*Node,
+        link: *const fn (self: *FileSystem, parent: *Node, name: []const u8, node: *Node) CreateError!*Node,
     };
 
-    // TODO
-    // pub fn createFile(self: *FileSystem, name: []const u8) !*VNode {
-    //     const name_dup = try root.allocator.dupe(u8, name);
-    //     errdefer root.allocator.free(name_dup);
-    //     const file = try self.vtable.createFile(self, name);
-    //     file.name = name_dup;
-    //     return file;
-    // }
+    pub inline fn create(self: *FileSystem, parent: *Node, name: []const u8, mode: os.mode_t) CreateError!*Node {
+        return self.vtable.create(self, parent, name, mode);
+    }
 
-    // pub fn createDir(self: *FileSystem, name: []const u8) !*VNode {
-    //     const name_dup = try root.allocator.dupe(u8, name);
-    //     errdefer root.allocator.free(name_dup);
-    //     const dir = try self.vtable.createDir(self, name);
-    //     dir.name = name_dup;
-    //     return dir;
-    // }
+    pub inline fn symlink(self: *FileSystem, parent: *Node, name: []const u8, target: []const u8) CreateError!*Node {
+        return self.vtable.symlink(self, parent, name, target);
+    }
 
-    // pub fn createSymlink(self: *FileSystem, name: []const u8, target: []const u8) !*VNode {
-    //     const symlink = try self.vtable.createSymlink(self, name, target);
-    //     symlink.name = try root.allocator.dupe(u8, name);
-    //     return symlink;
-    // }
+    pub inline fn link(self: *FileSystem, parent: *Node, name: []const u8, node: *Node) CreateError!*Node {
+        return self.vtable.create(self, parent, name, node);
+    }
 };
 
 pub const FileDescriptor = struct {
@@ -261,14 +346,15 @@ pub const FileDescriptor = struct {
     // TODO: mode, lock, flags, refcount?
 };
 
-pub const MountFn = *const fn (parent: *Node, target: []const u8, source: *Node) CreateError!*Node;
+pub const MountFn = *const fn (parent: *Node, name: []const u8, source: *Node) CreateError!*Node;
 
 var filesystems: std.StringHashMapUnmanaged(MountFn) = .{};
-var root_node: *Node = undefined;
+pub var root_node: *Node = undefined;
 var vfs_lock: SpinLock = .{};
+var dev_id_counter: os.dev_t = 0;
 
 pub fn init() void {
-    root_node = Node.init("", null, null) catch unreachable;
+    root_node = Node.init(undefined, "", undefined, undefined) catch unreachable; // TODO
 }
 
 pub fn registerFileSystem(name: []const u8, mountFn: MountFn) !void {
@@ -281,22 +367,65 @@ pub fn registerFileSystem(name: []const u8, mountFn: MountFn) !void {
     log.info("registered filesystem `{s}`", .{name});
 }
 
-pub fn createFile(name: []const u8, mode: os.mode_t, comptime is_dir: bool) !void {
-    _ = is_dir;
-    _ = mode;
-    _ = name;
-    // TODO
+pub fn allocDevID() os.dev_t {
+    return @atomicRmw(os.dev_t, &dev_id_counter, .Add, 1, .Monotonic);
 }
 
-pub fn symlink(name: []const u8, target: []const u8) !void {
+/// parent: new node directory
+/// source: new node original path e.g. /dev/sda1
+/// target: path for the new node
+/// fs_name: file system name
+pub fn mount(parent: *Node, source: ?[]const u8, target: []const u8, fs_name: []const u8) !void {
+    _ = fs_name;
     _ = target;
-    _ = name;
+    _ = source;
+    _ = parent;
+    vfs_lock.lock();
+    defer vfs_lock.unlock();
+
     // TODO
 }
 
-pub fn unlink(name: []const u8) !void {
-    _ = name;
-    // TODO
+// TODO
+
+// pub fn create(parent: *Node, name: []const u8, mode: os.mode_t) !*Node {
+//     _ = mode;
+//     _ = name;
+//     _ = parent;
+//     // TODO
+// }
+
+// pub fn symlink(parent: *Node, name: []const u8, target: []const u8) !void {
+//     _ = target;
+//     _ = name;
+//     _ = parent;
+//     // TODO
+// }
+
+// pub fn unlink(parent: *Node, name: []const u8) !void {
+//     _ = name;
+//     _ = parent;
+//     // TODO
+// }
+
+pub fn create(parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void {
+    return parent.vtable.create(parent, name, mode);
+}
+
+pub fn mkdir(parent: *Node, name: []const u8, mode: os.mode_t) CreateError!void {
+    return parent.vtable.mkdir(parent, name, mode);
+}
+
+pub fn symlink(parent: *Node, name: []const u8, target: []const u8) CreateError!void {
+    return parent.vtable.symlink(parent, name, target);
+}
+
+pub fn link(parent: *Node, name: []const u8, node: *Node) !CreateError!void {
+    return parent.vtable.link(parent, name, node);
+}
+
+pub fn unlink(parent: *Node, name: []const u8) DefaultError!void {
+    return parent.vtable.unlink(parent, name);
 }
 
 fn makePath(path: []const u8, fs_name: []const u8) !*Node {
@@ -382,17 +511,6 @@ const Path2Node = struct {
     }
 };
 
-pub fn mount(parent: *Node, source: []const u8, target: []const u8, fs_name: []const u8) !void {
-    _ = fs_name;
-    _ = target;
-    _ = source;
-    _ = parent;
-    vfs_lock.lock();
-    defer vfs_lock.unlock();
-
-    // TODO
-}
-
 // pub fn mount(path: []const u8, file: *Node) !*Node {
 //     std.debug.assert(std.fs.path.isAbsolute(path));
 //     std.debug.assert(file.mountpoint == null); // TODO
@@ -430,7 +548,7 @@ pub fn mount(parent: *Node, source: []const u8, target: []const u8, fs_name: []c
 //     return node;
 // }
 
-// TODO
+// // TODO
 // fn readDirMapper(self: *Node, index: usize) ReadDirError!*DirectoryEntry {
 //     if (self.device) |device| {
 //         const dev: *Tree.Node = @ptrCast(device);

@@ -45,7 +45,7 @@ pub const Timer = struct {
 
         self.idx = armed_timers.items.len;
         self.done = false;
-        armed_timers.append(root.allocator, self) catch |err| return err;
+        try armed_timers.append(root.allocator, self);
     }
 
     fn disarm(self: *Timer) void {
@@ -71,7 +71,7 @@ var armed_timers: std.ArrayListUnmanaged(*Timer) = .{};
 
 pub fn init() void {
     const boot_time = root.boot_time_request.response.?.boot_time;
-    realtime.tv_sec = boot_time;
+    realtime.sec = boot_time;
 
     setFrequency(timer_freq);
     const timer_vector = idt.allocVector();
@@ -106,7 +106,7 @@ fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
 
     defer apic.eoi();
 
-    const interval: timespec = .{ .tv_nsec = std.time.ns_per_s / timer_freq };
+    const interval: timespec = .{ .nsec = std.time.ns_per_s / timer_freq };
     monotonic.add(interval);
     realtime.add(interval);
 
@@ -115,7 +115,7 @@ fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
             if (timer.done) continue;
 
             timer.when.sub(interval);
-            if (timer.when.tv_sec == 0 and timer.when.tv_nsec == 0) {
+            if (timer.when.sec == 0 and timer.when.nsec == 0) {
                 timer.event.trigger(false);
                 timer.done = true;
             }
@@ -127,8 +127,8 @@ fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
 
 pub fn nanosleep(ns: u64) void {
     const duration: timespec = .{
-        .tv_sec = @intCast(ns / std.time.ns_per_s),
-        .tv_nsec = @intCast(ns % std.time.ns_per_s),
+        .sec = @intCast(ns / std.time.ns_per_s),
+        .nsec = @intCast(ns % std.time.ns_per_s),
     };
     const timer = Timer.init(duration) catch return;
     defer timer.deinit();

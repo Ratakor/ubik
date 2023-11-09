@@ -27,11 +27,15 @@ pub const Process = struct {
     children: std.ArrayListUnmanaged(*Process),
     child_events: std.ArrayListUnmanaged(*Event),
     event: Event,
+    // running_time: usize, // TODO
+    user: std.os.uid_t,
+    group: std.os.gid_t,
+
+    // I/O context
     cwd: *vfs.Node,
     umask: std.os.mode_t,
     fds_lock: SpinLock,
-    fds: std.ArrayListUnmanaged(*vfs.FileDescriptor), // TODO: hashmap?
-    // running_time: usize, // TODO
+    fds: std.ArrayListUnmanaged(*vfs.FileDescriptor),
 
     var next_pid = std.atomic.Atomic(std.os.pid_t).init(0);
 
@@ -315,6 +319,10 @@ pub fn init() void {
 
 pub inline fn currentThread() *Thread {
     return smp.thisCpu().current_thread;
+}
+
+pub inline fn currentProcess() *Process {
+    return currentThread().process;
 }
 
 pub inline fn setErrno(errno: std.os.E) void {

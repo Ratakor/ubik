@@ -42,16 +42,16 @@ pub fn log(
 
     if (comptime scope != .gpa) {
         dmesg_writer.print("[{d: >5}.{d:0>6}] ", .{
-            @as(usize, @intCast(time.monotonic.tv_sec)),
-            @as(usize, @intCast(time.monotonic.tv_nsec)) / std.time.ns_per_ms,
+            @as(usize, @intCast(time.monotonic.sec)),
+            @as(usize, @intCast(time.monotonic.nsec)) / std.time.ns_per_ms,
         }) catch {};
         dmesg_writer.print(fmt, args) catch {};
     }
 
     if (comptime builtin.mode == .Debug) {
         serial.print("[{d: >5}.{d:0>6}] ", .{
-            @as(usize, @intCast(time.monotonic.tv_sec)),
-            @as(usize, @intCast(time.monotonic.tv_nsec)) / std.time.ns_per_ms,
+            @as(usize, @intCast(time.monotonic.sec)),
+            @as(usize, @intCast(time.monotonic.nsec)) / std.time.ns_per_ms,
         });
         serial.print(fmt, args);
     }

@@ -1,3 +1,5 @@
+//! https://pubs.opengroup.org/onlinepubs/9699919799/
+
 const std = @import("std");
 const linux = std.os.linux;
 
@@ -9,19 +11,30 @@ pub const MAP = linux.MAP;
 pub const DT = linux.DT;
 pub const O = linux.O;
 
-pub const ino_t = linux.ino_t;
-pub const off_t = linux.off_t;
-pub const dev_t = linux.dev_t;
-pub const mode_t = linux.mode_t;
-pub const pid_t = linux.pid_t;
-pub const fd_t = linux.fd_t;
-pub const uid_t = linux.uid_t;
-pub const gid_t = linux.gid_t;
-pub const clock_t = linux.clock_t;
-pub const time_t = linux.time_t;
-pub const nlink_t = linux.nlink_t;
-pub const blksize_t = linux.blksize_t;
+// TODO: rename those the zig way?
 pub const blkcnt_t = linux.blkcnt_t;
+pub const blksize_t = linux.blksize_t;
+pub const clock_t = linux.clock_t;
+pub const clockid_t = i32;
+pub const dev_t = linux.dev_t;
+pub const fsblkcnt_t = u64;
+pub const fsfilcnt_t = u64;
+pub const gid_t = linux.gid_t;
+pub const id_t = u32;
+pub const ino_t = linux.ino_t;
+pub const key_t = i32;
+pub const mode_t = linux.mode_t;
+pub const nlink_t = linux.nlink_t;
+pub const off_t = linux.off_t;
+pub const pid_t = linux.pid_t;
+pub const size_t = usize;
+pub const ssize_t = isize;
+pub const suseconds_t = i64;
+pub const time_t = linux.time_t;
+pub const timer_t = *anyopaque;
+pub const uid_t = linux.uid_t;
+
+pub const fd_t = linux.fd_t;
 
 pub const Stat = extern struct {
     /// device
@@ -38,7 +51,7 @@ pub const Stat = extern struct {
     gid: gid_t,
     /// device number, if device
     rdev: dev_t,
-    /// size of file in bytes
+    /// size of file in bytes or length of target pathname for symlink
     size: off_t,
     /// optimal block size for I/O
     blksize: blksize_t,
@@ -50,54 +63,52 @@ pub const Stat = extern struct {
     mtim: timespec,
     /// time of last status change
     ctim: timespec,
+
+    /// time of file creation
+    birthtim: timespec,
 };
 
 pub const DirectoryEntry = extern struct {
-    /// file serial number
     ino: ino_t,
-    /// current location in directory stream
     off: off_t,
-    /// file name length
     reclen: u16,
-    /// type of file, same as vfs.Node.Kind and DT
     type: u8,
-    /// file name component
     name: [255:0]u8,
 };
 
 pub const timespec = extern struct {
-    tv_sec: isize = 0,
-    tv_nsec: isize = 0,
+    sec: time_t = 0,
+    nsec: isize = 0,
 
     pub const max_ns = std.time.ns_per_s - 1;
 
     pub inline fn add(self: *timespec, ts: timespec) void {
-        if (self.tv_nsec + ts.tv_nsec > max_ns) {
-            self.tv_nsec = (self.tv_nsec + ts.tv_nsec) - std.time.ns_per_s;
-            self.tv_sec += 1;
+        if (self.nsec + ts.nsec > max_ns) {
+            self.nsec = self.nsec + ts.nsec - std.time.ns_per_s;
+            self.sec += 1;
         } else {
-            self.tv_nsec += ts.tv_nsec;
+            self.nsec += ts.nsec;
         }
-        self.tv_sec += ts.tv_sec;
+        self.sec += ts.sec;
     }
 
     pub inline fn sub(self: *timespec, ts: timespec) void {
-        if (ts.tv_nsec > self.tv_nsec) {
-            self.tv_nsec = max_ns - (ts.tv_nsec - self.tv_nsec);
-            if (self.tv_sec == 0) {
-                self.tv_nsec = 0;
+        if (ts.nsec > self.nsec) {
+            self.nsec = max_ns - (ts.nsec - self.nsec);
+            if (self.sec == 0) {
+                self.nsec = 0;
                 return;
             }
-            self.tv_sec -= 1;
+            self.sec -= 1;
         } else {
-            self.tv_nsec -= ts.tv_nsec;
+            self.nsec -= ts.nsec;
         }
 
-        if (ts.tv_sec > self.tv_sec) {
-            self.tv_sec = 0;
-            self.tv_nsec = 0;
+        if (ts.sec > self.sec) {
+            self.sec = 0;
+            self.nsec = 0;
         } else {
-            self.tv_sec -= ts.tv_sec;
+            self.sec -= ts.sec;
         }
     }
 };
