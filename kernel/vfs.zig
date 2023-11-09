@@ -346,7 +346,7 @@ pub const FileDescriptor = struct {
     // TODO: mode, lock, flags, refcount?
 };
 
-pub const MountFn = *const fn (parent: *Node, name: []const u8, source: *Node) CreateError!*Node;
+// pub const MountFn = *const fn (parent: *Node, name: []const u8, source: *Node) CreateError!*Node;
 
 var filesystems: std.StringHashMapUnmanaged(MountFn) = .{};
 pub var root_node: *Node = undefined;
@@ -375,6 +375,7 @@ pub fn allocDevID() os.dev_t {
 /// source: new node original path e.g. /dev/sda1
 /// target: path for the new node
 /// fs_name: file system name
+pub const MountFn = *const fn (parent: *Node, name: []const u8, source: *Node) CreateError!*Node;
 pub fn mount(parent: *Node, source: ?[]const u8, target: []const u8, fs_name: []const u8) !void {
     _ = fs_name;
     _ = target;
@@ -448,6 +449,55 @@ fn makePath(path: []const u8, fs_name: []const u8) !*Node {
     return node;
 }
 
+// TODO: this uses Entry and Tree from previous commits
+// pub const MountFn = *const fn (source: []const u8, target: []const u8) CreateError!*Node;
+// pub fn mount(path: []const u8, local_root: *Node) !*Node {
+//     if (!std.fs.path.isAbsolute(path)) return error.PathIsNotAbsolute;
+//     // std.debug.assert(local_root.mountpoint == null); // TODO
+
+//     vfs_lock.lock();
+//     defer vfs_lock.unlock();
+
+//     // TODO needed?
+//     local_root.lock.lock();
+//     defer local_root.lock.unlock();
+//     // local_root.refcount = -1;
+
+//     var node = root_node;
+//     var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
+
+//     // TODO: this is makePath
+//     while (iter.next()) |component| {
+//         const gop = try node.children.getOrPut(root.allocator, component);
+//         if (gop.found_existing) {
+//             node = gop.value_ptr.*;
+//         } else {
+//             // fail here?
+
+//             // const entry = try root.allocator.create(Entry);
+//             // entry.* = .{ .name = try root.allocator.dupe(u8, component) };
+//             const new_node = try root.allocator.create(Node);
+//             // const new_node = try Node.init(); // TODO
+//             gop.value_ptr.* = new_node;
+//             node = new_node;
+//         }
+//     }
+
+//     // const entry = node.value;
+//     // if (entry.file) |_| {
+//     //     log.warn("path {s} is already mounted!", .{path});
+//     //     return error.AlreadyMounted;
+//     // }
+//     // entry.file = local_root;
+//     // return node;
+
+//     // local_root.mountpoint = node;
+
+//     log.info("mounted `{s}` to `{s}`", .{ local_root.name, path });
+
+//     return node;
+// }
+
 // TODO: rework
 const Path2Node = struct {
     target_parent: *Node,
@@ -510,43 +560,6 @@ const Path2Node = struct {
         unreachable;
     }
 };
-
-// pub fn mount(path: []const u8, file: *Node) !*Node {
-//     std.debug.assert(std.fs.path.isAbsolute(path));
-//     std.debug.assert(file.mountpoint == null); // TODO
-
-//     vfs_lock.lock();
-//     defer vfs_lock.unlock();
-
-//     file.refcount = -1;
-
-//     var node = root_node;
-//     var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
-
-//     // TODO: this is makePath, extract it?
-//     while (iter.next()) |component| {
-//         const gop = try node.children.getOrPut(root.allocator, component);
-//         if (gop.found_existing) {
-//             node = gop.value_ptr.*;
-//         } else {
-//             const new_node = try root.allocator.create(Node);
-//             // const new_node = try Node.init(); // TODO
-//             gop.value_ptr.* = new_node;
-//             node = new_node;
-//         }
-//     }
-
-//     // TODO: mountpoint?
-//     // if (node.mountpoint) |_| {
-//     //     log.warn("path {s} is already mounted!", .{path});
-//     //     // TODO: return or throw err?
-//     // }
-//     file.mountpoint = node;
-
-//     log.info("mounted `{s}` to `{s}`", .{ file.name, path });
-
-//     return node;
-// }
 
 // // TODO
 // fn readDirMapper(self: *Node, index: usize) ReadDirError!*DirectoryEntry {

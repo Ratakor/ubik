@@ -149,11 +149,11 @@ fn parse(comptime T: type, addr: u64) void {
         const sdt: *const SDT = @ptrFromInt(entry + vmm.hhdm_offset);
         sdt.doChecksum();
 
-        switch (std.mem.readInt(u32, &sdt.signature, .little)) {
-            std.mem.readInt(u32, "APIC", .little) => handleMADT(sdt),
-            std.mem.readInt(u32, "FACP", .little) => handleFADT(sdt),
-            std.mem.readInt(u32, "HPET", .little) => {}, // ignored
-            std.mem.readInt(u32, "WAET", .little) => {}, // ignored
+        switch (std.mem.readInt(u32, &sdt.signature, arch.endian)) {
+            std.mem.readInt(u32, "APIC", arch.endian) => handleMADT(sdt),
+            std.mem.readInt(u32, "FACP", arch.endian) => handleFADT(sdt),
+            std.mem.readInt(u32, "HPET", arch.endian) => {}, // ignored
+            std.mem.readInt(u32, "WAET", arch.endian) => {}, // ignored
             else => log.warn("unhandled ACPI table: {s}", .{sdt.signature}),
         }
     }
@@ -161,7 +161,7 @@ fn parse(comptime T: type, addr: u64) void {
 
 /// https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#multiple-apic-description-table-madt
 fn handleMADT(madt: *const SDT) void {
-    apic.lapic_base = std.mem.readInt(u32, madt.data()[0..4], .little);
+    apic.lapic_base = std.mem.readInt(u32, madt.data()[0..4], arch.endian);
     log.info("lapic base: 0x{x}", .{apic.lapic_base});
     var data = madt.data()[8..]; // discard madt header
 
@@ -268,15 +268,15 @@ inline fn parseInt(s5_addr: []const u8, value: *u64) usize {
             return 2;
         },
         0xb => {
-            value.* = std.mem.readInt(u16, s5_addr[1..3], .little);
+            value.* = std.mem.readInt(u16, s5_addr[1..3], arch.endian);
             return 3;
         },
         0xc => {
-            value.* = std.mem.readInt(u32, s5_addr[1..5], .little);
+            value.* = std.mem.readInt(u32, s5_addr[1..5], arch.endian);
             return 5;
         },
         0xe => {
-            value.* = std.mem.readInt(u64, s5_addr[1..9], .little);
+            value.* = std.mem.readInt(u64, s5_addr[1..9], arch.endian);
             return 9;
         },
         else => unreachable,

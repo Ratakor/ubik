@@ -1,4 +1,5 @@
 pub const arch = @import("builtin").target.cpu.arch;
+pub const endian = arch.endian();
 
 pub usingnamespace switch (arch) {
     .x86_64 => @import("arch/x86_64.zig"),

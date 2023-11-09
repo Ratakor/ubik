@@ -21,6 +21,7 @@ Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
 
 # File structure
 This shouldn't be in readme.
+TODO: move init function at the end of file?
 
 1. imports
 2. type definitions

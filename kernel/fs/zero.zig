@@ -22,23 +22,9 @@ const Null = struct {
         return buf.len;
     }
 
-    fn init() !*vfs.Node {
-        const node = try root.allocator.create(vfs.Node);
-
-        node.* = .{
-            .vtable = &vtable,
-            .name = try root.allocator.dupe(u8, "null"),
-            .stat = .{
-                .ino = 0,
-                .mode = 0o666,
-                .uid = 0,
-                .gid = 0,
-            },
-            .kind = .character_device,
-            .inode = 0,
-        };
-
-        return node;
+    fn init() *vfs.Node {
+        // 0o666 = std.fs.File.default_mode
+        return vfs.Node.init(&vtable, "null", undefined, 0o666 | std.os.S.IFCHR) catch unreachable;
     }
 };
 
@@ -63,27 +49,12 @@ const Zero = struct {
         return buf.len;
     }
 
-    fn init() !*vfs.Node {
-        const node = try root.allocator.create(vfs.Node);
-
-        node.* = .{
-            .vtable = &vtable,
-            .name = try root.allocator.dupe(u8, "zero"),
-            .stat = .{
-                .ino = 0,
-                .mode = 0o666,
-                .uid = 0,
-                .gid = 0,
-            },
-            .kind = .character_device,
-            .inode = 0,
-        };
-
-        return node;
+    fn init() *vfs.Node {
+        return vfs.Node.init(&vtable, "zero", undefined, 0o666 | std.os.S.IFCHR) catch unreachable;
     }
 };
 
 pub fn init() void {
-    _ = vfs.mount("/dev/null", Null.init() catch unreachable) catch unreachable;
-    _ = vfs.mount("/dev/zero", Zero.init() catch unreachable) catch unreachable;
+    _ = vfs.mount("/dev/null", Null.init()) catch unreachable;
+    _ = vfs.mount("/dev/zero", Zero.init()) catch unreachable;
 }

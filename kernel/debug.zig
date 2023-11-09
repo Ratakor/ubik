@@ -242,7 +242,7 @@ fn initDebugInfo() !void {
     const kernel_file = root.kernel_file_request.response.?.kernel_file;
 
     debug_info = .{
-        .endian = .little,
+        .endian = arch.endian,
         .sections = .{
             .{ .data = try getSectionSlice(kernel_file.address, ".debug_info"), .owned = true },
             .{ .data = try getSectionSlice(kernel_file.address, ".debug_abbrev"), .owned = true },
@@ -266,8 +266,8 @@ fn initDebugInfo() !void {
 }
 
 fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
-    const sh_strndx = std.mem.readInt(u16, elf[62 .. 62 + 2], .little);
-    const sh_num = std.mem.readInt(u16, elf[60 .. 60 + 2], .little);
+    const sh_strndx = std.mem.readInt(u16, elf[62 .. 62 + 2], arch.endian);
+    const sh_num = std.mem.readInt(u16, elf[60 .. 60 + 2], arch.endian);
 
     if (sh_strndx > sh_num) {
         return error.ShstrndxOutOfRange;
@@ -288,22 +288,22 @@ fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
 }
 
 fn getShdr(elf: [*]const u8, idx: u16) []const u8 {
-    const sh_offset = std.mem.readInt(u64, elf[40 .. 40 + 8], .little);
-    const sh_entsize = std.mem.readInt(u16, elf[58 .. 58 + 2], .little);
+    const sh_offset = std.mem.readInt(u64, elf[40 .. 40 + 8], arch.endian);
+    const sh_entsize = std.mem.readInt(u16, elf[58 .. 58 + 2], arch.endian);
     const off = sh_offset + sh_entsize * idx;
 
     return elf[off .. off + sh_entsize];
 }
 
 fn getSectionData(elf: [*]const u8, shdr: []const u8) []const u8 {
-    const offset = std.mem.readInt(u64, shdr[24..][0..8], .little);
-    const size = std.mem.readInt(u64, shdr[32..][0..8], .little);
+    const offset = std.mem.readInt(u64, shdr[24..][0..8], arch.endian);
+    const size = std.mem.readInt(u64, shdr[32..][0..8], arch.endian);
 
     return elf[offset .. offset + size];
 }
 
 fn getSectionName(names: []const u8, shdr: []const u8) ?[]const u8 {
-    const offset = std.mem.readInt(u32, shdr[0..][0..4], .little);
+    const offset = std.mem.readInt(u32, shdr[0..][0..4], arch.endian);
     const len = std.mem.indexOfScalar(u8, names[offset..], 0) orelse return null;
 
     return names[offset .. offset + len];

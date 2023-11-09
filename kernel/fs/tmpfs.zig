@@ -248,11 +248,12 @@ fn create(parent: *vfs.Node, name: []const u8, mode: std.os.mode_t) vfs.CreateEr
     parent.lock.lock();
     defer parent.lock.unlock();
 
-    const self: *Inode = @ptrCast(@alignCast(parent.context));
-    const gop = try self.children.getOrPut(root.allocator, name);
-    if (gop.found_existing) {
-        return error.PathAlreadyExists;
-    }
+    // TODO
+    // const self: *Inode = @ptrCast(@alignCast(parent.context));
+    // const gop = try self.children.getOrPut(root.allocator, name);
+    // if (gop.found_existing) {
+    //     return error.PathAlreadyExists;
+    // }
 
     const node = try vfs.Node.init(&Inode.vtable, name, parent, mode);
     const inode = try Inode.init(node.kind, null);
@@ -262,7 +263,7 @@ fn create(parent: *vfs.Node, name: []const u8, mode: std.os.mode_t) vfs.CreateEr
     node.stat.gid = sched.currentProcess().group;
     node.stat.blksize = Inode.blksize;
     node.context = @ptrCast(inode);
-    gop.value_ptr.* = node;
+    // gop.value_ptr.* = node;
 }
 
 fn symlink(parent: *vfs.Node, name: []const u8, target: []const u8) vfs.CreateError!void {
@@ -271,11 +272,12 @@ fn symlink(parent: *vfs.Node, name: []const u8, target: []const u8) vfs.CreateEr
     parent.lock.lock();
     defer parent.lock.unlock();
 
-    const self: *Inode = @ptrCast(@alignCast(parent.context));
-    const gop = try self.children.getOrPut(root.allocator, name);
-    if (gop.found_existing) {
-        return error.PathAlreadyExists;
-    }
+    // TODO
+    // const self: *Inode = @ptrCast(@alignCast(parent.context));
+    // const gop = try self.children.getOrPut(root.allocator, name);
+    // if (gop.found_existing) {
+    //     return error.PathAlreadyExists;
+    // }
 
     const node = try vfs.Node.init(&Inode.vtable, name, parent, 0o777 | std.os.S.IFLNK);
     const inode = try Inode.init(node.kind, target);
@@ -285,7 +287,7 @@ fn symlink(parent: *vfs.Node, name: []const u8, target: []const u8) vfs.CreateEr
     node.stat.gid = sched.currentProcess().group;
     node.stat.blksize = Inode.blksize;
     node.context = @ptrCast(inode);
-    gop.value_ptr.* = node;
+    // gop.value_ptr.* = node;
 }
 
 fn link(parent: *vfs.Node, name: []const u8, node: *vfs.Node) vfs.CreateError!void {
@@ -329,8 +331,20 @@ fn mount(parent: *vfs.Node, name: []const u8, _: *vfs.Node) vfs.CreateError!*vfs
 
     // TODO the problem is that this won't work if parent is not of the same filesystem
     // and it returns nothing
-    _ = try create(parent, name, 0o777 | std.os.S.IFDIR);
-    return undefined;
+    // _ = try create(parent, name, 0o777 | std.os.S.IFDIR);
+
+    // TODO: use create
+    const node = try vfs.Node.init(&Inode.vtable, name, parent, 0o777 | std.os.S.IFDIR);
+    const inode = try Inode.init(node.kind, null);
+    node.stat.dev = vfs.allocDevID();
+    node.stat.ino = 0;
+    // node.stat.ino = @atomicRmw(os.ino_t, self.inode_counter, .Add, 1, .Release);
+    node.stat.uid = 0;
+    node.stat.gid = 0;
+    node.stat.blksize = Inode.blksize;
+    node.context = @ptrCast(inode);
+
+    return node;
 }
 
 pub fn init() void {
