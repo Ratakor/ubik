@@ -99,6 +99,7 @@ const exceptions = [_]?[]const u8{
     null,
 };
 
+// TODO: replace isr with a interrupt dispatcher func?
 var isr = [_]InterruptHandler{defaultHandler} ** 256;
 var next_vector: u8 = exceptions.len;
 pub var panic_ipi_vector: u8 = undefined;
@@ -110,9 +111,8 @@ pub fn init() void {
     idtr.base = @intFromPtr(&idt);
 
     inline for (0..256) |i| {
-        const handler = comptime makeStubHandler(i);
+        const handler = makeHandler(i);
         idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
-        // log.info("init idt[{}] with {}", .{ i, handler });
     }
 
     setIST(0x0e, 2); // page fault uses IST 2
@@ -218,7 +218,7 @@ fn defaultHandler(ctx: *Context) callconv(.SysV) void {
     });
 }
 
-fn makeStubHandler(vector: u8) *const fn () callconv(.Naked) void {
+fn makeHandler(comptime vector: u8) *const fn () callconv(.Naked) void {
     return struct {
         fn handler() callconv(.Naked) void {
             const has_error_code = switch (vector) {
@@ -248,6 +248,7 @@ export fn commonStub() callconv(.Naked) void {
         \\je 1f
         \\swapgs
         \\1:
+        \\cld
         \\push %r15
         \\push %r14
         \\push %r13

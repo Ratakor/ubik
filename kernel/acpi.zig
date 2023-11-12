@@ -1,4 +1,5 @@
 //! https://uefi.org/specs/ACPI/6.5/
+//! https://uefi.org/acpi
 
 const std = @import("std");
 const root = @import("root");
@@ -6,6 +7,7 @@ const arch = @import("arch.zig");
 const apic = arch.apic;
 const vmm = root.vmm;
 const log = std.log.scoped(.acpi);
+const readInt = std.mem.readInt;
 
 /// System Description Table
 const SDT = extern struct {
@@ -56,9 +58,9 @@ const RSDP = extern struct {
 
 /// Generic Address Structure
 const GAS = extern struct {
-    address_space: u8 align(1),
-    bit_width: u8 align(1),
-    bit_offset: u8 align(1),
+    address_space_id: u8 align(1),
+    register_bit_width: u8 align(1),
+    register_bit_offset: u8 align(1),
     access_size: u8 align(1),
     address: u64 align(1),
 };
@@ -122,6 +124,25 @@ const FADT = extern struct {
     x_gpe1_block: GAS align(1),
 };
 
+/// High Precision Event Timer
+const HPET = packed struct(u160) {
+    hardware_rev_id: u8,
+    comparator_count: u5,
+    counter_size: u1,
+    reserved0: u1,
+    legacy_replacement: u1,
+    pci_vendor_id: u16,
+    // address: GAS, // `only packed structs layout are allowed in packed types`
+    address_space_id: u8,
+    register_bit_width: u8,
+    register_bit_offset: u8,
+    reserved1: u8,
+    address: u64,
+    hpet_number: u8,
+    minimum_tick: u16,
+    page_protection: u8,
+};
+
 var use_xsdt: bool = undefined;
 var fadt: *const FADT = undefined;
 
@@ -135,25 +156,25 @@ pub fn init() void {
     if (use_xsdt) {
         parse(u64, rsdp.xsdt_addr);
     } else {
-        parse(u32, @intCast(rsdp.rsdt_addr));
+        parse(u32, rsdp.rsdt_addr);
     }
 }
 
-fn parse(comptime T: type, addr: u64) void {
+fn parse(comptime T: type, addr: T) void {
     const rsdt: *const SDT = @ptrFromInt(addr + vmm.hhdm_offset);
-    rsdt.doChecksum();
     log.info("RSDT is at 0x{x}", .{@intFromPtr(rsdt)});
+    rsdt.doChecksum();
 
     const entries = std.mem.bytesAsSlice(T, rsdt.data());
     for (entries) |entry| {
         const sdt: *const SDT = @ptrFromInt(entry + vmm.hhdm_offset);
         sdt.doChecksum();
 
-        switch (std.mem.readInt(u32, &sdt.signature, arch.endian)) {
-            std.mem.readInt(u32, "APIC", arch.endian) => handleMADT(sdt),
-            std.mem.readInt(u32, "FACP", arch.endian) => handleFADT(sdt),
-            std.mem.readInt(u32, "HPET", arch.endian) => {}, // ignored
-            std.mem.readInt(u32, "WAET", arch.endian) => {}, // ignored
+        switch (readInt(u32, &sdt.signature, arch.endian)) {
+            readInt(u32, "APIC", arch.endian) => handleMADT(sdt),
+            readInt(u32, "FACP", arch.endian) => handleFADT(sdt),
+            readInt(u32, "HPET", arch.endian) => {}, // TODO
+            readInt(u32, "WAET", arch.endian) => {}, // ignored
             else => log.warn("unhandled ACPI table: {s}", .{sdt.signature}),
         }
     }
@@ -161,9 +182,9 @@ fn parse(comptime T: type, addr: u64) void {
 
 /// https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#multiple-apic-description-table-madt
 fn handleMADT(madt: *const SDT) void {
-    apic.lapic_base = std.mem.readInt(u32, madt.data()[0..4], arch.endian);
+    apic.lapic_base = readInt(u32, madt.data()[0..4], arch.endian) + vmm.hhdm_offset;
     log.info("lapic base: 0x{x}", .{apic.lapic_base});
-    var data = madt.data()[8..]; // discard madt header
+    var data = madt.data()[8..]; // discard the rest of madt header
 
     while (data.len > 2) {
         const kind = data[0];
@@ -268,15 +289,15 @@ inline fn parseInt(s5_addr: []const u8, value: *u64) usize {
             return 2;
         },
         0xb => {
-            value.* = std.mem.readInt(u16, s5_addr[1..3], arch.endian);
+            value.* = readInt(u16, s5_addr[1..3], arch.endian);
             return 3;
         },
         0xc => {
-            value.* = std.mem.readInt(u32, s5_addr[1..5], arch.endian);
+            value.* = readInt(u32, s5_addr[1..5], arch.endian);
             return 5;
         },
         0xe => {
-            value.* = std.mem.readInt(u64, s5_addr[1..9], arch.endian);
+            value.* = readInt(u64, s5_addr[1..9], arch.endian);
             return 9;
         },
         else => unreachable,

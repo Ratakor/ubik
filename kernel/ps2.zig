@@ -29,7 +29,7 @@ pub fn init() void {
     }
 
     keyboard_vector = idt.allocVector();
-    apic.setIRQRedirect(smp.bsp_lapic_id, keyboard_vector, 1);
+    apic.setIRQRedirect(smp.bsp_lapic_id, keyboard_vector, 1, true);
 
     _ = arch.in(u8, 0x60);
 }

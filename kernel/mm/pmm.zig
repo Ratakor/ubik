@@ -5,6 +5,8 @@ const SpinLock = root.SpinLock;
 const log = std.log.scoped(.pmm);
 const page_size = std.mem.page_size;
 const free_page = false;
+// const used_page = 1;
+// const cache_page = 2;
 
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;

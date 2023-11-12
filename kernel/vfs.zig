@@ -5,7 +5,7 @@ const time = root.time;
 const SpinLock = root.SpinLock;
 const log = std.log.scoped(.vfs);
 
-pub const DirectoryEntry = root.os.system.DirectoryEntry;
+pub const DirectoryEntry = @import("ubik").dirent; // TODO
 
 // TODO
 pub const DefaultError = error{
@@ -32,7 +32,11 @@ pub const Node = struct {
     kind: Kind, // TODO: useless since S.IF exist?
     stat: os.Stat, // TODO mode = 0o666 | S.IFREG by default
     open_flags: u64 = undefined, // TODO: read/write/append, ...
-    mount_point: ?*Node = null, // TODO: idk
+
+    // TODO
+    mount_point: ?*Node = null,
+    mounted_node: ?*Node = null,
+
     refcount: usize, // TODO
     lock: SpinLock = .{}, // TODO: use a u64 with flags and lock with atomic OR
     // status: i32, // TODO
@@ -65,7 +69,8 @@ pub const Node = struct {
         // closedir
         // free_context_dir
         // rewinddir
-        readdir: *const fn (node: *Node, index: usize) ReadDirError!*DirectoryEntry = @ptrCast(&stubFn),
+        // TODO: use a stream for DIR
+        // readdir: *const fn (node: *Node, index: usize) ReadDirError!*DirectoryEntry = @ptrCast(&stubFn),
 
         open: *const fn (node: *Node, flags: u64) OpenError!void = @ptrCast(&stubFn),
         close: *const fn (node: *Node) void = @ptrCast(&stubFn),
@@ -244,6 +249,9 @@ pub const Node = struct {
         // if (self.redirection) |redirection| {
         //     return getEffectiveNode(redirection, follow_symlinks);
         // }
+        if (self.mounted_node) |mounted_node| {
+            return getEffectiveNode(mounted_node, follow_symlinks);
+        }
         if (self.mount_point) |mount_point| {
             return getEffectiveNode(mount_point, follow_symlinks);
         }
@@ -259,6 +267,7 @@ pub const Node = struct {
     // TODO: lock defer unlock by default for everything
     // TODO: modify atime too?
     // TODO: asserts
+    // TODO: call getEffectiveNode and use it instead of self?
 
     pub inline fn readlink(self: *Node, buf: []u8) ReadLinkError!void {
         if (self.kind != .symlink) return error.IsNotLink;
@@ -313,6 +322,14 @@ pub const Node = struct {
 
     pub inline fn stat(self: *Node, statbuf: *os.Stat) StatError!void {
         return self.vtable.stat(self, statbuf);
+    }
+
+    pub fn writePath(self: *Node, writer: anytype) !void {
+        if (self.parent) |parent| {
+            try parent.writePath(writer);
+            try writer.writeAll(std.fs.path.sep_str);
+        }
+        try writer.writeAll(self.name);
     }
 };
 
@@ -383,7 +400,6 @@ pub fn mount(parent: *Node, source: ?[]const u8, target: []const u8, fs_name: []
     _ = parent;
     vfs_lock.lock();
     defer vfs_lock.unlock();
-
     // TODO
 }
 
@@ -429,31 +445,17 @@ pub fn unlink(parent: *Node, name: []const u8) DefaultError!void {
     return parent.vtable.unlink(parent, name);
 }
 
-fn makePath(path: []const u8, fs_name: []const u8) !*Node {
-    if (!std.fs.path.isAbsolute(path)) return error.PathIsNotAbsolute;
-    const fs = filesystems.get(fs_name) orelse return error.UnknownFileSystem;
-    _ = fs;
-
-    var node = root_node;
-    var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
-    while (iter.next()) |component| {
-        const gop = try node.children.getOrPut(root.allocator, component);
-        if (gop.found_existing) {
-            node = gop.value_ptr.*;
-        } else {
-            const new_node = try Node.init(); // TODO fs.create
-            gop.value_ptr.* = new_node;
-            node = new_node;
-        }
-    }
-    return node;
-}
+const Entry = struct {
+    name: []u8,
+    file: ?*Node = null, // inode
+    // device: ?[]u8 = null,
+    // fs_type: ?[]u8 = null,
+};
 
 // TODO: this uses Entry and Tree from previous commits
 // pub const MountFn = *const fn (source: []const u8, target: []const u8) CreateError!*Node;
 // pub fn mount(path: []const u8, local_root: *Node) !*Node {
 //     if (!std.fs.path.isAbsolute(path)) return error.PathIsNotAbsolute;
-//     // std.debug.assert(local_root.mountpoint == null); // TODO
 
 //     vfs_lock.lock();
 //     defer vfs_lock.unlock();
@@ -465,37 +467,39 @@ fn makePath(path: []const u8, fs_name: []const u8) !*Node {
 
 //     var node = root_node;
 //     var iter = std.mem.tokenizeScalar(u8, path, std.fs.path.sep);
-
-//     // TODO: this is makePath
 //     while (iter.next()) |component| {
 //         const gop = try node.children.getOrPut(root.allocator, component);
 //         if (gop.found_existing) {
 //             node = gop.value_ptr.*;
 //         } else {
-//             // fail here?
-
-//             // const entry = try root.allocator.create(Entry);
-//             // entry.* = .{ .name = try root.allocator.dupe(u8, component) };
-//             const new_node = try root.allocator.create(Node);
-//             // const new_node = try Node.init(); // TODO
-//             gop.value_ptr.* = new_node;
-//             node = new_node;
+//             const entry = try root.allocator.create(Entry);
+//             entry.* = .{ .name = try root.allocator.dupe(u8, component) };
+//             gop.value_ptr.* = entry;
+//             // TODO
+//             // node = tree.insert(node, entry);
+//             // node = entry;
 //         }
 //     }
 
 //     // const entry = node.value;
 //     // if (entry.file) |_| {
-//     //     log.warn("path {s} is already mounted!", .{path});
 //     //     return error.AlreadyMounted;
 //     // }
 //     // entry.file = local_root;
-//     // return node;
-
-//     // local_root.mountpoint = node;
 
 //     log.info("mounted `{s}` to `{s}`", .{ local_root.name, path });
 
 //     return node;
+// }
+
+// TODO: yet another different implem of mount
+// fn mount(source: *Node, target: *Node) void {
+//     // lock?
+//     std.debug.assert(target.mounted_node == null);
+//     std.debug.assert(source.parent == undefined);
+
+//     target.mounted_node = source;
+//     source.parent = target.parent;
 // }
 
 // TODO: rework

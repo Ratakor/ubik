@@ -4,10 +4,22 @@ const arch = @import("arch.zig");
 const sched = @import("sched.zig");
 const SpinLock = root.SpinLock;
 
+// TODO: this can be simplified
+
 pub const Listener = struct {
     thread: *sched.Thread,
     which: usize,
 };
+
+// TODO
+// pub const Events = struct {
+//     lock: SpinLock,
+//     events: std.ArrayListUnmanaged(usize),
+//     // events: struct {
+//     //     pending: usize,
+//     //     listeners: std.ArrayListUnmanaged(Listener),
+//     // },
+// };
 
 pub const Event = struct {
     lock: SpinLock,
@@ -51,7 +63,6 @@ pub const Event = struct {
     }
 };
 
-// TODO: this can be simplified
 pub var int_events: [256]Event = undefined;
 
 pub fn init() void {
@@ -61,28 +72,31 @@ pub fn init() void {
     }
 }
 
-pub fn awaitEvents(events: []*Event, block: bool) isize {
+pub fn awaitEvents(events: []*Event, blocking: bool) ?*Event {
     const old_state = arch.toggleInterrupts(false);
     defer _ = arch.toggleInterrupts(old_state);
-
-    const thread = sched.currentThread();
 
     lockEvents(events);
     defer unlockEvents(events);
 
-    const i = checkForPending(events);
-    if (i != -1) return i;
-    if (!block) return -1;
+    if (getFirstPending(events)) |event| {
+        return event;
+    }
 
+    if (!blocking) {
+        return null;
+    }
+
+    const thread = sched.currentThread();
     attachListeners(events, thread);
-    sched.dequeue(thread);
+    sched.dequeue(thread); // re-enqueue when?
     unlockEvents(events);
     sched.yieldAwait();
 
     arch.disableInterrupts();
 
     // const ret = if (thread.enqueued_by_signal) -1 else thread.which_event;
-    const ret = thread.which_event;
+    const ret = thread.which_event; // TODO
 
     lockEvents(events);
     detachListeners(thread);
@@ -95,14 +109,14 @@ fn intEventHandler(ctx: *arch.Context) callconv(.SysV) void {
     arch.apic.eoi();
 }
 
-fn checkForPending(events: []*Event) isize {
-    for (events, 0..) |event, i| {
+fn getFirstPending(events: []*Event) ?*Event {
+    for (events) |event| {
         if (event.pending > 0) {
             event.pending -= 1;
-            return @intCast(i);
+            return event;
         }
     }
-    return -1;
+    return null;
 }
 
 fn attachListeners(events: []*Event, thread: *sched.Thread) void {

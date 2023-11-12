@@ -14,8 +14,7 @@ pub const CpuLocal = struct {
     this: *CpuLocal,
 
     id: usize,
-    idle_thread: *sched.Thread,
-    current_thread: *sched.Thread,
+    current_thread: ?*sched.Thread,
 
     lapic_id: u32,
     lapic_freq: u64,
@@ -29,12 +28,9 @@ pub const CpuLocal = struct {
     pub const stack_size = 0x10000; // 64KiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
-    pub inline fn is_idle(self: *const CpuLocal) bool {
-        return self.current_thread == self.idle_thread;
-    }
-
     pub fn initCpu(self: *CpuLocal, is_bsp: bool) void {
         self.this = self;
+        self.current_thread = null;
 
         gdt.reload();
         idt.reload();
@@ -44,11 +40,6 @@ pub const CpuLocal = struct {
 
         x86.wrmsr(.gs_base, @intFromPtr(self));
         x86.wrmsr(.kernel_gs_base, @intFromPtr(self));
-
-        const idle_thread = root.allocator.create(sched.Thread) catch unreachable;
-        idle_thread.process = sched.kernel_process;
-        self.idle_thread = idle_thread;
-        self.current_thread = idle_thread;
 
         const common_int_stack_phys = pmm.alloc(stack_pages, true) orelse unreachable;
         const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;

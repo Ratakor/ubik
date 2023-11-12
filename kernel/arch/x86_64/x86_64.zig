@@ -1,8 +1,6 @@
-const assert = @import("std").debug.assert;
-
 pub const RFlags = packed struct(u64) {
     CF: u1 = 0,
-    reserved: u1 = 1,
+    reserved0: u1 = 1,
     PF: u1 = 0,
     reserved1: u1 = 0,
     AF: u1 = 0,
@@ -23,10 +21,20 @@ pub const RFlags = packed struct(u64) {
     VIP: u1 = 0,
     ID: u1 = 0,
     reserved4: u42 = 0,
+
+    pub inline fn get() RFlags {
+        return asm volatile (
+            \\pushfq
+            \\pop %[ret]
+            : [ret] "=r" (-> RFlags),
+            :
+            : "memory"
+        );
+    }
 };
 
 pub const MSR = enum(u32) {
-    apic = 0x1b,
+    apic_base = 0x1b,
     pat = 0x277,
     fs_base = 0xc0000100,
     gs_base = 0xc0000101,
@@ -53,13 +61,7 @@ pub inline fn enableInterrupts() void {
 }
 
 pub inline fn interruptState() bool {
-    return asm volatile (
-        \\pushfq
-        \\pop %[ret]
-        : [ret] "=r" (-> u64),
-        :
-        : "memory"
-    ) & (1 << 9) != 0;
+    return RFlags.get().IF != 0;
 }
 
 pub inline fn toggleInterrupts(state: bool) bool {
@@ -161,7 +163,7 @@ pub inline fn rdmsr(msr: MSR) u64 {
         \\rdmsr
         : [_] "={eax}" (low),
           [_] "={edx}" (high),
-        : [_] "{ecx}" (msr),
+        : [_] "{ecx}" (@intFromEnum(msr)),
         : "memory"
     );
 
@@ -174,7 +176,7 @@ pub inline fn wrmsr(msr: MSR, value: u64) void {
         :
         : [_] "{eax}" (@as(u32, @truncate(value))),
           [_] "{edx}" (@as(u32, @truncate(value >> 32))),
-          [_] "{ecx}" (msr),
+          [_] "{ecx}" (@intFromEnum(msr)),
         : "memory"
     );
 }

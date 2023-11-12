@@ -63,8 +63,8 @@ pub const Process = struct {
             @memset(&process.name, 0);
             process.addr_space = addr_space.?;
             // TODO
-            process.thread_stack_top = 0x70000000000;
-            process.mmap_anon_base = 0x80000000000;
+            process.thread_stack_top = 0x0700_0000_0000;
+            process.mmap_anon_base = 0x0800_0000_0000;
             // process.cwd = vfs.tree.root.?;
             process.umask = std.os.S.IWGRP | std.os.S.IWOTH;
         }
@@ -87,7 +87,7 @@ pub const Process = struct {
 };
 
 pub const Thread = struct {
-    errno: u64,
+    errno: usize,
     tid: usize,
     lock: SpinLock = .{},
     process: *Process,
@@ -98,6 +98,7 @@ pub const Thread = struct {
     enqueued: bool,
     // enqueued_by_signal: bool, // TODO: for events
     yield_await: SpinLock = .{},
+    // gs_base
     fs_base: u64,
     cr3: u64,
     fpu_storage: u64,
@@ -297,8 +298,10 @@ pub const Thread = struct {
     }
 };
 
-/// reschedule every 1ms
-pub const timeslice = 1000;
+/// reschedule every 5ms
+pub const timeslice = 5_000;
+/// wait for 10ms if there is no thread
+pub const wait_timeslice = 10_000;
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
@@ -318,7 +321,7 @@ pub fn init() void {
 }
 
 pub inline fn currentThread() *Thread {
-    return smp.thisCpu().current_thread;
+    return smp.thisCpu().current_thread.?;
 }
 
 pub inline fn currentProcess() *Process {
@@ -361,10 +364,8 @@ pub fn enqueue(thread: *Thread) !void {
     sched_lock.unlock();
 
     for (smp.cpus) |cpu| {
-        // TODO: can this append when a cpu start scheduling causing it to
-        // reschedule right after
-        if (cpu.is_idle()) {
-            apic.sendIPI(cpu.lapic_id, sched_vector);
+        if (cpu.current_thread == null) {
+            apic.sendIPI(cpu.lapic_id, .{ .vector = sched_vector });
             break;
         }
     }
@@ -404,12 +405,9 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     //     return;
     // }
 
-    // cpu.active = true;
-
-    const current_thread = currentThread();
     const maybe_next_thread = nextThread();
 
-    if (!cpu.is_idle()) {
+    if (cpu.current_thread) |current_thread| {
         // current_thread.yield_await.unlock(); // TODO
 
         if (maybe_next_thread == null and current_thread.enqueued) {
@@ -454,8 +452,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
         apic.timerOneShot(timeslice, sched_vector);
         contextSwitch(&next_thread.ctx);
     } else {
-        // cpu.active = false;
-        cpu.current_thread = cpu.idle_thread;
+        cpu.current_thread = null;
         vmm.switchPageTable(vmm.kaddr_space.cr3());
         apic.eoi();
         wait();
@@ -465,7 +462,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
 pub fn wait() noreturn {
     arch.disableInterrupts();
-    apic.timerOneShot(timeslice * 10, sched_vector);
+    apic.timerOneShot(wait_timeslice, sched_vector);
     arch.enableInterrupts();
     arch.halt();
 }
@@ -475,8 +472,8 @@ pub fn yield() noreturn {
     apic.timerStop();
 
     const cpu = smp.thisCpu();
-    cpu.current_thread = cpu.idle_thread;
-    apic.sendIPI(cpu.lapic_id, sched_vector);
+    cpu.current_thread = null;
+    apic.sendIPI(cpu.lapic_id, .{ .vector = sched_vector });
 
     arch.enableInterrupts();
     arch.halt();
@@ -484,17 +481,17 @@ pub fn yield() noreturn {
 
 // TODO
 pub fn yieldAwait() void {
-    arch.disableInterrupts();
+    std.debug.assert(arch.interruptState() == false);
+
     apic.timerStop();
 
     const thread = currentThread();
-    const cpu = smp.thisCpu();
-
     thread.yield_await.lock();
 
-    apic.sendIPI(cpu.lapic_id, sched_vector);
+    apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
     arch.enableInterrupts();
 
+    // TODO: useless since yield_await should already be unlocked
     thread.yield_await.lock();
     thread.yield_await.unlock();
 }

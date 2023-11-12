@@ -51,7 +51,8 @@ fn findModules(b: *std.Build) []const u8 {
 
     while (iter.next()) |line| {
         if (std.mem.startsWith(u8, line, "MODULE_PATH=boot://") and
-            !std.mem.endsWith(u8, line, ".tar")) {
+            !std.mem.endsWith(u8, line, ".tar"))
+        {
             const i = std.mem.lastIndexOfScalar(u8, line, '/') orelse unreachable;
             modules.append(line[i + 1 ..]) catch unreachable;
         }
@@ -122,6 +123,13 @@ pub fn build(b: *std.Build) void {
     });
     run_cmd.step.dependOn(image_step);
     run_step.dependOn(&run_cmd.step);
+
+    const docs_step = b.step("docs", "Generate documentations");
+    docs_step.dependOn(&b.addInstallDirectory(.{
+        .source_dir = kernel.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    }).step);
 
     const fmt_step = b.step("fmt", "Format all source files");
     fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{ "kernel", "lib" } }).step);

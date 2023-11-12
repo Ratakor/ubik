@@ -57,16 +57,16 @@ pub const PTE = packed struct(u64) {
         return @as(u64, @bitCast(self)) & 0xf800_0000_0000_0fff;
     }
 
-    inline fn getNextLevel(self: *PTE, allocate: bool) ?[*]PTE {
+    inline fn getNextLevel(self: *PTE, allocate: bool) MapError![*]PTE {
         if (self.present) {
             return @ptrFromInt(self.getAddress() + hhdm_offset);
         }
 
         if (!allocate) {
-            return null; // TODO return error
+            return error.NotMapped;
         }
 
-        const new_page_table = pmm.alloc(1, true) orelse return null; // TODO return OOM
+        const new_page_table = pmm.alloc(1, true) orelse return error.OutOfMemory;
         self.* = @bitCast(new_page_table | present | writable | user);
         return @ptrFromInt(new_page_table + hhdm_offset);
     }
@@ -136,8 +136,8 @@ const Addr2Range = struct {
 // TODO: rename Pagemap?
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
-    lock: SpinLock,
-    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal),
+    lock: SpinLock = .{},
+    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal) = .{},
 
     pub fn init() !*AddressSpace {
         const addr_space = try root.allocator.create(AddressSpace);
@@ -159,7 +159,7 @@ pub const AddressSpace = struct {
         if (level == 0) return;
 
         for (start..end) |i| {
-            const next_level = pml[i].getNextLevel(false) orelse unreachable; // TODO: continue
+            const next_level = pml[i].getNextLevel(false) catch unreachable; // TODO: continue
             destroyLevel(next_level, 0, 512, level - 1);
         }
 
@@ -201,8 +201,8 @@ pub const AddressSpace = struct {
                 try global_range.locals.append(root.allocator, new_local_range);
                 var i = local_range.base;
                 while (i < local_range.base + local_range.length) : (i += page_size) {
-                    const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
-                    const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
+                    const old_pte = self.virt2pte(i, false) catch unreachable; // TODO: continue?
+                    const new_pte = new_addr_space.virt2pte(i, true) catch unreachable; // TODO: free
                     new_pte.* = old_pte.*;
                 }
             } else {
@@ -224,10 +224,10 @@ pub const AddressSpace = struct {
 
                 var i = local_range.base;
                 while (i < local_range.base + local_range.length) : (i += page_size) {
-                    const old_pte = self.virt2pte(i, false) orelse unreachable; // TODO: continue?
+                    const old_pte = self.virt2pte(i, false) catch unreachable; // TODO: continue?
                     if (old_pte.present == false) continue;
-                    const new_pte = new_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
-                    const new_spte = new_global_range.shadow_addr_space.virt2pte(i, true) orelse unreachable; // TODO: free
+                    const new_pte = new_addr_space.virt2pte(i, true) catch unreachable; // TODO: free
+                    const new_spte = new_global_range.shadow_addr_space.virt2pte(i, true) catch unreachable; // TODO: free
 
                     const old_page = old_pte.getAddress();
                     const new_page = pmm.alloc(1, false) orelse unreachable; // TODO: free
@@ -243,22 +243,22 @@ pub const AddressSpace = struct {
         return new_addr_space;
     }
 
-    pub fn virt2pte(self: *const AddressSpace, vaddr: u64, allocate: bool) ?*PTE {
+    pub fn virt2pte(self: *const AddressSpace, vaddr: u64, allocate: bool) MapError!*PTE {
         const pml4_idx = (vaddr & (0x1ff << 39)) >> 39;
         const pml3_idx = (vaddr & (0x1ff << 30)) >> 30;
         const pml2_idx = (vaddr & (0x1ff << 21)) >> 21;
         const pml1_idx = (vaddr & (0x1ff << 12)) >> 12;
 
         const pml4 = self.pml4;
-        const pml3 = pml4[pml4_idx].getNextLevel(allocate) orelse return null;
-        const pml2 = pml3[pml3_idx].getNextLevel(allocate) orelse return null;
-        const pml1 = pml2[pml2_idx].getNextLevel(allocate) orelse return null;
+        const pml3 = try pml4[pml4_idx].getNextLevel(allocate);
+        const pml2 = try pml3[pml3_idx].getNextLevel(allocate);
+        const pml1 = try pml2[pml2_idx].getNextLevel(allocate);
 
         return &pml1[pml1_idx];
     }
 
     pub fn virt2phys(self: *const AddressSpace, vaddr: u64) MapError!u64 {
-        const pte = self.virt2pte(vaddr, false) orelse unreachable;
+        const pte = try self.virt2pte(vaddr, false);
         if (!pte.present) return error.NotMapped;
         return pte.getAddress();
     }
@@ -268,7 +268,7 @@ pub const AddressSpace = struct {
         defer self.lock.unlock();
 
         // TODO: when virt2pte fails the memory it allocated is not freed
-        const pte = self.virt2pte(vaddr, true) orelse return error.OutOfMemory;
+        const pte = try self.virt2pte(vaddr, true);
         if (pte.present) return error.AlreadyMapped;
         pte.* = @bitCast(paddr | flags);
         self.flush(vaddr);
@@ -278,7 +278,7 @@ pub const AddressSpace = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
+        const pte = try self.virt2pte(vaddr, false);
         if (!pte.present) return error.NotMapped;
         pte.* = @bitCast(pte.getAddress() | flags);
         self.flush(vaddr);
@@ -288,7 +288,7 @@ pub const AddressSpace = struct {
         if (lock) self.lock.lock();
         defer if (lock) self.lock.unlock();
 
-        const pte = self.virt2pte(vaddr, false) orelse unreachable; // TODO: unreachable?
+        const pte = try self.virt2pte(vaddr, false);
         if (!pte.present) return error.NotMapped;
         pte.* = @bitCast(@as(u64, 0));
         self.flush(vaddr);
@@ -453,12 +453,10 @@ pub fn init() void {
 
     kaddr_space = root.allocator.create(AddressSpace) catch unreachable;
     const pml4_phys = pmm.alloc(1, true) orelse unreachable;
-    kaddr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
-    kaddr_space.lock = .{};
-    kaddr_space.mmap_ranges = .{};
+    kaddr_space.* = .{ .pml4 = @ptrFromInt(pml4_phys + hhdm_offset) };
 
     for (256..512) |i| {
-        _ = kaddr_space.pml4[i].getNextLevel(true);
+        _ = kaddr_space.pml4[i].getNextLevel(true) catch unreachable;
     }
 
     kaddr_space.mapSection("text", PTE.present);

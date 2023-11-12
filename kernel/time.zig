@@ -1,10 +1,8 @@
-//! https://wiki.osdev.org/PIT
-// TODO: move PIT code to arch/x86_64/pit.zig
-
 const std = @import("std");
 const root = @import("root");
 const arch = @import("arch.zig");
 const smp = @import("smp.zig");
+const pit = arch.pit;
 const idt = arch.idt;
 const apic = arch.apic;
 const ev = @import("event.zig");
@@ -60,9 +58,6 @@ pub const Timer = struct {
     }
 };
 
-pub const dividend = 1_193_182;
-pub const timer_freq = 1000;
-
 pub var monotonic: timespec = .{};
 pub var realtime: timespec = .{};
 
@@ -73,32 +68,10 @@ pub fn init() void {
     const boot_time = root.boot_time_request.response.?.boot_time;
     realtime.sec = boot_time;
 
-    setFrequency(timer_freq);
+    pit.init();
     const timer_vector = idt.allocVector();
     idt.registerHandler(timer_vector, timerHandler);
-    apic.setIRQRedirect(smp.bsp_lapic_id, timer_vector, 0);
-}
-
-fn setFrequency(divisor: u64) void {
-    var count = dividend / divisor;
-    if (dividend % divisor > divisor / 2) {
-        count += 1;
-    }
-    setReloadValue(@truncate(count));
-}
-
-pub fn setReloadValue(count: u16) void {
-    // channel 0, lo/hi access mode, mode 2 (rate generator)
-    arch.out(u8, 0x43, 0b00_11_010_0);
-    arch.out(u8, 0x40, @truncate(count));
-    arch.out(u8, 0x40, @truncate(count >> 8));
-}
-
-pub fn getCurrentCount() u16 {
-    arch.out(u8, 0x43, 0);
-    const lo = arch.in(u8, 0x40);
-    const hi = arch.in(u8, 0x40);
-    return (@as(u16, hi) << 8) | lo;
+    apic.setIRQRedirect(smp.bsp_lapic_id, timer_vector, 0, true);
 }
 
 fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
@@ -106,7 +79,7 @@ fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
 
     defer apic.eoi();
 
-    const interval: timespec = .{ .nsec = std.time.ns_per_s / timer_freq };
+    const interval: timespec = .{ .nsec = std.time.ns_per_s / pit.timer_freq };
     monotonic.add(interval);
     realtime.add(interval);
 

@@ -3,6 +3,8 @@
 const std = @import("std");
 const linux = std.os.linux;
 
+pub const PATH_MAX = 4096;
+
 pub const T = linux.T;
 pub const S = linux.S;
 pub const E = linux.E;
@@ -10,6 +12,7 @@ pub const PROT = linux.PROT;
 pub const MAP = linux.MAP;
 pub const DT = linux.DT;
 pub const O = linux.O;
+pub const SIG = linux.SIG;
 
 // TODO: rename those the zig way?
 pub const blkcnt_t = linux.blkcnt_t;
@@ -68,7 +71,7 @@ pub const Stat = extern struct {
     birthtim: timespec,
 };
 
-pub const DirectoryEntry = extern struct {
+pub const dirent = extern struct {
     ino: ino_t,
     off: off_t,
     reclen: u16,
