@@ -100,6 +100,7 @@ const exceptions = [_]?[]const u8{
 };
 
 // TODO: replace isr with a interrupt dispatcher func?
+//       -> move all handlers to interrupt.zig?
 var isr = [_]InterruptHandler{defaultHandler} ** 256;
 var next_vector: u8 = exceptions.len;
 pub var panic_ipi_vector: u8 = undefined;

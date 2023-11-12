@@ -16,8 +16,8 @@ const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
 const MAP = std.os.MAP;
 
-// TODO: TLB shootdown?
 // TODO: mapRange/unmapRange?
+// TODO: move paging code to paging.zig
 
 pub const MapError = error{
     OutOfMemory,
@@ -144,13 +144,9 @@ pub const AddressSpace = struct {
         errdefer root.allocator.destroy(addr_space);
 
         const pml4_phys = pmm.alloc(1, true) orelse return error.OutOfMemory;
-        addr_space.pml4 = @ptrFromInt(pml4_phys + hhdm_offset);
-        addr_space.lock = .{};
-        addr_space.mmap_ranges = .{};
-
-        for (256..512) |i| {
-            addr_space.pml4[i] = kaddr_space.pml4[i];
-        }
+        addr_space.* = .{ .pml4 = @ptrFromInt(pml4_phys + hhdm_offset) };
+        @memset(addr_space.pml4[0..256], @bitCast(@as(u64, 0)));
+        @memcpy(addr_space.pml4[256..512], kaddr_space.pml4[256..512]);
 
         return addr_space;
     }
@@ -312,9 +308,25 @@ pub const AddressSpace = struct {
         return @intFromPtr(self.pml4) - hhdm_offset;
     }
 
-    inline fn flush(self: *AddressSpace, vaddr: u64) void {
-        if (@intFromPtr(self.pml4) == arch.readRegister("cr3")) {
+    // TODO: lock?
+    fn flush(self: *AddressSpace, vaddr: u64) void {
+        std.debug.assert(arch.interruptState() == false);
+        // const old_state = arch.toggleInterrupts(false);
+        // defer _ = arch.toggleInterrupts(old_state);
+
+        if (self.cr3() == arch.readRegister("cr3")) {
             arch.invlpg(vaddr);
+        }
+
+        if (!smp.initialized) return;
+
+        const this_cpu = smp.thisCpu();
+        for (smp.cpus) |*cpu| {
+            if (cpu == this_cpu) continue;
+
+            cpu.tlb_shootdown_cr3 = self.cr3();
+            asm volatile ("" ::: "memory");
+            apic.sendIPI(cpu.lapic_id, .{ .vector = tlb_shootdown_ipi_vector });
         }
     }
 
@@ -447,6 +459,7 @@ pub const AddressSpace = struct {
 
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
 pub var kaddr_space: *AddressSpace = undefined;
+var tlb_shootdown_ipi_vector: u8 = undefined;
 
 pub fn init() void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
@@ -455,6 +468,7 @@ pub fn init() void {
     const pml4_phys = pmm.alloc(1, true) orelse unreachable;
     kaddr_space.* = .{ .pml4 = @ptrFromInt(pml4_phys + hhdm_offset) };
 
+    @memset(kaddr_space.pml4[0..256], @bitCast(@as(u64, 0)));
     for (256..512) |i| {
         _ = kaddr_space.pml4[i].getNextLevel(true) catch unreachable;
     }
@@ -488,6 +502,8 @@ pub fn init() void {
         }
     }
 
+    tlb_shootdown_ipi_vector = idt.allocVector();
+    idt.registerHandler(tlb_shootdown_ipi_vector, tlbShootdownHandler);
     switchPageTable(kaddr_space.cr3());
 }
 
@@ -530,4 +546,14 @@ fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) 
             try local_range.addr_space.mapPage(vaddr, paddr, flags);
         }
     }
+}
+
+fn tlbShootdownHandler(ctx: *arch.Context) callconv(.SysV) void {
+    _ = ctx;
+
+    if (smp.thisCpu().tlb_shootdown_cr3 == arch.readRegister("cr3")) {
+        arch.writeRegister("cr3", arch.readRegister("cr3"));
+    }
+
+    apic.eoi();
 }

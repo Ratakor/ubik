@@ -11,6 +11,7 @@ const log = std.log.scoped(.smp);
 pub var bsp_lapic_id: u32 = undefined; // bootstrap processor lapic id
 pub var cpus: []CpuLocal = undefined;
 var cpus_started: usize = 0;
+pub var initialized = false;
 
 pub fn init() void {
     const smp = root.smp_request.response.?;
@@ -38,6 +39,8 @@ pub fn init() void {
     while (cpus_started != cpus.len) {
         std.atomic.spinLoopHint();
     }
+
+    initialized = true;
 }
 
 pub fn stopAll() void {

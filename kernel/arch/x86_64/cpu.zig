@@ -19,6 +19,7 @@ pub const CpuLocal = struct {
     lapic_id: u32,
     lapic_freq: u64,
     tss: gdt.TSS,
+    tlb_shootdown_cr3: u64,
 
     cpu_model: u32,
     cpu_family: u32,
