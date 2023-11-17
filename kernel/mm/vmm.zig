@@ -18,6 +18,7 @@ const MAP = std.os.MAP;
 
 // TODO: mapRange/unmapRange?
 // TODO: move paging code to paging.zig
+// TODO: use ArenaAllocator for vmm
 
 pub const MapError = error{
     OutOfMemory,
@@ -89,7 +90,7 @@ pub const PageFaultError = packed struct(u32) {
 // TODO: init and deinit func?
 const MMapRangeGlobal = struct {
     shadow_addr_space: *AddressSpace,
-    locals: std.ArrayListUnmanaged(*MMapRangeLocal) = .{},
+    locals: std.ArrayListUnmanaged(*MMapRangeLocal) = .{}, // HashMap?
     // resource: *Resource, // TODO: vnode?
     base: usize,
     length: usize,
@@ -137,7 +138,7 @@ const Addr2Range = struct {
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
     lock: SpinLock = .{},
-    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal) = .{},
+    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal) = .{}, // HashMap?
 
     pub fn init() !*AddressSpace {
         const addr_space = try root.allocator.create(AddressSpace);
@@ -310,10 +311,11 @@ pub const AddressSpace = struct {
 
     // TODO: lock?
     fn flush(self: *AddressSpace, vaddr: u64) void {
-        std.debug.assert(arch.interruptState() == false);
-        // const old_state = arch.toggleInterrupts(false);
-        // defer _ = arch.toggleInterrupts(old_state);
+        // std.debug.assert(arch.interruptState() == false);
+        const old_state = arch.toggleInterrupts(false);
+        defer _ = arch.toggleInterrupts(old_state);
 
+        // TODO: is `if` useful?
         if (self.cr3() == arch.readRegister("cr3")) {
             arch.invlpg(vaddr);
         }
@@ -338,10 +340,10 @@ pub const AddressSpace = struct {
         prot: i32,
         flags: i32,
     ) !void {
-        flags |= MAP.ANONYMOUS; // TODO
+        // flags |= MAP.ANONYMOUS; // TODO
 
-        const aligned_vaddr = alignBackward(vaddr, page_size);
-        const aligned_len = alignForward(len + (vaddr - aligned_vaddr), page_size);
+        const aligned_vaddr = alignBackward(u64, vaddr, page_size);
+        const aligned_len = alignForward(u64, len + (vaddr - aligned_vaddr), page_size);
 
         const global_range = try root.allocator.create(MMapRangeGlobal);
         errdefer root.allocator.destroy(global_range);
@@ -552,6 +554,7 @@ fn tlbShootdownHandler(ctx: *arch.Context) callconv(.SysV) void {
     _ = ctx;
 
     if (smp.thisCpu().tlb_shootdown_cr3 == arch.readRegister("cr3")) {
+        // TODO: invlpg cpu.tlb_Shootdown_addr?
         arch.writeRegister("cr3", arch.readRegister("cr3"));
     }
 

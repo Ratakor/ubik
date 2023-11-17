@@ -28,6 +28,7 @@ pub const Process = struct {
     child_events: std.ArrayListUnmanaged(*Event),
     event: Event,
     // running_time: usize, // TODO
+    // status: enum { running, ready, blocked (io) }, // TODO: in threads? + atomic (replace lock)
     user: std.os.uid_t,
     group: std.os.gid_t,
 
@@ -111,7 +112,6 @@ pub const Thread = struct {
 
     // running_time: usize, // TODO
 
-    const Set = std.AutoArrayHashMapUnmanaged(*Thread, void);
     pub const max_events = 32;
     pub const stack_size = 8 * 1024 * 1024; // 8MiB
     pub const stack_pages = stack_size / std.mem.page_size;
@@ -299,13 +299,12 @@ pub const Thread = struct {
 };
 
 /// reschedule every 5ms
-pub const timeslice = 5_000;
-/// wait for 10ms if there is no thread
-pub const wait_timeslice = 10_000;
+const quantum = 5_000;
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
-var running_threads: Thread.Set = .{};
+var running_threads: std.AutoArrayHashMapUnmanaged(*Thread, void) = .{};
+var waiting_threads: std.AutoArrayHashMapUnmanaged(*Thread, void) = .{};
 var total_tickets: usize = 0;
 
 var sched_vector: u8 = undefined;
@@ -365,6 +364,12 @@ pub fn enqueue(thread: *Thread) !void {
 
     for (smp.cpus) |cpu| {
         if (cpu.current_thread == null) {
+            // only for debug build
+            // fix to not crash when starting the first kernel thread
+            if (comptime @import("builtin").mode == .Debug) {
+                if (cpu.id == smp.thisCpu().id) continue;
+            }
+
             apic.sendIPI(cpu.lapic_id, .{ .vector = sched_vector });
             break;
         }
@@ -401,7 +406,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
     // if (cpu.scheduling_disabled) {
     //     apic.eoi();
-    //     apic.timerOneShot(timeslice, sched_vector);
+    //     apic.timerOneShot(quantum, sched_vector);
     //     return;
     // }
 
@@ -412,7 +417,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
         if (maybe_next_thread == null and current_thread.enqueued) {
             apic.eoi();
-            apic.timerOneShot(timeslice, sched_vector);
+            apic.timerOneShot(quantum, sched_vector);
             return;
         }
 
@@ -449,22 +454,23 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
         }
 
         apic.eoi();
-        apic.timerOneShot(timeslice, sched_vector);
+        apic.timerOneShot(quantum, sched_vector);
         contextSwitch(&next_thread.ctx);
     } else {
         cpu.current_thread = null;
         vmm.switchPageTable(vmm.kaddr_space.cr3());
         apic.eoi();
-        wait();
+        arch.halt();
     }
     unreachable;
 }
 
-pub fn wait() noreturn {
-    arch.disableInterrupts();
-    apic.timerOneShot(wait_timeslice, sched_vector);
-    arch.enableInterrupts();
-    arch.halt();
+// TODO: wake is the same but reverse
+fn blockThread(thread: *Thread) void {
+    dequeue(thread);
+    sched_lock.lock();
+    waiting_threads.putNoClobber(root.allocator, thread, {}) catch unreachable;
+    sched_lock.unlock();
 }
 
 pub fn yield() noreturn {
@@ -486,18 +492,27 @@ pub fn yieldAwait() void {
     apic.timerStop();
 
     const thread = currentThread();
-    thread.yield_await.lock();
+
+    const use_yield_await = false;
+    if (use_yield_await) {
+        thread.yield_await.lock();
+    } else {
+        blockThread();
+    }
 
     apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
     arch.enableInterrupts();
 
-    // TODO: useless since yield_await should already be unlocked
-    thread.yield_await.lock();
-    thread.yield_await.unlock();
+    if (use_yield_await) {
+        // TODO: useless since yield_await should already be unlocked
+        thread.yield_await.lock();
+        thread.yield_await.unlock();
+    }
 }
 
 fn contextSwitch(ctx: *arch.Context) noreturn {
     std.debug.assert(ctx.cs == gdt.kernel_code);
+    // TODO: switch page table?
     asm volatile (
         \\mov %[ctx], %rsp
         \\pop %rax

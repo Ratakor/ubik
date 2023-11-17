@@ -24,7 +24,7 @@ pub fn init() void {
     const entries = memory_map.entries();
     var highest_addr: u64 = 0;
 
-    log.info("memory_map[{}] dump:", .{entries.len});
+    log.info("memory_map[{}]:", .{entries.len});
     for (entries) |entry| {
         log.info("0x{x}-0x{x} {s}", .{
             entry.base,

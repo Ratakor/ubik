@@ -65,5 +65,6 @@ fn initAp(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
     log.info("processor {} is online", .{cpu_local.id});
     _ = @atomicRmw(usize, &cpus_started, .Add, 1, .Release);
 
-    sched.wait();
+    arch.enableInterrupts();
+    arch.halt();
 }

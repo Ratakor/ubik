@@ -4,6 +4,9 @@ const std = @import("std");
 const linux = std.os.linux;
 
 pub const PATH_MAX = 4096;
+pub const STDIN_FILENO = 0;
+pub const STDOUT_FILENO = 1;
+pub const STDERR_FILENO = 2;
 
 pub const T = linux.T;
 pub const S = linux.S;

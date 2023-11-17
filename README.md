@@ -5,10 +5,10 @@ A kernel
 - Add a checklist/roadmap
 - Move tty and drivers out of kernel space
 - Replace json with zon
-- Replace ArrayList(Unmanaged) with HashMap where needed
 - Replace unreachable with @panic
 - Provide compatibility with Linux ABI
 - Support RISC-V64, aarch64 and x86_64
+- Replace @import("root") with @import("main.zig") to allow for testing
 - Replace limine with a custom bootloader?
 
 # Clone, build and run

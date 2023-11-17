@@ -64,7 +64,7 @@ const IDTDescriptor = extern struct {
     base: u64 align(1) = undefined,
 };
 
-const exceptions = [_]?[]const u8{
+const exceptions = [_][]const u8{
     "Division by zero",
     "Debug",
     "Non-maskable Interrupt",
@@ -80,23 +80,23 @@ const exceptions = [_]?[]const u8{
     "Stack-Segment Fault",
     "General Protection Fault",
     "Page Fault",
-    null,
+    "Reserved",
     "x87 Floating-Point Exception",
     "Alignment Check",
     "Machine Check",
     "SIMD Floating-Point Exception",
     "Virtualization Exception",
     "Control Protection Exception",
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
+    "Reserved",
+    "Reserved",
+    "Reserved",
+    "Reserved",
+    "Reserved",
+    "Reserved",
     "Hypervisor Injection Exception",
     "VMM Communication Exception",
     "Security Exception",
-    null,
+    "Reserved",
 };
 
 // TODO: replace isr with a interrupt dispatcher func?
@@ -174,7 +174,7 @@ fn defaultHandler(ctx: *Context) callconv(.SysV) void {
 
     const cr3 = x86.readRegister("cr3");
     std.debug.panic(
-        \\Unhandled interruption "{?s}" triggered, dumping context
+        \\Unhandled interruption "{s}" triggered, dumping context
         \\vector: 0x{x:0>2}               error code: 0x{x}
         \\ds:  0x{x:0>16}    es:     0x{x:0>16}
         \\rax: 0x{x:0>16}    rbx:    0x{x:0>16}
@@ -189,7 +189,7 @@ fn defaultHandler(ctx: *Context) callconv(.SysV) void {
         \\rsp: 0x{x:0>16}    ss:     0x{x:0>16}
         \\cr2: 0x{x:0>16}    cr3:    0x{x:0>16}
     , .{
-        if (ctx.vector < exceptions.len) exceptions[ctx.vector] else null,
+        if (ctx.vector < exceptions.len) exceptions[ctx.vector] else "Unknown",
         ctx.vector,
         ctx.error_code,
         ctx.ds,
@@ -249,7 +249,6 @@ export fn commonStub() callconv(.Naked) void {
         \\je 1f
         \\swapgs
         \\1:
-        \\cld
         \\push %r15
         \\push %r14
         \\push %r13

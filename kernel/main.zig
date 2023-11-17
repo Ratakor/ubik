@@ -38,7 +38,6 @@ pub const os = struct {
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{
-    .thread_safe = false,
     .MutexType = lib.SpinLock,
     .verbose_log = if (builtin.mode == .Debug) true else false,
 }){};
@@ -77,7 +76,7 @@ export fn _start() noreturn {
     pmm.init();
     vmm.init();
     acpi.init();
-    event.init();
+    event.init(); // TODO + futex
     // syscall.init(); // TODO
     sched.init();
     smp.init();
@@ -85,7 +84,9 @@ export fn _start() noreturn {
 
     const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null, 1) catch unreachable;
     sched.enqueue(kernel_thread) catch unreachable;
-    sched.wait();
+
+    arch.enableInterrupts();
+    arch.halt();
 }
 
 fn main() noreturn {

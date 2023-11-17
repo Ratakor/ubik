@@ -41,7 +41,7 @@ pub const MSR = enum(u32) {
     kernel_gs_base = 0xc0000102,
 };
 
-pub const CPUID = struct {
+pub const CpuID = struct {
     eax: u32,
     ebx: u32,
     ecx: u32,
@@ -137,7 +137,7 @@ pub inline fn writeRegister(comptime reg: []const u8, value: u64) void {
     );
 }
 
-pub inline fn cpuid(leaf: u32, subleaf: u32) CPUID {
+pub inline fn cpuid(leaf: u32, subleaf: u32) CpuID {
     var eax: u32 = undefined;
     var ebx: u32 = undefined;
     var ecx: u32 = undefined;
@@ -153,7 +153,7 @@ pub inline fn cpuid(leaf: u32, subleaf: u32) CPUID {
           [_] "{ecx}" (subleaf),
     );
 
-    return CPUID{ .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx };
+    return .{ .eax = eax, .ebx = ebx, .ecx = ecx, .edx = edx };
 }
 
 pub inline fn rdmsr(msr: MSR) u64 {
