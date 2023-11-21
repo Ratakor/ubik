@@ -465,24 +465,25 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     unreachable;
 }
 
+// TODO?: add comptime mode: .resched, .block ( or .await), .die <- replace die()
+pub fn yield() noreturn {
+    std.debug.assert(arch.interruptState() == false);
+    // arch.disableInterrupts();
+
+    apic.timerStop();
+    smp.thisCpu().current_thread = null; // TODO: removing this line causes kernel panic in debug build
+    apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
+
+    arch.enableInterrupts();
+    arch.halt();
+}
+
 // TODO: wake is the same but reverse
 fn blockThread(thread: *Thread) void {
     dequeue(thread);
     sched_lock.lock();
     waiting_threads.putNoClobber(root.allocator, thread, {}) catch unreachable;
     sched_lock.unlock();
-}
-
-pub fn yield() noreturn {
-    arch.disableInterrupts();
-    apic.timerStop();
-
-    const cpu = smp.thisCpu();
-    cpu.current_thread = null;
-    apic.sendIPI(cpu.lapic_id, .{ .vector = sched_vector });
-
-    arch.enableInterrupts();
-    arch.halt();
 }
 
 // TODO
