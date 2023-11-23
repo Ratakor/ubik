@@ -22,23 +22,9 @@ pub const Listener = struct {
 // };
 
 pub const Event = struct {
-    lock: SpinLock,
-    pending: usize,
-    listeners: std.ArrayListUnmanaged(Listener),
-
-    pub const max_listeners = 32;
-
-    pub fn init() !Event {
-        return .{
-            .lock = .{},
-            .pending = 0,
-            .listeners = try std.ArrayListUnmanaged(Listener).initCapacity(root.allocator, max_listeners),
-        };
-    }
-
-    pub fn deinit(self: *Event) void {
-        self.listeners.deinit(root.allocator);
-    }
+    lock: SpinLock = .{},
+    pending: usize = 0,
+    listeners: std.BoundedArray(Listener, 32) = .{},
 
     pub fn trigger(self: *Event, drop: bool) void {
         const old_state = arch.toggleInterrupts(false);
@@ -47,28 +33,27 @@ pub const Event = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (self.listeners.items.len == 0) {
+        if (self.listeners.len == 0) {
             if (!drop) {
                 self.pending += 1;
             }
         } else {
-            for (self.listeners.items) |listener| {
+            for (self.listeners.slice()) |listener| {
                 const thread = listener.thread;
                 thread.which_event = listener.which;
                 sched.enqueue(thread) catch unreachable;
             }
 
-            self.listeners.clearRetainingCapacity();
+            self.listeners.len = 0;
         }
     }
 };
 
-pub var int_events: [256]Event = undefined;
+pub var int_events = [_]Event{.{}} ** 256;
 
 pub fn init() void {
     for (32..0xef) |vec| {
         arch.idt.registerHandler(@intCast(vec), intEventHandler);
-        int_events[vec] = Event.init() catch unreachable;
     }
 }
 
@@ -89,7 +74,7 @@ pub fn awaitEvents(events: []*Event, blocking: bool) ?*Event {
 
     const thread = sched.currentThread();
     attachListeners(events, thread);
-    sched.dequeue(thread); // re-enqueue when?
+    sched.dequeue(thread); // re-enqueue when? <- Event.trigger
     unlockEvents(events);
     sched.yieldAwait();
 
@@ -120,24 +105,25 @@ fn getFirstPending(events: []*Event) ?*Event {
 }
 
 fn attachListeners(events: []*Event, thread: *sched.Thread) void {
-    thread.attached_events.clearRetainingCapacity();
+    thread.attached_events.len = 0;
 
     for (events, 0..) |event, i| {
+        // TODO: replace with append + panic?
         event.listeners.appendAssumeCapacity(.{ .thread = thread, .which = i });
         thread.attached_events.appendAssumeCapacity(event);
     }
 }
 
 fn detachListeners(thread: *sched.Thread) void {
-    for (thread.attached_events.items) |event| {
-        for (event.listeners.items, 0..) |listener, i| {
+    for (thread.attached_events.slice()) |event| {
+        for (event.listeners.slice(), 0..) |listener, i| {
             if (listener.thread == thread) {
                 _ = event.listeners.swapRemove(i); // TODO: weird (loop)
             }
         }
     }
 
-    thread.attached_events.clearRetainingCapacity();
+    thread.attached_events.len = 0;
 }
 
 inline fn lockEvents(events: []*Event) void {

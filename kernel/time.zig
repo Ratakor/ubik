@@ -9,6 +9,7 @@ const ev = @import("event.zig");
 const SpinLock = root.SpinLock;
 const timespec = root.os.system.timespec;
 
+// TODO: improve, bad_idx is of course ugly
 pub const Timer = struct {
     idx: usize,
     done: bool,
@@ -21,11 +22,12 @@ pub const Timer = struct {
         var timer = try root.allocator.create(Timer);
         errdefer root.allocator.destroy(timer);
 
-        timer.idx = bad_idx;
-        timer.when = when;
-        timer.done = false;
-        timer.event = try ev.Event.init();
-        errdefer timer.event.deinit();
+        timer.* = .{
+            .idx = bad_idx,
+            .when = when,
+            .done = false,
+            .event = .{},
+        };
 
         try timer.arm();
 

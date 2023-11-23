@@ -74,14 +74,14 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) nor
     dmesg_writer.print(fmt, .{msg}) catch {};
     printStackIterator(dmesg_writer, stack_iter);
 
+    serial.print(fmt, .{msg});
+    printStackIterator(serial.writer, stack_iter);
+
     if (root.tty0) |tty| {
         const writer = tty.writer();
         writer.print(fmt, .{msg}) catch {};
         printStackIterator(writer, stack_iter);
         root.term.hideCursor(writer) catch {};
-    } else {
-        serial.print(fmt, .{msg});
-        printStackIterator(serial.writer, stack_iter);
     }
 
     arch.halt();

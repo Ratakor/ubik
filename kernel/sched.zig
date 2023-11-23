@@ -108,11 +108,10 @@ pub const Thread = struct {
     kernel_stack: u64,
 
     which_event: usize,
-    attached_events: std.ArrayListUnmanaged(*Event),
+    attached_events: std.BoundedArray(*Event, 32) = .{}, // TODO: use ArrayListUnmanaged?
 
     // running_time: usize, // TODO
 
-    pub const max_events = 32;
     pub const stack_size = 8 * 1024 * 1024; // 8MiB
     pub const stack_pages = stack_size / std.mem.page_size;
 
@@ -134,9 +133,7 @@ pub const Thread = struct {
             .pf_stack = undefined,
             .kernel_stack = undefined,
             .which_event = undefined,
-            .attached_events = try std.ArrayListUnmanaged(*Event).initCapacity(root.allocator, max_events),
         };
-        errdefer thread.attached_events.deinit(root.allocator);
 
         const fpu_storage = try root.allocator.alloc(u8, arch.cpu.fpu_storage_size);
         errdefer root.allocator.free(fpu_storage);
@@ -291,7 +288,6 @@ pub const Thread = struct {
             pmm.free(stack, stack_pages);
         }
         self.stacks.deinit(root.allocator);
-        self.attached_events.deinit(root.allocator);
         const fpu_storage: [*]u8 = @ptrFromInt(self.fpu_storage);
         root.allocator.free(fpu_storage[0..arch.cpu.fpu_storage_size]);
         root.allocator.destroy(self);

@@ -40,7 +40,7 @@ pub const Node = struct {
     refcount: usize, // TODO
     lock: SpinLock = .{}, // TODO: use a u64 with flags and lock with atomic OR
     // status: i32, // TODO
-    // event: Event, // TODO
+    // event: Event = .{}, // TODO
     parent: *Node, // undefined for root // TODO
     // redirection: ?*Node, // TODO: only for .. and . ?
 

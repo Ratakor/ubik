@@ -1,14 +1,12 @@
-//! Some part are based on https://github.com/mintsuki/flanterm.git
+//! Some parts are based on https://github.com/mintsuki/flanterm.git
 
 const std = @import("std");
-const root = @import("root");
-const SpinLock = root.SpinLock;
+const term = @import("root").term;
 
 // TODO: termios
 // TODO: user_write_lock -> user write on buffer + framebuffer, log user write?
 
 pub const TTY = @This();
-const Context = TTY;
 
 cursor_enabled: bool,
 scroll_enabled: bool,
@@ -27,13 +25,12 @@ insert_mode: bool,
 code_point: u64,
 unicode_remaining: usize,
 g_select: u8,
-charsets: [2]u8,
+charsets: [2]Charset,
 current_charset: usize,
 escape_offset: usize,
-esc_values_i: usize, // TODO: ArrayList
-esc_values: [MAX_ESC_VALUES]u32,
-current_primary: usize,
-current_bg: usize,
+esc_values: std.BoundedArray(u32, 16),
+current_fg: ?usize,
+current_bg: ?usize,
 scroll_top_margin: usize,
 scroll_bottom_margin: usize,
 
@@ -47,8 +44,7 @@ width: usize,
 height: usize,
 
 grid: []Char,
-queue: []QueueItem,
-queue_i: usize, // TODO: ArrayList
+queue: std.ArrayListUnmanaged(QueueItem),
 map: []?*QueueItem,
 
 text_fg: Color,
@@ -68,8 +64,8 @@ saved_state_bold: bool,
 saved_state_bg_bold: bool,
 saved_state_reverse_video: bool,
 saved_state_current_charset: usize,
-saved_state_current_primary: usize,
-saved_state_current_bg: usize,
+saved_state_current_fg: ?usize,
+saved_state_current_bg: ?usize,
 
 // TODO: lock? also don't forget to init it
 // read_lock: SpinLock,
@@ -147,6 +143,11 @@ const ScanCode = enum(u8) {
     _,
 };
 
+const Charset = enum {
+    default,
+    dec_special,
+};
+
 const Char = struct {
     c: u32,
     fg: Color,
@@ -159,22 +160,16 @@ const QueueItem = struct {
     c: Char,
 };
 
-const maxInt = std.math.maxInt;
-const control_code = std.ascii.control_code;
-
-const MAX_ESC_VALUES = 16;
-const FONT_GLYPHS = 256;
-const CHARSET_DEFAULT = 0;
-const CHARSET_DEC_SPECIAL = 1;
-const FONT_WIDTH = 8 + 1; // + 1 for padding
-const FONT_HEIGHT = 16;
+const font_glyphs = 256;
+const font_width = 8 + 1; // + 1 for padding
+const font_height = 16;
 // TODO: add scale/zoom? look for glyph_width/height on commit 984172b
 
-const TAB_SIZE = 8;
-const DEFAULT_BG = Color.black;
-const DEFAULT_FG = Color.grey;
-const DEFAULT_BG_BRIGHT = Color.bright_black;
-const DEFAULT_FG_BRIGHT = Color.bright_grey;
+const tab_size = 8;
+const default_bg = Color.black;
+const default_fg = Color.grey;
+const default_bg_bright = Color.bright_black;
+const default_fg_bright = Color.bright_grey;
 
 const font = blk: {
     @setEvalBranchQuota(100_000);
@@ -182,34 +177,34 @@ const font = blk: {
     // Builtin font originally taken from:
     // https://github.com/viler-int10h/vga-text-mode-fonts
     const builtin_font = @embedFile("STANDARD.F16");
-    const font_bool_size = FONT_GLYPHS * FONT_HEIGHT * FONT_WIDTH;
-    var font_bool: [font_bool_size]bool = undefined;
+    const font_bool_size = font_glyphs * font_height * font_width;
+    var font_bitmap: [font_bool_size]bool = undefined;
 
-    for (0..FONT_GLYPHS) |i| {
-        const glyph = builtin_font[i * FONT_HEIGHT ..];
+    for (0..font_glyphs) |i| {
+        const glyph = builtin_font[i * font_height ..];
 
-        for (0..FONT_HEIGHT) |y| {
+        for (0..font_height) |y| {
             // NOTE: the characters in VGA fonts are always one byte wide.
             // 9 dot wide fonts have 8 dots and one empty column, except
             // characters 0xC0-0xDF replicate column 9.
             for (0..8) |x| {
-                const offset = i * FONT_HEIGHT * FONT_WIDTH + y * FONT_WIDTH + x;
-                font_bool[offset] = (glyph[y] & (@as(u8, 0x80) >> @intCast(x))) != 0;
+                const idx = i * font_height * font_width + y * font_width + x;
+                font_bitmap[idx] = (glyph[y] & (@as(u8, 0x80) >> @intCast(x))) != 0;
             }
 
             // fill columns above 8 like VGA Line Graphics Mode does
-            for (8..FONT_WIDTH) |x| {
-                const offset = i * FONT_HEIGHT * FONT_WIDTH + y * FONT_WIDTH + x;
+            for (8..font_width) |x| {
+                const idx = i * font_height * font_width + y * font_width + x;
                 if (i >= 0xc0 and i <= 0xdf) {
-                    font_bool[offset] = (glyph[y] & 1) != 0;
+                    font_bitmap[idx] = (glyph[y] & 1) != 0;
                 } else {
-                    font_bool[offset] = false;
+                    font_bitmap[idx] = false;
                 }
             }
         }
     }
 
-    break :blk font_bool;
+    break :blk font_bitmap;
 };
 
 const ansi_colors = [8]Color{
@@ -268,8 +263,9 @@ const col256 = [_]u32{
     0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee
 };
 
-const esc = std.ascii.control_code.esc;
-const bs = std.ascii.control_code.bs;
+const control_code = std.ascii.control_code;
+const esc = control_code.esc;
+const bs = control_code.bs;
 
 const convtab_nomod = [_]u8{
     0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
@@ -301,51 +297,51 @@ const convtab_shift_capslock = [_]u8{
 // zig fmt: on
 
 pub fn init(
+    allocator: std.mem.Allocator,
     framebuffer: [*]u8,
     width: usize,
     height: usize,
     callback: ?*const CallbackFn,
 ) !*TTY {
-    var self = try root.allocator.create(Context);
-    @memset(std.mem.asBytes(self), 0);
+    var tty = try allocator.create(TTY);
+    errdefer allocator.destroy(tty);
+    @memset(std.mem.asBytes(tty), 0);
 
-    self.text_fg = DEFAULT_FG;
-    self.text_bg = @enumFromInt(0xffffffff);
+    tty.text_fg = default_fg;
+    tty.text_bg = default_bg;
 
-    self.framebuffer = @as([*]u32, @ptrCast(@alignCast(framebuffer)))[0 .. width * height];
-    self.width = width;
-    self.height = height;
+    tty.framebuffer = @as([*]u32, @ptrCast(@alignCast(framebuffer)))[0 .. width * height];
+    tty.width = width;
+    tty.height = height;
 
-    self.cols = self.width / FONT_WIDTH;
-    self.rows = self.height / FONT_HEIGHT;
-    self.offset_x = (self.width % FONT_WIDTH) / 2;
-    self.offset_y = (self.height % FONT_HEIGHT) / 2;
+    tty.cols = width / font_width;
+    tty.rows = height / font_height;
+    tty.offset_x = (width % font_width) / 2;
+    tty.offset_y = (height % font_height) / 2;
 
-    const screen_size = self.rows * self.cols;
-    self.grid = try root.allocator.alloc(Char, screen_size);
-    self.queue = try root.allocator.alloc(QueueItem, screen_size);
-    self.map = try root.allocator.alloc(?*QueueItem, screen_size);
+    const screen_size = tty.rows * tty.cols;
+    tty.grid = try allocator.alloc(Char, screen_size);
+    errdefer allocator.free(tty.grid);
+    tty.queue = try std.ArrayListUnmanaged(QueueItem).initCapacity(allocator, screen_size);
+    errdefer tty.queue.deinit(allocator);
+    tty.map = try allocator.alloc(?*QueueItem, screen_size);
+    errdefer allocator.free(tty.map);
 
-    const default_c: Char = .{ .c = ' ', .fg = self.text_fg, .bg = self.text_bg };
-    @memset(self.grid, default_c);
-    @memset(std.mem.sliceAsBytes(self.queue), 0);
-    @memset(self.map, null);
-    self.queue_i = 0;
+    const default_c: Char = .{ .c = ' ', .fg = tty.text_fg, .bg = tty.text_bg };
+    @memset(tty.grid, default_c);
+    @memset(tty.queue.allocatedSlice(), std.mem.zeroes(QueueItem));
+    @memset(tty.map, null);
+    @memset(tty.framebuffer, @intFromEnum(default_bg));
 
-    if (callback) |cb| {
-        self.callback = cb;
-    } else {
-        self.callback = dummyCallBack;
-    }
+    tty.callback = callback orelse dummyCallBack;
 
-    self.reinit();
-    @memset(self.framebuffer, @intFromEnum(DEFAULT_BG));
-    self.drawCursor();
+    tty.reinit();
+    tty.drawCursor();
 
-    return self;
+    return tty;
 }
 
-pub fn reinit(self: *Context) void {
+pub fn reinit(self: *TTY) void {
     self.cursor_enabled = true;
     self.scroll_enabled = true;
     self.control_sequence = false;
@@ -362,28 +358,27 @@ pub fn reinit(self: *Context) void {
     self.insert_mode = false;
     self.unicode_remaining = 0;
     self.g_select = 0;
-    self.charsets[0] = CHARSET_DEFAULT;
-    self.charsets[1] = CHARSET_DEC_SPECIAL;
+    self.charsets[0] = .default;
+    self.charsets[1] = .dec_special;
     self.current_charset = 0;
     self.escape_offset = 0;
-    self.esc_values_i = 0;
+    self.esc_values = .{};
     self.saved_cursor_x = 0;
     self.saved_cursor_y = 0;
-    self.current_primary = maxInt(usize);
-    self.current_bg = maxInt(usize);
+    self.current_fg = null;
+    self.current_bg = null;
     self.scroll_top_margin = 0;
     self.scroll_bottom_margin = self.rows;
 }
 
 // TODO
-pub fn read(self: *Context, buf: []u8) error{}!usize {
+pub fn read(self: *TTY, buf: []u8) error{}!usize {
     _ = buf;
     _ = self;
     return 0;
 }
 
-// TODO: useless error union + catch unreachable everywhere is really ugly :)
-pub fn write(self: *Context, buf: []const u8) error{}!usize {
+pub fn write(self: *TTY, buf: []const u8) error{}!usize {
     for (buf) |char| {
         self.putChar(char);
     }
@@ -402,62 +397,57 @@ pub fn writer(tty: *TTY) Writer {
 
 fn dummyCallBack(_: *TTY, _: Callback, _: u64, _: u64, _: u64) void {}
 
-inline fn swapPalette(self: *Context) void {
+inline fn swapPalette(self: *TTY) void {
     const tmp = self.text_bg;
     self.text_bg = self.text_fg;
     self.text_fg = tmp;
 }
 
-fn plotChar(self: *Context, c: *const Char, _x: usize, _y: usize) void {
+fn plotChar(self: *TTY, c: *const Char, _x: usize, _y: usize) void {
     if (_x >= self.cols or _y >= self.rows) return;
 
-    const x = self.offset_x + _x * FONT_WIDTH;
-    const y = self.offset_y + _y * FONT_HEIGHT;
+    const x = self.offset_x + _x * font_width;
+    const y = self.offset_y + _y * font_height;
 
-    const glyph = font[c.c * FONT_HEIGHT * FONT_WIDTH ..];
-    for (0..FONT_HEIGHT) |fy| {
+    const glyph = font[c.c * font_height * font_width ..];
+    for (0..font_height) |fy| {
         const fb_line = self.framebuffer[x + (y + fy) * self.width ..];
 
-        for (0..FONT_WIDTH) |fx| {
-            const draw = glyph[fy * FONT_WIDTH + fx];
-            const bg = if (@intFromEnum(c.bg) == 0xffffffff) DEFAULT_BG else c.bg;
-            const fg = if (@intFromEnum(c.fg) == 0xffffffff) DEFAULT_BG else c.fg;
-            fb_line[fx] = @intFromEnum(if (draw) fg else bg);
+        for (0..font_width) |fx| {
+            const draw = glyph[fy * font_width + fx];
+            fb_line[fx] = @intFromEnum(if (draw) c.fg else c.bg);
         }
     }
 }
 
-fn plotCharFast(self: Context, old: *const Char, c: *const Char, _x: usize, _y: usize) void {
+fn plotCharFast(self: TTY, old: *const Char, c: *const Char, _x: usize, _y: usize) void {
     if (_x >= self.cols or _y >= self.rows) return;
 
-    const x = self.offset_x + _x * FONT_WIDTH;
-    const y = self.offset_y + _y * FONT_HEIGHT;
+    const x = self.offset_x + _x * font_width;
+    const y = self.offset_y + _y * font_height;
 
-    const new_glyph = font[c.c * FONT_HEIGHT * FONT_WIDTH ..];
-    const old_glyph = font[old.c * FONT_HEIGHT * FONT_WIDTH ..];
-    for (0..FONT_HEIGHT) |fy| {
+    const new_glyph = font[c.c * font_height * font_width ..];
+    const old_glyph = font[old.c * font_height * font_width ..];
+    for (0..font_height) |fy| {
         const fb_line = self.framebuffer[x + (y + fy) * self.width ..];
 
-        for (0..FONT_WIDTH) |fx| {
-            const old_draw = old_glyph[fy * FONT_WIDTH + fx];
-            const new_draw = new_glyph[fy * FONT_WIDTH + fx];
-            if (old_draw == new_draw) continue;
-
-            const bg = if (@intFromEnum(c.bg) == 0xffffffff) DEFAULT_BG else c.bg;
-            const fg = if (@intFromEnum(c.fg) == 0xffffffff) DEFAULT_BG else c.fg;
-            fb_line[fx] = @intFromEnum(if (new_draw) fg else bg);
+        for (0..font_width) |fx| {
+            const old_draw = old_glyph[fy * font_width + fx];
+            const new_draw = new_glyph[fy * font_width + fx];
+            if (old_draw != new_draw) {
+                fb_line[fx] = @intFromEnum(if (new_draw) c.fg else c.bg);
+            }
         }
     }
 }
 
-fn pushToQueue(self: *Context, c: *const Char, x: usize, y: usize) void {
+fn pushToQueue(self: *TTY, c: *const Char, x: usize, y: usize) void {
     if (x >= self.cols or y >= self.rows) return;
 
     const i = y * self.cols + x;
     const queue = self.map[i] orelse blk: {
         if (std.meta.eql(self.grid[i], c.*)) return;
-        const q = &self.queue[self.queue_i];
-        self.queue_i += 1;
+        const q = self.queue.addOneAssumeCapacity();
         q.x = x;
         q.y = y;
         self.map[i] = q;
@@ -466,7 +456,7 @@ fn pushToQueue(self: *Context, c: *const Char, x: usize, y: usize) void {
     queue.c = c.*;
 }
 
-fn revScroll(self: *Context) void {
+fn revScroll(self: *TTY) void {
     var i: usize = (self.scroll_bottom_margin - 1) * self.cols - 1;
     while (true) : (i -= 1) {
         const queue = self.map[i];
@@ -482,7 +472,7 @@ fn revScroll(self: *Context) void {
     }
 }
 
-fn scroll(self: *Context) void {
+fn scroll(self: *TTY) void {
     const start = (self.scroll_top_margin + 1) * self.cols;
     const end = self.scroll_bottom_margin * self.cols;
     for (start..end) |i| {
@@ -498,7 +488,7 @@ fn scroll(self: *Context) void {
     }
 }
 
-fn clear(self: *Context, move: bool) void {
+fn clear(self: *TTY, move: bool) void {
     const empty: Char = .{ .c = ' ', .fg = self.text_fg, .bg = self.text_bg };
     for (0..self.rows * self.cols) |i| {
         self.pushToQueue(&empty, i % self.cols, i / self.cols);
@@ -510,7 +500,7 @@ fn clear(self: *Context, move: bool) void {
     }
 }
 
-inline fn setCursorPos(self: *Context, x: usize, y: usize) void {
+inline fn setCursorPos(self: *TTY, x: usize, y: usize) void {
     if (x >= self.cols) {
         self.cursor_x = self.cols - 1;
     } else {
@@ -524,12 +514,12 @@ inline fn setCursorPos(self: *Context, x: usize, y: usize) void {
     }
 }
 
-inline fn getCursorPos(self: *Context, x: *usize, y: *usize) void {
+inline fn getCursorPos(self: *TTY, x: *usize, y: *usize) void {
     x.* = if (self.cursor_x >= self.cols) self.cols - 1 else self.cursor_x;
     y.* = if (self.cursor_y >= self.rows) self.rows - 1 else self.cursor_y;
 }
 
-fn moveChar(self: *Context, new_x: usize, new_y: usize, old_x: usize, old_y: usize) void {
+fn moveChar(self: *TTY, new_x: usize, new_y: usize, old_x: usize, old_y: usize) void {
     if (old_x >= self.cols or old_y >= self.rows or new_x >= self.cols or new_y >= self.rows) {
         return;
     }
@@ -540,47 +530,7 @@ fn moveChar(self: *Context, new_x: usize, new_y: usize, old_x: usize, old_y: usi
     self.pushToQueue(c, new_x, new_y);
 }
 
-inline fn setTextFg(self: *Context, fg: usize) void {
-    self.text_fg = ansi_colors[fg];
-}
-
-inline fn setTextBg(self: *Context, bg: usize) void {
-    self.text_bg = ansi_colors[bg];
-}
-
-inline fn setTextFgBright(self: *Context, fg: usize) void {
-    self.text_fg = ansi_bright_colors[fg];
-}
-
-inline fn setTextBgBright(self: *Context, bg: usize) void {
-    self.text_bg = ansi_bright_colors[bg];
-}
-
-inline fn setTextFgRgb(self: *Context, fg: u32) void {
-    self.text_fg = @enumFromInt(fg);
-}
-
-inline fn setTextBgRgb(self: *Context, bg: u32) void {
-    self.text_bg = @enumFromInt(bg);
-}
-
-inline fn setTextFgDefault(self: *Context) void {
-    self.text_fg = DEFAULT_FG;
-}
-
-inline fn setTextBgDefault(self: *Context) void {
-    self.text_bg = @enumFromInt(0xffffffff);
-}
-
-inline fn setTextFgDefaultBright(self: *Context) void {
-    self.text_fg = DEFAULT_FG_BRIGHT;
-}
-
-inline fn setTextBgDefaultBright(self: *Context) void {
-    self.text_bg = DEFAULT_BG_BRIGHT;
-}
-
-fn drawCursor(self: *Context) void {
+fn drawCursor(self: *TTY) void {
     if (self.cursor_x >= self.cols or self.cursor_y >= self.rows) return;
 
     const i = self.cursor_x + self.cursor_y * self.cols;
@@ -598,13 +548,12 @@ fn drawCursor(self: *Context) void {
     }
 }
 
-fn doubleBufferFlush(self: *Context) void {
+fn doubleBufferFlush(self: *TTY) void {
     if (self.cursor_enabled) {
         self.drawCursor();
     }
 
-    for (0..self.queue_i) |i| {
-        const q = &self.queue[i];
+    for (self.queue.items) |q| {
         const offset = q.y * self.cols + q.x;
         if (self.map[offset] == null) continue;
 
@@ -628,10 +577,10 @@ fn doubleBufferFlush(self: *Context) void {
     self.old_cursor_x = self.cursor_x;
     self.old_cursor_y = self.cursor_y;
 
-    self.queue_i = 0;
+    self.queue.clearRetainingCapacity();
 }
 
-fn rawPutChar(self: *Context, c: u8) void {
+fn rawPutChar(self: *TTY, c: u8) void {
     if (self.cursor_x >= self.cols and (self.cursor_y < self.scroll_bottom_margin - 1 or self.scroll_enabled)) {
         self.cursor_x = 0;
         self.cursor_y += 1;
@@ -649,8 +598,51 @@ fn rawPutChar(self: *Context, c: u8) void {
     self.cursor_x += 1;
 }
 
-fn selectGraphicRendition(self: *Context) void {
-    if (self.esc_values_i == 0) {
+// TODO: remove all those ugly inline functions?
+inline fn setTextFg(self: *TTY, fg: usize) void {
+    self.text_fg = ansi_colors[fg];
+}
+
+inline fn setTextBg(self: *TTY, bg: usize) void {
+    self.text_bg = ansi_colors[bg];
+}
+
+inline fn setTextFgBright(self: *TTY, fg: usize) void {
+    self.text_fg = ansi_bright_colors[fg];
+}
+
+inline fn setTextBgBright(self: *TTY, bg: usize) void {
+    self.text_bg = ansi_bright_colors[bg];
+}
+
+inline fn setTextFgRgb(self: *TTY, fg: u32) void {
+    self.text_fg = @enumFromInt(fg);
+}
+
+inline fn setTextBgRgb(self: *TTY, bg: u32) void {
+    self.text_bg = @enumFromInt(bg);
+}
+
+inline fn setTextFgDefault(self: *TTY) void {
+    self.text_fg = default_fg;
+}
+
+inline fn setTextBgDefault(self: *TTY) void {
+    self.text_bg = default_bg;
+}
+
+inline fn setTextFgDefaultBright(self: *TTY) void {
+    self.text_fg = default_fg_bright;
+}
+
+inline fn setTextBgDefaultBright(self: *TTY) void {
+    self.text_bg = default_bg_bright;
+}
+
+fn selectGraphicRendition(self: *TTY) void {
+    const esc_values = self.esc_values.constSlice();
+
+    if (esc_values.len == 0) {
         if (self.reverse_video) {
             self.reverse_video = false;
             self.swapPalette();
@@ -658,8 +650,8 @@ fn selectGraphicRendition(self: *Context) void {
 
         self.bold = false;
         self.bg_bold = false;
-        self.current_primary = maxInt(usize);
-        self.current_bg = maxInt(usize);
+        self.current_fg = null;
+        self.current_bg = null;
         self.setTextFgDefault();
         self.setTextBgDefault();
 
@@ -667,8 +659,14 @@ fn selectGraphicRendition(self: *Context) void {
     }
 
     var i: usize = 0;
-    while (i < self.esc_values_i) : (i += 1) {
-        if (self.esc_values[i] == 0) {
+    // TODO: reverse_video check everywhere is ugly
+    // maybe add that before the switch
+    // ```zig
+    //     if (self.reverse_video) self.swapPalette();
+    //     if (self.reverse_video) self.swapPalette();
+    // ```
+    while (i < esc_values.len) : (i += 1) switch (esc_values[i]) {
+        0 => {
             if (self.reverse_video) {
                 self.reverse_video = false;
                 self.swapPalette();
@@ -676,17 +674,18 @@ fn selectGraphicRendition(self: *Context) void {
 
             self.bold = false;
             self.bg_bold = false;
-            self.current_primary = maxInt(usize);
-            self.current_bg = maxInt(usize);
+            self.current_fg = null;
+            self.current_bg = null;
             self.setTextBgDefault();
             self.setTextFgDefault();
-        } else if (self.esc_values[i] == 1) {
+        },
+        1 => {
             self.bold = true;
-            if (self.current_primary != maxInt(usize)) {
+            if (self.current_fg) |current_fg| {
                 if (!self.reverse_video) {
-                    self.setTextFgBright(self.current_primary);
+                    self.setTextFgBright(current_fg);
                 } else {
-                    self.setTextBgBright(self.current_primary);
+                    self.setTextBgBright(current_fg);
                 }
             } else {
                 if (!self.reverse_video) {
@@ -695,13 +694,14 @@ fn selectGraphicRendition(self: *Context) void {
                     self.setTextBgDefaultBright();
                 }
             }
-        } else if (self.esc_values[i] == 5) {
+        },
+        5 => {
             self.bg_bold = true;
-            if (self.current_bg != maxInt(usize)) {
+            if (self.current_bg) |current_bg| {
                 if (!self.reverse_video) {
-                    self.setTextBgBright(self.current_bg);
+                    self.setTextBgBright(current_bg);
                 } else {
-                    self.setTextFgBright(self.current_bg);
+                    self.setTextFgBright(current_bg);
                 }
             } else {
                 if (!self.reverse_video) {
@@ -710,13 +710,14 @@ fn selectGraphicRendition(self: *Context) void {
                     self.setTextFgDefaultBright();
                 }
             }
-        } else if (self.esc_values[i] == 22) {
+        },
+        22 => {
             self.bold = false;
-            if (self.current_primary != maxInt(usize)) {
+            if (self.current_fg) |current_fg| {
                 if (!self.reverse_video) {
-                    self.setTextFg(self.current_primary);
+                    self.setTextFg(current_fg);
                 } else {
-                    self.setTextBg(self.current_primary);
+                    self.setTextBg(current_fg);
                 }
             } else {
                 if (!self.reverse_video) {
@@ -725,13 +726,14 @@ fn selectGraphicRendition(self: *Context) void {
                     self.setTextBgDefault();
                 }
             }
-        } else if (self.esc_values[i] == 25) {
+        },
+        25 => {
             self.bg_bold = false;
-            if (self.current_bg != maxInt(usize)) {
+            if (self.current_bg) |current_bg| {
                 if (!self.reverse_video) {
-                    self.setTextBg(self.current_bg);
+                    self.setTextBg(current_bg);
                 } else {
-                    self.setTextFg(self.current_bg);
+                    self.setTextFg(current_bg);
                 }
             } else {
                 if (!self.reverse_video) {
@@ -740,115 +742,124 @@ fn selectGraphicRendition(self: *Context) void {
                     self.setTextFgDefault();
                 }
             }
-        } else if (self.esc_values[i] >= 30 and self.esc_values[i] <= 37) {
+        },
+        30...37 => {
             const offset = 30;
-            self.current_primary = self.esc_values[i] - offset;
+            self.current_fg = esc_values[i] - offset;
 
             if (self.reverse_video) {
                 if (self.bold) {
-                    self.setTextBgBright(self.esc_values[i] - offset);
+                    self.setTextBgBright(esc_values[i] - offset);
                 } else {
-                    self.setTextBg(self.esc_values[i] - offset);
+                    self.setTextBg(esc_values[i] - offset);
                 }
             } else {
                 if (self.bold) {
-                    self.setTextFgBright(self.esc_values[i] - offset);
+                    self.setTextFgBright(esc_values[i] - offset);
                 } else {
-                    self.setTextFg(self.esc_values[i] - offset);
+                    self.setTextFg(esc_values[i] - offset);
                 }
             }
-        } else if (self.esc_values[i] >= 40 and self.esc_values[i] <= 47) {
+        },
+        40...47 => {
             const offset = 40;
-            self.current_bg = self.esc_values[i] - offset;
+            self.current_bg = esc_values[i] - offset;
 
             if (self.reverse_video) {
                 if (self.bg_bold) {
-                    self.setTextFgBright(self.esc_values[i] - offset);
+                    self.setTextFgBright(esc_values[i] - offset);
                 } else {
-                    self.setTextFg(self.esc_values[i] - offset);
+                    self.setTextFg(esc_values[i] - offset);
                 }
             } else {
                 if (self.bg_bold) {
-                    self.setTextBgBright(self.esc_values[i] - offset);
+                    self.setTextBgBright(esc_values[i] - offset);
                 } else {
-                    self.setTextBg(self.esc_values[i] - offset);
+                    self.setTextBg(esc_values[i] - offset);
                 }
             }
-        } else if (self.esc_values[i] >= 90 and self.esc_values[i] <= 97) {
+        },
+        90...97 => {
             const offset = 90;
-            self.current_primary = self.esc_values[i] - offset;
+            self.current_fg = esc_values[i] - offset;
 
             if (self.reverse_video) {
-                self.setTextBgBright(self.esc_values[i] - offset);
+                self.setTextBgBright(esc_values[i] - offset);
             } else {
-                self.setTextFgBright(self.esc_values[i] - offset);
+                self.setTextFgBright(esc_values[i] - offset);
             }
-        } else if (self.esc_values[i] >= 100 and self.esc_values[i] <= 107) {
+        },
+        100...107 => {
             const offset = 100;
-            self.current_bg = self.esc_values[i] - offset;
+            self.current_bg = esc_values[i] - offset;
 
             if (self.reverse_video) {
-                self.setTextFgBright(self.esc_values[i] - offset);
+                self.setTextFgBright(esc_values[i] - offset);
             } else {
-                self.setTextBgBright(self.esc_values[i] - offset);
+                self.setTextBgBright(esc_values[i] - offset);
             }
-        } else if (self.esc_values[i] == 39) {
-            self.current_primary = maxInt(usize);
+        },
+        39 => {
+            self.current_fg = null;
 
-            if (self.reverse_video) {
-                self.swapPalette();
-            }
-
-            if (!self.bold) {
-                self.setTextFgDefault();
+            if (!self.reverse_video) {
+                if (!self.bold) {
+                    self.setTextFgDefault();
+                } else {
+                    self.setTextFgDefaultBright();
+                }
             } else {
-                self.setTextFgDefaultBright();
+                if (!self.bold) {
+                    self.setTextBgDefault();
+                } else {
+                    self.setTextBgDefaultBright();
+                }
             }
+        },
+        49 => {
+            self.current_bg = null;
 
-            if (self.reverse_video) {
-                self.swapPalette();
-            }
-        } else if (self.esc_values[i] == 49) {
-            self.current_bg = maxInt(usize);
-
-            if (self.reverse_video) {
-                self.swapPalette();
-            }
-
-            if (!self.bg_bold) {
-                self.setTextBgDefault();
+            if (!self.reverse_video) {
+                if (!self.bg_bold) {
+                    self.setTextBgDefault();
+                } else {
+                    self.setTextBgDefaultBright();
+                }
             } else {
-                self.setTextBgDefaultBright();
+                if (!self.bg_bold) {
+                    self.setTextFgDefault();
+                } else {
+                    self.setTextFgDefaultBright();
+                }
             }
-
-            if (self.reverse_video) {
-                self.swapPalette();
-            }
-        } else if (self.esc_values[i] == 7) {
+        },
+        7 => {
             if (!self.reverse_video) {
                 self.reverse_video = true;
                 self.swapPalette();
             }
-        } else if (self.esc_values[i] == 27) {
+        },
+        27 => {
             if (self.reverse_video) {
                 self.reverse_video = false;
                 self.swapPalette();
             }
-        } else if (self.esc_values[i] == 38 or self.esc_values[i] == 48) {
-            const is_fg = self.esc_values[i] == 38;
+        },
+        38, 48 => {
+            const is_fg = esc_values[i] == 38;
 
             i += 1;
-            if (i >= self.esc_values_i) break;
+            if (i >= esc_values.len) return;
 
-            switch (self.esc_values[i]) {
+            switch (esc_values[i]) {
                 // RGB
                 2 => {
-                    if (i + 3 >= self.esc_values_i) return;
+                    if (i + 3 >= esc_values.len) return;
 
                     var rgb_value: u32 = 0;
-                    rgb_value |= self.esc_values[i + 1] << 16;
-                    rgb_value |= self.esc_values[i + 2] << 8;
-                    rgb_value |= self.esc_values[i + 3];
+                    rgb_value |= esc_values[i + 1] << 16;
+                    rgb_value |= esc_values[i + 2] << 8;
+                    rgb_value |= esc_values[i + 3];
 
                     i += 3;
 
@@ -860,12 +871,10 @@ fn selectGraphicRendition(self: *Context) void {
                 },
                 // 256 colors
                 5 => {
-                    if (i + 1 >= self.esc_values_i) return;
-
-                    const col = self.esc_values[i + 1];
-
                     i += 1;
+                    if (i >= esc_values.len) return;
 
+                    const col = esc_values[i];
                     if (col < 8) {
                         if (is_fg) {
                             self.setTextFg(col);
@@ -889,14 +898,16 @@ fn selectGraphicRendition(self: *Context) void {
                 },
                 else => {},
             }
-        }
-    }
+        },
+        else => {},
+    };
 }
 
-fn decPrivateParse(self: *Context, c: u8) void {
+// TODO: callback with BoundedArray struct directly?
+fn decPrivateParse(self: *TTY, c: u8) void {
     self.dec_private = false;
 
-    if (self.esc_values_i == 0) return;
+    if (self.esc_values.len == 0) return;
 
     var set: bool = undefined;
     switch (c) {
@@ -905,22 +916,24 @@ fn decPrivateParse(self: *Context, c: u8) void {
         else => return,
     }
 
-    if (self.esc_values[0] == 25) {
+    if (self.esc_values.get(0) == 25) {
         self.cursor_enabled = set;
         return;
     }
 
-    self.callback(self, Callback.dec, self.esc_values_i, @intFromPtr(&self.esc_values), c);
+    self.callback(self, Callback.dec, self.esc_values.len, @intFromPtr(&self.esc_values.buffer), c);
 }
 
-fn linuxPrivateParse(self: *Context) void {
-    if (self.esc_values_i != 0) {
-        self.callback(self, Callback.linux, self.esc_values_i, @intFromPtr(&self.esc_values), 0);
+// TODO: callback with BoundedArray struct directly?
+fn linuxPrivateParse(self: *TTY) void {
+    if (self.esc_values.len != 0) {
+        self.callback(self, Callback.linux, self.esc_values.len, @intFromPtr(&self.esc_values.buffer), 0);
     }
 }
 
-fn modeToggle(self: *Context, c: u8) void {
-    if (self.esc_values_i == 0) return;
+// TODO: callback with BoundedArray struct directly?
+fn modeToggle(self: *TTY, c: u8) void {
+    if (self.esc_values.len == 0) return;
 
     var set: bool = undefined;
     switch (c) {
@@ -929,15 +942,15 @@ fn modeToggle(self: *Context, c: u8) void {
         else => return,
     }
 
-    if (self.esc_values[0] == 4) {
+    if (self.esc_values.get(0) == 4) {
         self.insert_mode = set;
         return;
     }
 
-    self.callback(self, Callback.mode, self.esc_values_i, @intFromPtr(&self.esc_values), c);
+    self.callback(self, Callback.mode, self.esc_values.len, @intFromPtr(&self.esc_values.buffer), c);
 }
 
-fn oscParse(self: *Context, c: u8) void {
+fn oscParse(self: *TTY, c: u8) void {
     if (c == control_code.esc) {
         self.osc_escape = true;
         return;
@@ -951,7 +964,7 @@ fn oscParse(self: *Context, c: u8) void {
     self.osc_escape = false;
 }
 
-fn controlSequenceParse(self: *Context, c: u8) void {
+fn controlSequenceParse(self: *TTY, c: u8) void {
     if (self.escape_offset == 2) {
         switch (c) {
             '[' => {
@@ -969,23 +982,24 @@ fn controlSequenceParse(self: *Context, c: u8) void {
     }
 
     if (c >= '0' and c <= '9') {
-        if (self.esc_values_i == MAX_ESC_VALUES) return;
+        if (self.esc_values.len < self.esc_values.capacity()) {
+            self.rrr = true;
+            // TODO: should be like that
+            // const last = self.esc_values.popOrNull() orelse 0;
+            // self.esc_values.appendAssumeCapacity(last * 10 + (c - '0'));
+            self.esc_values.buffer[self.esc_values.len] *%= 10;
+            self.esc_values.buffer[self.esc_values.len] +%= c - '0';
+        }
 
-        self.rrr = true;
-        self.esc_values[self.esc_values_i] *%= 10;
-        self.esc_values[self.esc_values_i] +%= c - '0';
         return;
     }
 
     if (self.rrr) {
-        self.esc_values_i += 1;
+        _ = self.esc_values.addOneAssumeCapacity(); // already modified in the previous if
         self.rrr = false;
         if (c == ';') return;
     } else if (c == ';') {
-        if (self.esc_values_i == MAX_ESC_VALUES) return;
-
-        self.esc_values[self.esc_values_i] = 0;
-        self.esc_values_i += 1;
+        self.esc_values.append(0) catch return;
         return;
     }
 
@@ -993,9 +1007,7 @@ fn controlSequenceParse(self: *Context, c: u8) void {
         'J', 'K', 'q' => 0,
         else => 1,
     };
-    for (self.esc_values_i..MAX_ESC_VALUES) |i| {
-        self.esc_values[i] = esc_default;
-    }
+    @memset(self.esc_values.unusedCapacitySlice(), esc_default);
 
     if (self.dec_private) {
         self.decPrivateParse(c);
@@ -1006,18 +1018,20 @@ fn controlSequenceParse(self: *Context, c: u8) void {
 
     self.scroll_enabled = false;
     defer self.scroll_enabled = true;
+
     var x: usize = undefined;
     var y: usize = undefined;
     self.getCursorPos(&x, &y);
-
     if (c == 'F' or c == 'E') x = 0;
+
+    const esc_values = self.esc_values.slice();
 
     switch (c) {
         'F', 'A' => {
-            if (self.esc_values[0] > y) {
-                self.esc_values[0] = @intCast(y);
+            if (esc_values[0] > y) {
+                esc_values[0] = @intCast(y);
             }
-            var dest_y = y - self.esc_values[0];
+            var dest_y = y - esc_values[0];
             // zig fmt: off
             if ((self.scroll_top_margin >= dest_y and self.scroll_top_margin <= y) or
                 (self.scroll_bottom_margin >= dest_y and self.scroll_bottom_margin <= y)) {
@@ -1028,10 +1042,10 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             self.setCursorPos(x, dest_y);
         },
         'E', 'e', 'B' => {
-            if (y + self.esc_values[0] > self.rows - 1) {
-                self.esc_values[0] = @intCast((self.rows - 1) - y);
+            if (y + esc_values[0] > self.rows - 1) {
+                esc_values[0] = @intCast((self.rows - 1) - y);
             }
-            var dest_y = y + self.esc_values[0];
+            var dest_y = y + esc_values[0];
             if ((self.scroll_top_margin >= y and self.scroll_top_margin <= dest_y) or
                 (self.scroll_bottom_margin >= y and self.scroll_bottom_margin <= dest_y)) {
                     if (dest_y >= self.scroll_bottom_margin) {
@@ -1042,62 +1056,62 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             self.setCursorPos(x, dest_y);
         },
         'a', 'C' => {
-            if (x + self.esc_values[0] > self.cols - 1)
-                self.esc_values[0] = @intCast((self.cols - 1) - x);
-            self.setCursorPos(x + self.esc_values[0], y);
+            if (x + esc_values[0] > self.cols - 1)
+                esc_values[0] = @intCast((self.cols - 1) - x);
+            self.setCursorPos(x + esc_values[0], y);
         },
         'D' => {
-            if (self.esc_values[0] > x) {
-                self.esc_values[0] = @intCast(x);
+            if (esc_values[0] > x) {
+                esc_values[0] = @intCast(x);
             }
-            self.setCursorPos(x - self.esc_values[0], y);
+            self.setCursorPos(x - esc_values[0], y);
         },
         'c' => self.callback(self, Callback.private_id, 0, 0, 0),
         'd' => {
-            self.esc_values[0] -= 1;
-            if (self.esc_values[0] >= self.rows) {
-                self.esc_values[0] = @intCast(self.rows - 1);
+            esc_values[0] -= 1;
+            if (esc_values[0] >= self.rows) {
+                esc_values[0] = @intCast(self.rows - 1);
             }
-            self.setCursorPos(x, self.esc_values[0]);
+            self.setCursorPos(x, esc_values[0]);
         },
         'G', '`' => {
-            self.esc_values[0] -= 1;
-            if (self.esc_values[0] >= self.cols) {
-                self.esc_values[0] = @intCast(self.cols - 1);
+            esc_values[0] -= 1;
+            if (esc_values[0] >= self.cols) {
+                esc_values[0] = @intCast(self.cols - 1);
             }
-            self.setCursorPos(self.esc_values[0], y);
+            self.setCursorPos(esc_values[0], y);
         },
         'H', 'f' => {
-            self.esc_values[1] -|= 1;
-            self.esc_values[0] -|= 1;
-            if (self.esc_values[1] >= self.cols) {
-                self.esc_values[1] = @intCast(self.cols - 1);
+            esc_values[1] -|= 1;
+            esc_values[0] -|= 1;
+            if (esc_values[1] >= self.cols) {
+                esc_values[1] = @intCast(self.cols - 1);
             }
-            if (self.esc_values[0] >= self.rows) {
-                self.esc_values[0] = @intCast(self.rows - 1);
+            if (esc_values[0] >= self.rows) {
+                esc_values[0] = @intCast(self.rows - 1);
             }
-            self.setCursorPos(self.esc_values[1], self.esc_values[0]);
+            self.setCursorPos(esc_values[1], esc_values[0]);
         },
         'T' => {
-            for (0..self.esc_values[0]) |_| {
+            for (0..esc_values[0]) |_| {
                 self.scroll();
             }
         },
         'S' => {
             const old_scroll_top_margin = self.scroll_top_margin;
             self.scroll_top_margin = y;
-            for (0..self.esc_values[0]) |_| {
+            for (0..esc_values[0]) |_| {
                 self.revScroll();
             }
             self.scroll_top_margin = old_scroll_top_margin;
         },
-        'n' => switch (self.esc_values[0]) {
+        'n' => switch (esc_values[0]) {
             5 => self.callback(self, Callback.status_report, 0, 0, 0),
             6 => self.callback(self, Callback.pos_report, x + 1, y + 1, 0),
             else => {},
         },
-        'q' => self.callback(self, Callback.kbd_leds, self.esc_values[0], 0, 0),
-        'J' => switch (self.esc_values[0]) {
+        'q' => self.callback(self, Callback.kbd_leds, esc_values[0], 0, 0),
+        'J' => switch (esc_values[0]) {
             0 => {
                 const rows_remaining = self.rows - (y + 1);
                 const cols_diff = self.cols - (x + 1);
@@ -1125,7 +1139,7 @@ fn controlSequenceParse(self: *Context, c: u8) void {
         '@' => {
             var i: usize = self.cols - 1;
             while (true) : (i -= 1) {
-                self.moveChar(i + self.esc_values[0], y, i, y);
+                self.moveChar(i + esc_values[0], y, i, y);
                 self.setCursorPos(i, y);
                 self.rawPutChar(' ');
                 if (i == x) break;
@@ -1133,17 +1147,17 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             self.setCursorPos(x, y);
         },
         'P' => {
-            for (x + self.esc_values[0]..self.cols) |i| {
-                self.moveChar(i - self.esc_values[0], y, i, y);
+            for (x + esc_values[0]..self.cols) |i| {
+                self.moveChar(i - esc_values[0], y, i, y);
             }
-            self.setCursorPos(self.cols - self.esc_values[0], y);
-            for (0..self.esc_values[0]) |_| {
+            self.setCursorPos(self.cols - esc_values[0], y);
+            for (0..esc_values[0]) |_| {
                 self.rawPutChar(' ');
             }
             self.setCursorPos(x, y);
         },
         'X' => {
-            for (0..self.esc_values[0]) |_| {
+            for (0..esc_values[0]) |_| {
                 self.rawPutChar(' ');
             }
             self.setCursorPos(x, y);
@@ -1151,7 +1165,7 @@ fn controlSequenceParse(self: *Context, c: u8) void {
         'm' => self.selectGraphicRendition(),
         's' => self.getCursorPos(&self.saved_cursor_x, &self.saved_cursor_y),
         'u' => self.setCursorPos(self.saved_cursor_x, self.saved_cursor_y),
-        'K' => switch (self.esc_values[0]) {
+        'K' => switch (esc_values[0]) {
             0 => {
                 for (x..self.cols) |_| {
                     self.rawPutChar(' ');
@@ -1174,21 +1188,14 @@ fn controlSequenceParse(self: *Context, c: u8) void {
             else => {},
         },
         'r' => {
-            if (self.esc_values[0] == 0) {
-                self.esc_values[0] = 1;
-            }
-            if (self.esc_values[1] == 0) {
-                self.esc_values[1] = 1;
-            }
-
-            if (self.esc_values_i > 0) {
-                self.scroll_top_margin = self.esc_values[0] - 1;
+            if (esc_values.len > 0) {
+                self.scroll_top_margin = esc_values[0] -| 1;
             } else {
                 self.scroll_top_margin = 0;
             }
 
-            if (self.esc_values_i > 1) {
-                self.scroll_bottom_margin = self.esc_values[1];
+            if (esc_values.len > 1) {
+                self.scroll_bottom_margin = if (esc_values[1] == 0) 1 else esc_values[1];
             } else {
                 self.scroll_bottom_margin = self.rows;
             }
@@ -1211,7 +1218,7 @@ fn controlSequenceParse(self: *Context, c: u8) void {
     self.escape = false;
 }
 
-fn restoreState(self: *Context) void {
+fn restoreState(self: *TTY) void {
     self.text_fg = self.saved_state_text_fg;
     self.text_bg = self.saved_state_text_bg;
     self.cursor_x = self.saved_state_cursor_x;
@@ -1220,11 +1227,11 @@ fn restoreState(self: *Context) void {
     self.bg_bold = self.saved_state_bg_bold;
     self.reverse_video = self.saved_state_reverse_video;
     self.current_charset = self.saved_state_current_charset;
-    self.current_primary = self.saved_state_current_primary;
+    self.current_fg = self.saved_state_current_fg;
     self.current_bg = self.saved_state_current_bg;
 }
 
-fn saveState(self: *Context) void {
+fn saveState(self: *TTY) void {
     self.saved_state_text_fg = self.text_fg;
     self.saved_state_text_bg = self.text_bg;
     self.saved_state_cursor_x = self.cursor_x;
@@ -1233,11 +1240,11 @@ fn saveState(self: *Context) void {
     self.saved_state_bg_bold = self.bg_bold;
     self.saved_state_reverse_video = self.reverse_video;
     self.saved_state_current_charset = self.current_charset;
-    self.saved_state_current_primary = self.current_primary;
+    self.saved_state_current_fg = self.current_fg;
     self.saved_state_current_bg = self.current_bg;
 }
 
-fn escapeParse(self: *Context, c: u8) void {
+fn escapeParse(self: *TTY, c: u8) void {
     self.escape_offset += 1;
 
     if (self.osc) {
@@ -1252,8 +1259,7 @@ fn escapeParse(self: *Context, c: u8) void {
 
     if (self.csi) {
         self.csi = false;
-        @memset(&self.esc_values, 0);
-        self.esc_values_i = 0;
+        self.esc_values = .{};
         self.rrr = false;
         self.control_sequence = true;
         return;
@@ -1270,8 +1276,7 @@ fn escapeParse(self: *Context, c: u8) void {
             return;
         },
         '[' => {
-            @memset(&self.esc_values, 0);
-            self.esc_values_i = 0;
+            self.esc_values = .{};
             self.rrr = false;
             self.control_sequence = true;
             return;
@@ -1315,7 +1320,7 @@ fn escapeParse(self: *Context, c: u8) void {
     self.escape = false;
 }
 
-fn decSpecialPrint(self: *Context, c: u8) bool {
+fn decSpecialPrint(self: *TTY, c: u8) bool {
     switch (c) {
         '`' => self.rawPutChar(0x04),
         '0' => self.rawPutChar(0xdb),
@@ -1351,174 +1356,174 @@ fn decSpecialPrint(self: *Context, c: u8) bool {
     return true;
 }
 
-/// returns 0 on not found
-fn unicodeToCP437(code_point: u64) u8 {
-    switch (code_point) {
-        0x263a => return 1,
-        0x263b => return 2,
-        0x2665 => return 3,
-        0x2666 => return 4,
-        0x2663 => return 5,
-        0x2660 => return 6,
-        0x2022 => return 7,
-        0x25d8 => return 8,
-        0x25cb => return 9,
-        0x25d9 => return 10,
-        0x2642 => return 11,
-        0x2640 => return 12,
-        0x266a => return 13,
-        0x266b => return 14,
-        0x263c => return 15,
-        0x25ba => return 16,
-        0x25c4 => return 17,
-        0x2195 => return 18,
-        0x203c => return 19,
-        0x00b6 => return 20,
-        0x00a7 => return 21,
-        0x25ac => return 22,
-        0x21a8 => return 23,
-        0x2191 => return 24,
-        0x2193 => return 25,
-        0x2192 => return 26,
-        0x2190 => return 27,
-        0x221f => return 28,
-        0x2194 => return 29,
-        0x25b2 => return 30,
-        0x25bc => return 31,
+fn unicodeToCP437(code_point: u64) ?u8 {
+    return switch (code_point) {
+        0x263a => 1,
+        0x263b => 2,
+        0x2665 => 3,
+        0x2666 => 4,
+        0x2663 => 5,
+        0x2660 => 6,
+        0x2022 => 7,
+        0x25d8 => 8,
+        0x25cb => 9,
+        0x25d9 => 10,
+        0x2642 => 11,
+        0x2640 => 12,
+        0x266a => 13,
+        0x266b => 14,
+        0x263c => 15,
+        0x25ba => 16,
+        0x25c4 => 17,
+        0x2195 => 18,
+        0x203c => 19,
+        0x00b6 => 20,
+        0x00a7 => 21,
+        0x25ac => 22,
+        0x21a8 => 23,
+        0x2191 => 24,
+        0x2193 => 25,
+        0x2192 => 26,
+        0x2190 => 27,
+        0x221f => 28,
+        0x2194 => 29,
+        0x25b2 => 30,
+        0x25bc => 31,
 
-        0x2302 => return 127,
-        0x00c7 => return 128,
-        0x00fc => return 129,
-        0x00e9 => return 130,
-        0x00e2 => return 131,
-        0x00e4 => return 132,
-        0x00e0 => return 133,
-        0x00e5 => return 134,
-        0x00e7 => return 135,
-        0x00ea => return 136,
-        0x00eb => return 137,
-        0x00e8 => return 138,
-        0x00ef => return 139,
-        0x00ee => return 140,
-        0x00ec => return 141,
-        0x00c4 => return 142,
-        0x00c5 => return 143,
-        0x00c9 => return 144,
-        0x00e6 => return 145,
-        0x00c6 => return 146,
-        0x00f4 => return 147,
-        0x00f6 => return 148,
-        0x00f2 => return 149,
-        0x00fb => return 150,
-        0x00f9 => return 151,
-        0x00ff => return 152,
-        0x00d6 => return 153,
-        0x00dc => return 154,
-        0x00a2 => return 155,
-        0x00a3 => return 156,
-        0x00a5 => return 157,
-        0x20a7 => return 158,
-        0x0192 => return 159,
-        0x00e1 => return 160,
-        0x00ed => return 161,
-        0x00f3 => return 162,
-        0x00fa => return 163,
-        0x00f1 => return 164,
-        0x00d1 => return 165,
-        0x00aa => return 166,
-        0x00ba => return 167,
-        0x00bf => return 168,
-        0x2310 => return 169,
-        0x00ac => return 170,
-        0x00bd => return 171,
-        0x00bc => return 172,
-        0x00a1 => return 173,
-        0x00ab => return 174,
-        0x00bb => return 175,
-        0x2591 => return 176,
-        0x2592 => return 177,
-        0x2593 => return 178,
-        0x2502 => return 179,
-        0x2524 => return 180,
-        0x2561 => return 181,
-        0x2562 => return 182,
-        0x2556 => return 183,
-        0x2555 => return 184,
-        0x2563 => return 185,
-        0x2551 => return 186,
-        0x2557 => return 187,
-        0x255d => return 188,
-        0x255c => return 189,
-        0x255b => return 190,
-        0x2510 => return 191,
-        0x2514 => return 192,
-        0x2534 => return 193,
-        0x252c => return 194,
-        0x251c => return 195,
-        0x2500 => return 196,
-        0x253c => return 197,
-        0x255e => return 198,
-        0x255f => return 199,
-        0x255a => return 200,
-        0x2554 => return 201,
-        0x2569 => return 202,
-        0x2566 => return 203,
-        0x2560 => return 204,
-        0x2550 => return 205,
-        0x256c => return 206,
-        0x2567 => return 207,
-        0x2568 => return 208,
-        0x2564 => return 209,
-        0x2565 => return 210,
-        0x2559 => return 211,
-        0x2558 => return 212,
-        0x2552 => return 213,
-        0x2553 => return 214,
-        0x256b => return 215,
-        0x256a => return 216,
-        0x2518 => return 217,
-        0x250c => return 218,
-        0x2588 => return 219,
-        0x2584 => return 220,
-        0x258c => return 221,
-        0x2590 => return 222,
-        0x2580 => return 223,
-        0x03b1 => return 224,
-        0x00df => return 225,
-        0x0393 => return 226,
-        0x03c0 => return 227,
-        0x03a3 => return 228,
-        0x03c3 => return 229,
-        0x00b5 => return 230,
-        0x03c4 => return 231,
-        0x03a6 => return 232,
-        0x0398 => return 233,
-        0x03a9 => return 234,
-        0x03b4 => return 235,
-        0x221e => return 236,
-        0x03c6 => return 237,
-        0x03b5 => return 238,
-        0x2229 => return 239,
-        0x2261 => return 240,
-        0x00b1 => return 241,
-        0x2265 => return 242,
-        0x2264 => return 243,
-        0x2320 => return 244,
-        0x2321 => return 245,
-        0x00f7 => return 246,
-        0x2248 => return 247,
-        0x00b0 => return 248,
-        0x2219 => return 249,
-        0x00b7 => return 250,
-        0x221a => return 251,
-        0x207f => return 252,
-        0x00b2 => return 253,
-        0x25a0 => return 254,
-        else => return 0,
-    }
+        0x2302 => 127,
+        0x00c7 => 128,
+        0x00fc => 129,
+        0x00e9 => 130,
+        0x00e2 => 131,
+        0x00e4 => 132,
+        0x00e0 => 133,
+        0x00e5 => 134,
+        0x00e7 => 135,
+        0x00ea => 136,
+        0x00eb => 137,
+        0x00e8 => 138,
+        0x00ef => 139,
+        0x00ee => 140,
+        0x00ec => 141,
+        0x00c4 => 142,
+        0x00c5 => 143,
+        0x00c9 => 144,
+        0x00e6 => 145,
+        0x00c6 => 146,
+        0x00f4 => 147,
+        0x00f6 => 148,
+        0x00f2 => 149,
+        0x00fb => 150,
+        0x00f9 => 151,
+        0x00ff => 152,
+        0x00d6 => 153,
+        0x00dc => 154,
+        0x00a2 => 155,
+        0x00a3 => 156,
+        0x00a5 => 157,
+        0x20a7 => 158,
+        0x0192 => 159,
+        0x00e1 => 160,
+        0x00ed => 161,
+        0x00f3 => 162,
+        0x00fa => 163,
+        0x00f1 => 164,
+        0x00d1 => 165,
+        0x00aa => 166,
+        0x00ba => 167,
+        0x00bf => 168,
+        0x2310 => 169,
+        0x00ac => 170,
+        0x00bd => 171,
+        0x00bc => 172,
+        0x00a1 => 173,
+        0x00ab => 174,
+        0x00bb => 175,
+        0x2591 => 176,
+        0x2592 => 177,
+        0x2593 => 178,
+        0x2502 => 179,
+        0x2524 => 180,
+        0x2561 => 181,
+        0x2562 => 182,
+        0x2556 => 183,
+        0x2555 => 184,
+        0x2563 => 185,
+        0x2551 => 186,
+        0x2557 => 187,
+        0x255d => 188,
+        0x255c => 189,
+        0x255b => 190,
+        0x2510 => 191,
+        0x2514 => 192,
+        0x2534 => 193,
+        0x252c => 194,
+        0x251c => 195,
+        0x2500 => 196,
+        0x253c => 197,
+        0x255e => 198,
+        0x255f => 199,
+        0x255a => 200,
+        0x2554 => 201,
+        0x2569 => 202,
+        0x2566 => 203,
+        0x2560 => 204,
+        0x2550 => 205,
+        0x256c => 206,
+        0x2567 => 207,
+        0x2568 => 208,
+        0x2564 => 209,
+        0x2565 => 210,
+        0x2559 => 211,
+        0x2558 => 212,
+        0x2552 => 213,
+        0x2553 => 214,
+        0x256b => 215,
+        0x256a => 216,
+        0x2518 => 217,
+        0x250c => 218,
+        0x2588 => 219,
+        0x2584 => 220,
+        0x258c => 221,
+        0x2590 => 222,
+        0x2580 => 223,
+        0x03b1 => 224,
+        0x00df => 225,
+        0x0393 => 226,
+        0x03c0 => 227,
+        0x03a3 => 228,
+        0x03c3 => 229,
+        0x00b5 => 230,
+        0x03c4 => 231,
+        0x03a6 => 232,
+        0x0398 => 233,
+        0x03a9 => 234,
+        0x03b4 => 235,
+        0x221e => 236,
+        0x03c6 => 237,
+        0x03b5 => 238,
+        0x2229 => 239,
+        0x2261 => 240,
+        0x00b1 => 241,
+        0x2265 => 242,
+        0x2264 => 243,
+        0x2320 => 244,
+        0x2321 => 245,
+        0x00f7 => 246,
+        0x2248 => 247,
+        0x00b0 => 248,
+        0x2219 => 249,
+        0x00b7 => 250,
+        0x221a => 251,
+        0x207f => 252,
+        0x00b2 => 253,
+        0x25a0 => 254,
+
+        else => null,
+    };
 }
 
-fn putChar(self: *Context, c: u8) void {
+fn putChar(self: *TTY, c: u8) void {
     if (self.discard_next or (c == control_code.can or c == control_code.sub)) {
         self.discard_next = false;
         self.escape = false;
@@ -1541,12 +1546,7 @@ fn putChar(self: *Context, c: u8) void {
         self.code_point |= @as(u64, c & 0x3f) << @intCast(6 * self.unicode_remaining);
         if (self.unicode_remaining != 0) return;
 
-        const cc = unicodeToCP437(self.code_point);
-        if (cc == 0) {
-            self.rawPutChar(0xfe);
-        } else {
-            self.rawPutChar(cc);
-        }
+        self.rawPutChar(unicodeToCP437(self.code_point) orelse 0xfe);
 
         return;
     }
@@ -1574,8 +1574,8 @@ fn putChar(self: *Context, c: u8) void {
     if (self.g_select != 0) {
         self.g_select -= 1;
         switch (c) {
-            'B' => self.charsets[self.g_select] = CHARSET_DEFAULT,
-            '0' => self.charsets[self.g_select] = CHARSET_DEC_SPECIAL,
+            'B' => self.charsets[self.g_select] = .default,
+            '0' => self.charsets[self.g_select] = .dec_special,
             else => {},
         }
         self.g_select = 0;
@@ -1600,11 +1600,11 @@ fn putChar(self: *Context, c: u8) void {
             return;
         },
         control_code.ht => {
-            if ((x / TAB_SIZE + 1) >= self.cols) {
+            if ((x / tab_size + 1) >= self.cols) {
                 self.setCursorPos(self.cols - 1, y);
                 return;
             }
-            self.setCursorPos((x / TAB_SIZE + 1) * TAB_SIZE, y);
+            self.setCursorPos((x / tab_size + 1) * tab_size, y);
             return;
         },
         control_code.vt, control_code.ff, control_code.lf => {
@@ -1649,9 +1649,8 @@ fn putChar(self: *Context, c: u8) void {
 
     // Translate character set
     switch (self.charsets[self.current_charset]) {
-        CHARSET_DEFAULT => {},
-        CHARSET_DEC_SPECIAL => if (self.decSpecialPrint(c)) return,
-        else => unreachable,
+        .default => {},
+        .dec_special => if (self.decSpecialPrint(c)) return,
     }
 
     if (c >= 0x20 and c <= 0x7e) {
@@ -1660,7 +1659,7 @@ fn putChar(self: *Context, c: u8) void {
 }
 
 // TODO: unfinished + doesn't work well yet + should be somewhere else
-pub fn keyboardHandler(self: *Context) noreturn {
+pub fn keyboardHandler(self: *TTY) noreturn {
     const ev = @import("event.zig");
     const ps2 = @import("ps2.zig");
 
@@ -1673,7 +1672,7 @@ pub fn keyboardHandler(self: *Context) noreturn {
 
 // TODO: tell kernel to grab input instead of doing it like that
 //       also do the things instead of using term.zig
-pub fn readKey(self: *Context, input: u8) void {
+pub fn readKey(self: *TTY, input: u8) void {
     if (input == 0xe0) {
         self.extra_scancodes = true;
         return;
@@ -1692,28 +1691,28 @@ pub fn readKey(self: *Context, input: u8) void {
                 return;
             },
             .keypad_enter => {
-                _ = self.write("\n") catch unreachable;
+                _ = try self.write("\n");
                 return;
             },
             .keypad_slash => {
-                _ = self.write("/") catch unreachable;
+                _ = try self.write("/");
                 return;
             },
             // TODO for arrows we could also output A, B, C or D depending on termios settings
             .arrow_up => {
-                root.term.cursorUp(self.writer(), 1) catch unreachable;
+                try term.cursorUp(self.writer(), 1);
                 return;
             },
             .arrow_left => {
-                root.term.cursorBackward(self.writer(), 1) catch unreachable;
+                try term.cursorBackward(self.writer(), 1);
                 return;
             },
             .arrow_down => {
-                root.term.cursorDown(self.writer(), 1) catch unreachable;
+                try term.cursorDown(self.writer(), 1);
                 return;
             },
             .arrow_right => {
-                root.term.cursorForward(self.writer(), 1) catch unreachable;
+                try term.cursorForward(self.writer(), 1);
                 return;
             },
             .insert, .home, .end, .pgup, .pgdown, .delete => return,
@@ -1767,5 +1766,5 @@ pub fn readKey(self: *Context, input: u8) void {
         c = std.ascii.toUpper(c) -% 0x40;
     }
 
-    _ = self.write(&[1]u8{c}) catch unreachable;
+    _ = try self.write(&[1]u8{c});
 }

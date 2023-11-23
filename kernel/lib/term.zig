@@ -52,12 +52,12 @@ pub const ColorRGB = struct {
         try writer.print(csi ++ "48;2;{d};{d};{d}m", .{ bg.r, bg.g, bg.b });
     }
 
-    pub inline fn setFgStr(comptime str: []const u8) !void {
-        try setFg(parse(str));
+    pub inline fn setFgStr(writer: anytype, comptime str: []const u8) !void {
+        try setFg(writer, parse(str));
     }
 
-    pub inline fn setBgStr(comptime str: []const u8) !void {
-        try setBg(parse(str));
+    pub inline fn setBgStr(writer: anytype, comptime str: []const u8) !void {
+        try setBg(writer, parse(str));
     }
 
     fn parseInt(buf: []const u8) u8 {

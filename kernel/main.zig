@@ -114,13 +114,13 @@ fn main() noreturn {
     ps2.init();
 
     const fb = framebuffer_request.response.?.framebuffers()[0];
-    tty0 = TTY.init(fb.address, fb.width, fb.height, callback) catch unreachable;
+    tty0 = TTY.init(allocator, fb.address, fb.width, fb.height, callback) catch unreachable;
 
     const boot_info = boot_info_request.response.?;
-    tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+    try tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
         boot_info.name,
         boot_info.version,
-    }) catch unreachable;
+    });
 
     arch.disableInterrupts();
     std.log.debug("cpu model: {}", .{smp.thisCpu().cpu_model});
