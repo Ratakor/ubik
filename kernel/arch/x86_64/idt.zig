@@ -4,9 +4,6 @@ const gdt = @import("gdt.zig");
 const vmm = @import("root").vmm;
 const log = std.log.scoped(.idt);
 
-const interrupt_gate = 0b1000_1110;
-const trap_gate = 0b1000_1111;
-
 pub const InterruptHandler = *const fn (ctx: *Context) callconv(.SysV) void;
 
 pub const Context = extern struct {
@@ -36,32 +33,45 @@ pub const Context = extern struct {
     ss: u64,
 };
 
-/// Interrupt Descriptor Table Entry
-const IDTEntry = extern struct {
-    offset_low: u16 align(1),
-    selector: u16 align(1),
-    ist: u8 align(1),
-    type_attributes: u8 align(1),
-    offset_mid: u16 align(1),
-    offset_high: u32 align(1),
-    reserved: u32 align(1),
+/// Interrupt Descriptor Table
+const IDT = struct {
+    entries: [256]Entry = undefined,
+    descriptor: Descriptor = .{},
 
-    fn init(handler: u64, ist: u8, gate: u8) IDTEntry {
-        return .{
-            .offset_low = @truncate(handler),
-            .selector = gdt.kernel_code,
-            .ist = ist,
-            .type_attributes = gate,
-            .offset_mid = @truncate(handler >> 16),
-            .offset_high = @truncate(handler >> 32),
-            .reserved = 0,
-        };
-    }
-};
+    const Entry = packed struct(u128) {
+        offset_low: u16,
+        selector: u16,
+        ist: u3,
+        reserved0: u5 = 0,
+        gate_type: u4,
+        zero: u1 = 0,
+        dpl: u2, // Descriptor Privilege Level
+        p: u1, // present flag
+        offset_mid: u16,
+        offset_high: u32,
+        reserved1: u32 = 0,
 
-const IDTDescriptor = extern struct {
-    limit: u16 align(1) = @sizeOf(@TypeOf(idt)) - 1,
-    base: u64 align(1) = undefined,
+        const interrupt_gate = 0b1110;
+        const trap_gate = 0b1111;
+
+        fn init(handler: u64, ist: u3) Entry {
+            return .{
+                .offset_low = @truncate(handler),
+                .selector = gdt.kernel_code,
+                .ist = ist,
+                .gate_type = interrupt_gate,
+                .dpl = 0b00,
+                .p = 1,
+                .offset_mid = @truncate(handler >> 16),
+                .offset_high = @truncate(handler >> 32),
+            };
+        }
+    };
+
+    const Descriptor = packed struct(u80) {
+        limit: u16 = @sizeOf([256]Entry) - 1,
+        base: u64 = undefined,
+    };
 };
 
 const exceptions = [_][]const u8{
@@ -99,36 +109,35 @@ const exceptions = [_][]const u8{
     "Reserved",
 };
 
+pub var panic_ipi_vector: u8 = undefined;
+
 // TODO: replace isr with a interrupt dispatcher func?
 //       -> move all handlers to interrupt.zig?
 var isr = [_]InterruptHandler{defaultHandler} ** 256;
-var next_vector: u8 = exceptions.len;
-pub var panic_ipi_vector: u8 = undefined;
+var idt: IDT = .{};
 
-var idtr: IDTDescriptor = .{};
-var idt: [256]IDTEntry = undefined;
+var next_vector: u8 = exceptions.len;
 
 pub fn init() void {
-    idtr.base = @intFromPtr(&idt);
+    idt.descriptor.base = @intFromPtr(&idt.entries);
 
-    inline for (0..256) |i| {
-        const handler = makeHandler(i);
-        idt[i] = IDTEntry.init(@intFromPtr(handler), 0, interrupt_gate);
+    inline for (0..256) |vector| {
+        const handler = makeHandler(vector);
+        idt.entries[vector] = IDT.Entry.init(@intFromPtr(handler), 0);
     }
 
     setIST(0x0e, 2); // page fault uses IST 2
     panic_ipi_vector = allocVector();
-    idt[panic_ipi_vector] = IDTEntry.init(@intFromPtr(&panicHandler), 0, interrupt_gate);
+    idt.entries[panic_ipi_vector] = IDT.Entry.init(@intFromPtr(&panicHandler), 0);
 
     reload();
-    log.info("init: successfully reloaded IDT", .{});
 }
 
 pub fn reload() void {
     asm volatile (
         \\lidt (%[idtr])
         :
-        : [idtr] "r" (&idtr),
+        : [idtr] "r" (&idt.descriptor),
         : "memory"
     );
 }
@@ -142,8 +151,8 @@ pub fn allocVector() u8 {
     return vector;
 }
 
-pub inline fn setIST(vector: u8, ist: u8) void {
-    idt[vector].ist = ist;
+pub inline fn setIST(vector: u8, ist: u3) void {
+    idt.entries[vector].ist = ist;
 }
 
 pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {

@@ -38,7 +38,7 @@ pub const Process = struct {
     fds_lock: SpinLock,
     fds: std.ArrayListUnmanaged(*vfs.FileDescriptor),
 
-    var next_pid = std.atomic.Atomic(std.os.pid_t).init(0);
+    var next_pid = std.atomic.Value(std.os.pid_t).init(0);
 
     // TODO: more errdefer
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
@@ -88,7 +88,6 @@ pub const Process = struct {
 };
 
 pub const Thread = struct {
-    errno: usize,
     tid: usize,
     lock: SpinLock = .{},
     process: *Process,
@@ -121,7 +120,6 @@ pub const Thread = struct {
         errdefer root.allocator.destroy(thread);
 
         thread.* = .{
-            .errno = 0,
             .tid = undefined,
             .process = kernel_process,
             .ctx = undefined, // defined after
@@ -321,10 +319,6 @@ pub inline fn currentThread() *Thread {
 
 pub inline fn currentProcess() *Process {
     return currentThread().process;
-}
-
-pub inline fn setErrno(errno: std.os.E) void {
-    currentThread().errno = @intFromEnum(errno);
 }
 
 fn nextThread() ?*Thread {

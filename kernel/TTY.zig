@@ -78,7 +78,7 @@ capslock_active: bool,
 
 callback: *const CallbackFn,
 
-pub const Reader = std.io.Reader(*TTY, error{}, read);
+pub const Reader = std.io.GenericReader(*TTY, error{}, read); // TODO: change to AnyReader?
 pub const Writer = std.io.Writer(*TTY, error{}, write);
 pub const CallbackFn = fn (*TTY, Callback, u64, u64, u64) void;
 

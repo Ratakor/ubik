@@ -1,5 +1,3 @@
-const std = @import("std");
-const log = std.log.scoped(.gdt);
 const SpinLock = @import("root").SpinLock;
 
 /// Global Descriptor Table
@@ -21,15 +19,10 @@ const GDT = extern struct {
         base_high: u8 = 0,
     };
 
-    const Descriptor = extern struct {
-        limit: u16 align(1) = @sizeOf(GDT) - 1,
-        base: u64 align(1) = undefined,
+    const Descriptor = packed struct(u80) {
+        limit: u16 = @sizeOf(GDT) - 1,
+        base: u64 = undefined,
     };
-
-    comptime {
-        std.debug.assert(@sizeOf(GDT) == 7 * @sizeOf(u64));
-        std.debug.assert(@bitSizeOf(Descriptor) == 80);
-    }
 };
 
 /// Task State Segment
@@ -96,7 +89,6 @@ var tss_lock: SpinLock = .{};
 pub fn init() void {
     gdtr.base = @intFromPtr(&gdt);
     reload();
-    log.info("init: successfully reloaded GDT", .{});
 }
 
 pub fn reload() void {

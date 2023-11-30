@@ -154,54 +154,55 @@ pub const Node = struct {
         }
     };
 
-    pub const Stream = struct {
-        node: *Node,
-        offset: u64 = 0,
+    // TODO: useless?
+    // pub const Stream = struct {
+    //     node: *Node,
+    //     offset: u64 = 0,
 
-        pub const SeekError = error{};
-        pub const GetSeekPosError = error{};
+    //     pub const SeekError = error{};
+    //     pub const GetSeekPosError = error{};
 
-        pub const SeekableStream = std.io.SeekableStream(
-            *Stream,
-            SeekError,
-            GetSeekPosError,
-            Stream.seekTo,
-            Stream.seekBy,
-            Stream.getPosFn,
-            Stream.getEndPosFn,
-        );
+    //     pub const SeekableStream = std.io.SeekableStream(
+    //         *Stream,
+    //         SeekError,
+    //         GetSeekPosError,
+    //         Stream.seekTo,
+    //         Stream.seekBy,
+    //         Stream.getPosFn,
+    //         Stream.getEndPosFn,
+    //     );
 
-        pub const Reader = std.io.Reader(*Stream, ReadError, Stream.read);
+    //     pub const Reader = std.io.Reader(*Stream, ReadError, Stream.read);
 
-        fn seekTo(self: *Stream, offset: u64) SeekError!void {
-            self.offset = offset;
-        }
+    //     fn seekTo(self: *Stream, offset: u64) SeekError!void {
+    //         self.offset = offset;
+    //     }
 
-        fn seekBy(self: *Stream, offset: i64) SeekError!void {
-            self.offset +%= @bitCast(offset);
-        }
+    //     fn seekBy(self: *Stream, offset: i64) SeekError!void {
+    //         self.offset +%= @bitCast(offset);
+    //     }
 
-        fn getPosFn(self: *Stream) GetSeekPosError!u64 {
-            return self.offset;
-        }
+    //     fn getPosFn(self: *Stream) GetSeekPosError!u64 {
+    //         return self.offset;
+    //     }
 
-        fn getEndPosFn(self: *Stream) GetSeekPosError!u64 {
-            _ = self;
-            return 0; // TODO
-        }
+    //     fn getEndPosFn(self: *Stream) GetSeekPosError!u64 {
+    //         _ = self;
+    //         return 0; // TODO
+    //     }
 
-        fn read(self: *Stream, buf: []u8) ReadError!usize {
-            return self.node.read(buf, self.offset);
-        }
+    //     fn read(self: *Stream, buf: []u8) ReadError!usize {
+    //         return self.node.read(buf, self.offset);
+    //     }
 
-        pub fn seekableStream(self: *Stream) SeekableStream {
-            return .{ .context = self };
-        }
+    //     pub fn seekableStream(self: *Stream) SeekableStream {
+    //         return .{ .context = self };
+    //     }
 
-        pub fn reader(self: *Stream) Reader {
-            return .{ .context = self };
-        }
-    };
+    //     pub fn reader(self: *Stream) Reader {
+    //         return .{ .context = self };
+    //     }
+    // };
 
     pub fn init(
         vtable: *const VTable,
@@ -365,7 +366,7 @@ pub const FileDescriptor = struct {
 
 // pub const MountFn = *const fn (parent: *Node, name: []const u8, source: *Node) CreateError!*Node;
 
-var filesystems: std.StringHashMapUnmanaged(MountFn) = .{};
+var filesystems: std.StringHashMapUnmanaged(MountFn) = .{}; // TODO: use ComptimeStringMap
 pub var root_node: *Node = undefined;
 var vfs_lock: SpinLock = .{};
 var dev_id_counter: os.dev_t = 0;
