@@ -22,9 +22,9 @@ const lib = @import("lib.zig");
 pub usingnamespace lib;
 
 pub const panic = debug.panic;
-pub const std_options = struct {
-    pub const log_level = if (builtin.mode == .Debug) .debug else .info;
-    pub const logFn = debug.log;
+pub const std_options: std.Options = .{
+    .log_level = if (builtin.mode == .Debug) .debug else .info,
+    .logFn = debug.log,
 };
 
 pub const os = struct {

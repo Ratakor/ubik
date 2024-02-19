@@ -14,7 +14,6 @@ const log = std.log.scoped(.vmm);
 const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
 const page_size = std.mem.page_size;
-const MAP = std.os.MAP;
 
 // TODO: mapRange/unmapRange?
 // TODO: move paging code to paging.zig
@@ -106,7 +105,7 @@ const MMapRangeLocal = struct {
     length: usize,
     offset: std.os.off_t,
     prot: i32,
-    flags: i32,
+    flags: std.os.MAP,
 };
 
 // TODO: improve
@@ -194,7 +193,7 @@ pub const AddressSpace = struct {
 
             try new_addr_space.mmap_ranges.append(root.allocator, new_local_range);
 
-            if (local_range.flags & MAP.SHARED != 0) {
+            if (local_range.flags.TYPE == std.os.system.MAP_TYPE.SHARED) {
                 try global_range.locals.append(root.allocator, new_local_range);
                 var i = local_range.base;
                 while (i < local_range.base + local_range.length) : (i += page_size) {
@@ -215,7 +214,7 @@ pub const AddressSpace = struct {
                 try new_global_range.locals.append(root.allocator, new_local_range);
                 errdefer new_global_range.locals.deinit(root.allocator);
 
-                if (local_range.flags & MAP.ANONYMOUS == 0) {
+                if (local_range.flags.ANONYMOUS == false) {
                     @panic("Non anonymous fork");
                 }
 
@@ -436,7 +435,7 @@ pub const AddressSpace = struct {
             self.lock.unlock();
 
             if (snip_size == local_range.length and global_range.locals.items.len == 1) {
-                if (local_range.flags & MAP.ANONYMOUS != 0) {
+                if (local_range.flags.ANONYMOUS) {
                     var k = global_range.base;
                     while (k < global_range.base + global_range.length) : (k += page_size) {
                         const paddr = global_range.shadow_addr_space.virt2phys(j) catch continue;
@@ -524,7 +523,7 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
     // TODO: enable interrupts?
 
     const local_range = range.range;
-    const page = if (local_range.flags & MAP.ANONYMOUS != 0)
+    const page = if (local_range.flags.ANONYMOUS)
         pmm.alloc(1, true) orelse return error.OutOfMemory
     else
         @panic("TODO: map files");

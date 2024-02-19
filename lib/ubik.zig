@@ -12,6 +12,7 @@ pub const T = linux.T;
 pub const S = linux.S;
 pub const E = linux.E;
 pub const PROT = linux.PROT;
+pub const MAP_TYPE = linux.MAP_TYPE;
 pub const MAP = linux.MAP;
 pub const DT = linux.DT;
 pub const O = linux.O;

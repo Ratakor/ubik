@@ -1,12 +1,14 @@
 const std = @import("std");
 
+const arch = "x86_64";
+
 fn concat(b: *std.Build, slices: []const []const u8) []u8 {
     return std.mem.concat(b.allocator, u8, slices) catch unreachable;
 }
 
 fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     const optimize = b.standardOptimizeOption(.{});
-    var target: std.zig.CrossTarget = .{
+    var query: std.Target.Query = .{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
         .abi = .none,
@@ -15,31 +17,32 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     // Disable CPU features that require additional initialization
     // like MMX, SSE/2 and AVX. That requires us to enable the soft-float feature.
     const Feature = std.Target.x86.Feature;
-    target.cpu_features_sub.addFeature(@intFromEnum(Feature.mmx));
-    target.cpu_features_sub.addFeature(@intFromEnum(Feature.sse));
-    target.cpu_features_sub.addFeature(@intFromEnum(Feature.sse2));
-    target.cpu_features_sub.addFeature(@intFromEnum(Feature.avx));
-    target.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
-    target.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
+    query.cpu_features_sub.addFeature(@intFromEnum(Feature.mmx));
+    query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse));
+    query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse2));
+    query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx));
+    query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
+    query.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
 
+    const target = b.resolveTargetQuery(query);
     const limine = b.dependency("limine", .{});
     const kernel = b.addExecutable(.{
         .name = "kernel.elf",
         .root_source_file = .{ .path = "kernel/main.zig" },
         .target = target,
         .optimize = optimize,
+        .code_model = .kernel,
+        .strip = b.option(bool, "strip", "Strip the kernel") orelse switch (optimize) {
+            .Debug, .ReleaseSafe => false,
+            .ReleaseFast, .ReleaseSmall => true,
+        },
     });
-    kernel.code_model = .kernel;
-    kernel.addModule("limine", limine.module("limine"));
-    kernel.addModule("ubik", b.createModule(.{ .source_file = .{ .path = "lib/ubik.zig" } }));
-    kernel.setLinkerScriptPath(.{
-        .path = concat(b, &[_][]const u8{ "kernel/linker-", @tagName(target.cpu_arch.?), ".ld" }),
-    });
+    kernel.root_module.addImport("limine", limine.module("limine"));
+    kernel.root_module.addImport("ubik", b.createModule(.{ .root_source_file = .{ .path = "lib/ubik.zig" } }));
     kernel.pie = true;
-    kernel.strip = b.option(bool, "strip", "Strip the kernel") orelse switch (optimize) {
-        .Debug, .ReleaseSafe => false,
-        .ReleaseFast, .ReleaseSmall => true,
-    };
+    kernel.setLinkerScriptPath(.{
+        .path = concat(b, &[_][]const u8{ "kernel/linker-", arch, ".ld" }),
+    });
 
     return kernel;
 }
@@ -98,9 +101,7 @@ pub fn build(b: *std.Build) void {
     const kernel = buildKernel(b);
     b.installArtifact(kernel);
 
-    const arch = @tagName(kernel.target.cpu_arch.?);
     const image_name = concat(b, &[_][]const u8{ "ubik-", arch, ".iso" });
-
     const image_step = b.step("image", "Build the image");
     const image_cmd = buildImage(b, image_name);
     image_cmd.step.dependOn(b.getInstallStep());

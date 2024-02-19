@@ -292,8 +292,8 @@ pub const Thread = struct {
     }
 };
 
-/// reschedule every 5ms
-const quantum = 5_000;
+/// reschedule every 50ms
+const quantum = 50_000;
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
