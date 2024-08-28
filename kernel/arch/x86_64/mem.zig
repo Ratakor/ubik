@@ -1,8 +1,8 @@
 pub fn cpy(noalias dst: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(.C) ?[*]u8 {
     @setRuntimeSafety(false);
 
+    // cld?
     asm volatile (
-        \\cld
         \\rep movsb
         :
         : [_] "{rdi}" (dst),
@@ -17,8 +17,8 @@ pub fn cpy(noalias dst: ?[*]u8, noalias src: ?[*]const u8, len: usize) callconv(
 pub fn set(dst: ?[*]u8, c: u8, len: usize) callconv(.C) ?[*]u8 {
     @setRuntimeSafety(false);
 
+    // cld?
     asm volatile (
-        \\cld
         \\rep stosb
         :
         : [_] "{rdi}" (dst),

@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("root");
+const ubik = @import("ubik");
 const arch = @import("arch.zig");
 const gdt = arch.gdt;
 const idt = arch.idt;
@@ -17,7 +18,7 @@ const log = std.log.scoped(.sched);
 //       -> check the process of the chosen thread smh to fix that
 
 pub const Process = struct {
-    id: std.os.pid_t,
+    id: ubik.pid_t,
     name: [127:0]u8,
     parent: ?*Process,
     addr_space: *vmm.AddressSpace,
@@ -29,16 +30,16 @@ pub const Process = struct {
     event: Event,
     // running_time: usize, // TODO
     // status: enum { running, ready, blocked (io) }, // TODO: in threads? + atomic (replace lock)
-    user: std.os.uid_t,
-    group: std.os.gid_t,
+    user: ubik.uid_t,
+    group: ubik.gid_t,
 
     // I/O context
     cwd: *vfs.Node,
-    umask: std.os.mode_t,
+    umask: ubik.mode_t,
     fds_lock: SpinLock,
     fds: std.ArrayListUnmanaged(*vfs.FileDescriptor),
 
-    var next_pid = std.atomic.Value(std.os.pid_t).init(0);
+    var next_pid = std.atomic.Value(ubik.pid_t).init(0);
 
     // TODO: more errdefer
     pub fn init(parent: ?*Process, addr_space: ?*vmm.AddressSpace) !*Process {
@@ -67,11 +68,11 @@ pub const Process = struct {
             process.thread_stack_top = 0x0700_0000_0000;
             process.mmap_anon_base = 0x0800_0000_0000;
             // process.cwd = vfs.tree.root.?;
-            process.umask = std.os.S.IWGRP | std.os.S.IWOTH;
+            process.umask = ubik.S.IWGRP | ubik.S.IWOTH;
         }
 
         try processes.append(root.allocator, process);
-        process.id = next_pid.fetchAdd(1, .Release);
+        process.id = next_pid.fetchAdd(1, .release);
 
         return process;
     }

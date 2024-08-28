@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const arch = "x86_64";
-
 fn concat(b: *std.Build, slices: []const []const u8) []u8 {
     return std.mem.concat(b.allocator, u8, slices) catch unreachable;
 }
@@ -25,10 +23,11 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     query.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
 
     const target = b.resolveTargetQuery(query);
+    const arch = @tagName(target.result.cpu.arch);
     const limine = b.dependency("limine", .{});
     const kernel = b.addExecutable(.{
         .name = "kernel.elf",
-        .root_source_file = .{ .path = "kernel/main.zig" },
+        .root_source_file = b.path("kernel/main.zig"),
         .target = target,
         .optimize = optimize,
         .code_model = .kernel,
@@ -36,24 +35,27 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
             .Debug, .ReleaseSafe => false,
             .ReleaseFast, .ReleaseSmall => true,
         },
+        // .omit_frame_pointer = false,
+        // .pic = true,
     });
     kernel.root_module.addImport("limine", limine.module("limine"));
-    kernel.root_module.addImport("ubik", b.createModule(.{ .root_source_file = .{ .path = "lib/ubik.zig" } }));
+    kernel.root_module.addImport("ubik", b.createModule(.{ .root_source_file = b.path("lib/ubik.zig") }));
     kernel.pie = true;
-    kernel.setLinkerScriptPath(.{
-        .path = concat(b, &[_][]const u8{ "kernel/linker-", arch, ".ld" }),
-    });
+    kernel.root_module.red_zone = false;
+    // kernel.root_module.stack_check = false;
+    // kernel.want_lto = false;
+    kernel.setLinkerScriptPath(b.path(concat(b, &[_][]const u8{ "kernel/linker-", arch, ".ld" })));
 
     return kernel;
 }
 
 fn findModules(b: *std.Build) []const u8 {
     var modules = std.ArrayList([]const u8).init(b.allocator);
-    const config = @embedFile("limine.cfg");
+    const config = @embedFile("limine.conf");
     var iter = std.mem.splitAny(u8, config, &std.ascii.whitespace);
 
     while (iter.next()) |line| {
-        if (std.mem.startsWith(u8, line, "MODULE_PATH=boot://") and
+        if (std.mem.startsWith(u8, line, "module_path: boot():") and
             !std.mem.endsWith(u8, line, ".tar"))
         {
             const i = std.mem.lastIndexOfScalar(u8, line, '/') orelse unreachable;
@@ -78,7 +80,7 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
             "make -C limine && ",
             "mkdir -p ", image_dir, " && ",
             "tar -cf ", image_dir, "base.tar base && ",
-            "cp zig-out/bin/kernel.elf limine.cfg limine/limine-bios.sys ",
+            "cp zig-out/bin/kernel.elf limine.conf limine/limine-bios.sys ",
                 "limine/limine-bios-cd.bin limine/limine-uefi-cd.bin ",
                 findModules(b), image_dir, " && ",
             "mkdir -p ", image_dir, "EFI/BOOT && ",
@@ -101,6 +103,7 @@ pub fn build(b: *std.Build) void {
     const kernel = buildKernel(b);
     b.installArtifact(kernel);
 
+    const arch = @tagName(kernel.rootModuleTarget().cpu.arch);
     const image_name = concat(b, &[_][]const u8{ "ubik-", arch, ".iso" });
     const image_step = b.step("image", "Build the image");
     const image_cmd = buildImage(b, image_name);
@@ -135,8 +138,8 @@ pub fn build(b: *std.Build) void {
     const fmt_step = b.step("fmt", "Format all source files");
     fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{ "kernel", "lib" } }).step);
 
-    const clean_step = b.step("clean", "Delete all artifacts created by zig build");
-    clean_step.dependOn(&b.addRemoveDirTree("zig-cache").step);
-    clean_step.dependOn(&b.addRemoveDirTree("zig-out").step);
-    clean_step.dependOn(&b.addRemoveDirTree(image_name).step);
+    const clean_step = b.step("clean", "Remove build artifacts");
+    clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);
+    clean_step.dependOn(&b.addRemoveDirTree(b.path("zig-out")).step);
+    clean_step.dependOn(&b.addRemoveDirTree(b.path(image_name)).step);
 }

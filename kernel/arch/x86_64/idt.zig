@@ -109,14 +109,14 @@ const exceptions = [_][]const u8{
     "Reserved",
 };
 
+const page_fault_vector = 0x0e;
 pub var panic_ipi_vector: u8 = undefined;
+var next_vector: u8 = exceptions.len;
 
 // TODO: replace isr with a interrupt dispatcher func?
 //       -> move all handlers to interrupt.zig?
 var isr = [_]InterruptHandler{defaultHandler} ** 256;
 var idt: IDT = .{};
-
-var next_vector: u8 = exceptions.len;
 
 pub fn init() void {
     idt.descriptor.base = @intFromPtr(&idt.entries);
@@ -126,7 +126,7 @@ pub fn init() void {
         idt.entries[vector] = IDT.Entry.init(@intFromPtr(handler), 0);
     }
 
-    setIST(0x0e, 2); // page fault uses IST 2
+    setIST(page_fault_vector, 2); // page fault uses IST 2
     panic_ipi_vector = allocVector();
     idt.entries[panic_ipi_vector] = IDT.Entry.init(@intFromPtr(&panicHandler), 0);
 
@@ -143,7 +143,7 @@ pub fn reload() void {
 }
 
 pub fn allocVector() u8 {
-    const vector = @atomicRmw(u8, &next_vector, .Add, 1, .AcqRel);
+    const vector = @atomicRmw(u8, &next_vector, .Add, 1, .acq_rel);
     // 0xf0 in a non maskable interrupt from APIC
     if (vector == 0xf0) {
         @panic("IDT exhausted");
@@ -251,13 +251,22 @@ fn makeHandler(comptime vector: u8) *const fn () callconv(.Naked) void {
     }.handler;
 }
 
-export fn commonStub() callconv(.Naked) void {
-    asm volatile (
+inline fn swapgs() void {
     // if (cs != gdt.kernel_code) -> swapgs
+    asm volatile (
         \\cmpq %[kcode], 0x18(%rsp)
         \\je 1f
         \\swapgs
         \\1:
+        :
+        : [kcode] "i" (gdt.kernel_code),
+    );
+}
+
+export fn commonStub() callconv(.Naked) void {
+    swapgs();
+
+    asm volatile (
         \\push %r15
         \\push %r14
         \\push %r13
@@ -277,10 +286,9 @@ export fn commonStub() callconv(.Naked) void {
         \\push %rax
         \\mov %ds, %ax
         \\push %rax
-        :
-        : [kcode] "i" (gdt.kernel_code),
     );
 
+    // cld?
     asm volatile (
         \\mov 0x88(%rsp), %rdi
         \\imul $8, %rdi
@@ -311,15 +319,13 @@ export fn commonStub() callconv(.Naked) void {
         \\pop %r13
         \\pop %r14
         \\pop %r15
-        // if (cs != gdt.kernel_code) -> swapgs
-        \\cmpq %[kcode], 0x18(%rsp)
-        \\je 1f
-        \\swapgs
-        \\1:
-        // restore stack
+    );
+
+    swapgs();
+
+    // restore stack and return from interrupt
+    asm volatile (
         \\add $16, %rsp
         \\iretq
-        :
-        : [kcode] "i" (gdt.kernel_code),
     );
 }

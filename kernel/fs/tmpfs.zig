@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("root");
+const ubik = @import("ubik");
 const vfs = root.vfs;
 const sched = root.sched;
 const time = root.time;
@@ -17,7 +18,7 @@ const assert = std.debug.assert;
 //         content: std.ArrayListAlignedUnmanaged(u8, blksize), // file
 //         children: std.StringHashMapUnmanaged(*vfs.Node), // directory
 //     },
-//     inode_counter: *std.os.ino_t,
+//     inode_counter: *ubik.ino_t,
 const Inode = union {
     target: []u8, // symlink
     data: std.ArrayListAlignedUnmanaged(u8, blksize), // file
@@ -80,7 +81,7 @@ fn close(node: *vfs.Node) void {
     _ = node;
 }
 
-fn read(node: *vfs.Node, buf: []u8, offset: std.os.off_t) vfs.ReadError!usize {
+fn read(node: *vfs.Node, buf: []u8, offset: ubik.off_t) vfs.ReadError!usize {
     if (node.kind != .file) return error.Unexpected;
 
     node.lock.lock();
@@ -114,16 +115,16 @@ fn readlink(node: *vfs.Node, buf: []u8) vfs.ReadLinkError!usize {
 }
 
 // TODO
-// readdir: *const fn (node: *Node, index: usize) ReadDirError!*DirectoryEntry
+// readdir: *const fn (node: *Node, index: usize) ReadDirError!*ubik.dirent
 // fn readdir(node: *vfs.Node, buf: []u8, offset: *usize) vfs.ReadDirError!usize {
 //     const self = @fieldParentPtr(Dir, "node", node);
 
-//     var dirent: *std.os.system.DirectoryEntry = @ptrCast(@alignCast(buf.ptr));
+//     var dirent: *ubik.dirent = @ptrCast(@alignCast(buf.ptr));
 //     var buf_offset: usize = 0;
 
 //     while (offset.* < self.children.items.len) : (offset.* += 1) {
 //         const child = self.children.items[offset.*];
-//         const real_size = child.name.len + 1 - (1024 - @sizeOf(std.os.system.DirectoryEntry));
+//         const real_size = child.name.len + 1 - (1024 - @sizeOf(ubik.dirent));
 
 //         if (buf_offset + real_size > buf.len) break;
 
@@ -140,7 +141,7 @@ fn readlink(node: *vfs.Node, buf: []u8) vfs.ReadLinkError!usize {
 //     return buf_offset;
 // }
 
-fn write(node: *vfs.Node, buf: []const u8, offset: std.os.off_t) vfs.WriteError!usize {
+fn write(node: *vfs.Node, buf: []const u8, offset: ubik.off_t) vfs.WriteError!usize {
     if (node.kind != .file) return error.Unexpected;
 
     node.lock.lock();
@@ -155,16 +156,16 @@ fn write(node: *vfs.Node, buf: []const u8, offset: std.os.off_t) vfs.WriteError!
     return buf.len;
 }
 
-fn chmod(node: *vfs.Node, mode: std.os.mode_t) vfs.DefaultError!void {
+fn chmod(node: *vfs.Node, mode: ubik.mode_t) vfs.DefaultError!void {
     node.lock.lock();
     defer node.lock.unlock();
 
     // mtim atim
-    node.stat.mode &= ~@as(std.os.mode_t, 0o777);
+    node.stat.mode &= ~@as(ubik.mode_t, 0o777);
     node.stat.mode |= mode & 0o777;
 }
 
-fn chown(node: *vfs.Node, uid: std.os.uid_t, gid: std.os.gid_t) vfs.DefaultError!void {
+fn chown(node: *vfs.Node, uid: ubik.uid_t, gid: ubik.gid_t) vfs.DefaultError!void {
     node.lock.lock();
     defer node.lock.unlock();
 
@@ -219,7 +220,7 @@ fn unlink(parent: *vfs.Node, name: []const u8) vfs.UnlinkError!void {
     }
 }
 
-fn stat(node: *vfs.Node, statbuf: *std.os.Stat) vfs.StatError!void {
+fn stat(node: *vfs.Node, statbuf: *ubik.Stat) vfs.StatError!void {
     node.lock.lock();
     defer node.lock.unlock();
 
@@ -242,7 +243,7 @@ fn stat(node: *vfs.Node, statbuf: *std.os.Stat) vfs.StatError!void {
     statbuf.* = node.stat;
 }
 
-fn create(parent: *vfs.Node, name: []const u8, mode: std.os.mode_t) vfs.CreateError!void {
+fn create(parent: *vfs.Node, name: []const u8, mode: ubik.mode_t) vfs.CreateError!void {
     assert(parent.kind == .directory);
 
     parent.lock.lock();
@@ -279,7 +280,7 @@ fn symlink(parent: *vfs.Node, name: []const u8, target: []const u8) vfs.CreateEr
     //     return error.PathAlreadyExists;
     // }
 
-    const node = try vfs.Node.init(&Inode.vtable, name, parent, 0o777 | std.os.S.IFLNK);
+    const node = try vfs.Node.init(&Inode.vtable, name, parent, 0o777 | ubik.S.IFLNK);
     const inode = try Inode.init(node.kind, target);
     // node.stat.dev = parent.stat.dev;
     // node.stat.ino = @atomicRmw(os.ino_t, self.inode_counter, .Add, 1, .Release);
@@ -313,7 +314,7 @@ fn link(parent: *vfs.Node, name: []const u8, node: *vfs.Node) vfs.CreateError!vo
 // TODO
 // fn mmap(node: *vfs.Node, file_page: usize, flags: u64) !*anyopaque {
 //     const self = @fieldParentPtr(Inode, "vnode", node);
-//     return if (flags & std.os.MAP.SHARED != 0)
+//     return if (flags & ubik.MAP.SHARED != 0)
 //         @intFromPtr(self.data[file_page * blksize ..].ptr) - vmm.hhdm_offset
 //     else blk: {
 //         const data = try root.allocator.alloc(u8, blksize);
@@ -325,16 +326,16 @@ fn link(parent: *vfs.Node, name: []const u8, node: *vfs.Node) vfs.CreateError!vo
 // TODO
 fn mount(parent: *vfs.Node, name: []const u8, _: *vfs.Node) vfs.CreateError!*vfs.Node {
     // const fs = try instantiate();
-    // return fs.create(parent, name, 0o777 | std.os.S.IFDIR);
+    // return fs.create(parent, name, 0o777 | ubik.S.IFDIR);
 
     // parent.create_no_inode() -> *vfs.Node;
 
     // TODO the problem is that this won't work if parent is not of the same filesystem
     // and it returns nothing
-    // _ = try create(parent, name, 0o777 | std.os.S.IFDIR);
+    // _ = try create(parent, name, 0o777 | ubik.S.IFDIR);
 
     // TODO: use create
-    const node = try vfs.Node.init(&Inode.vtable, name, parent, 0o777 | std.os.S.IFDIR);
+    const node = try vfs.Node.init(&Inode.vtable, name, parent, 0o777 | ubik.S.IFDIR);
     const inode = try Inode.init(node.kind, null);
     node.stat.dev = vfs.allocDevID();
     node.stat.ino = 0;

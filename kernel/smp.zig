@@ -32,7 +32,7 @@ pub fn init() void {
         } else {
             cpu_local.initCpu(true);
             log.info("bootstrap processor is online with id: {}", .{cpu_local.id});
-            _ = @atomicRmw(usize, &cpus_started, .Add, 1, .Release);
+            _ = @atomicRmw(usize, &cpus_started, .Add, 1, .release);
         }
     }
 
@@ -63,7 +63,7 @@ fn initAp(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
 
     cpu_local.initCpu(false);
     log.info("processor {} is online", .{cpu_local.id});
-    _ = @atomicRmw(usize, &cpus_started, .Add, 1, .Release);
+    _ = @atomicRmw(usize, &cpus_started, .Add, 1, .release);
 
     arch.enableInterrupts();
     arch.halt();

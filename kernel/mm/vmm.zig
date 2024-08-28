@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const root = @import("root");
+const ubik = @import("ubik");
 const arch = root.arch;
 const idt = arch.idt;
 const apic = arch.apic;
@@ -93,7 +94,7 @@ const MMapRangeGlobal = struct {
     // resource: *Resource, // TODO: vnode?
     base: usize,
     length: usize,
-    offset: std.os.off_t,
+    offset: ubik.off_t,
 };
 
 // TODO: replace
@@ -103,9 +104,9 @@ const MMapRangeLocal = struct {
     global: *MMapRangeGlobal,
     base: usize,
     length: usize,
-    offset: std.os.off_t,
+    offset: ubik.off_t,
     prot: i32,
-    flags: std.os.MAP,
+    flags: ubik.MAP,
 };
 
 // TODO: improve
@@ -193,7 +194,7 @@ pub const AddressSpace = struct {
 
             try new_addr_space.mmap_ranges.append(root.allocator, new_local_range);
 
-            if (local_range.flags.TYPE == std.os.system.MAP_TYPE.SHARED) {
+            if (local_range.flags.TYPE == ubik.MAP_TYPE.SHARED) {
                 try global_range.locals.append(root.allocator, new_local_range);
                 var i = local_range.base;
                 while (i < local_range.base + local_range.length) : (i += page_size) {
@@ -533,10 +534,10 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
 
 fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) !void {
     var flags = PTE.present | PTE.user;
-    if ((prot & std.os.PROT.WRITE) != 0) {
+    if ((prot & ubik.PROT.WRITE) != 0) {
         flags |= PTE.writable;
     }
-    if ((prot & std.os.PROT.EXEC) == 0) {
+    if ((prot & ubik.PROT.EXEC) == 0) {
         flags |= PTE.noexec;
     }
 

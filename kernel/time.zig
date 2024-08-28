@@ -1,5 +1,6 @@
 const std = @import("std");
 const root = @import("root");
+const ubik = @import("ubik");
 const arch = @import("arch.zig");
 const smp = @import("smp.zig");
 const pit = arch.pit;
@@ -7,7 +8,7 @@ const idt = arch.idt;
 const apic = arch.apic;
 const ev = @import("event.zig");
 const SpinLock = root.SpinLock;
-const timespec = root.os.system.timespec;
+const timespec = ubik.timespec;
 
 // TODO: improve, bad_idx is of course ugly
 pub const Timer = struct {

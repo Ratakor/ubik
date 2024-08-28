@@ -3,8 +3,8 @@
     .version = "0.1.0",
     .dependencies = .{
         .limine = .{
-            .url = "https://github.com/limine-bootloader/limine-zig/archive/master.tar.gz",
-            .hash = "1220889cec612d653c31a4063d20daa9ec382ac23f76e9cc60a778b0ad17377bafa1",
+            .url = "https://github.com/48cf/limine-zig/archive/master.tar.gz",
+            .hash = "1220f946f839eab2ec49dca1c805ce72ac3e3ef9c47b3afcdecd1c05a7b35f66d277",
         },
     },
     .paths = .{

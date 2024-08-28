@@ -1,4 +1,4 @@
-pub usingnamespace @import("std").rand;
+pub usingnamespace @import("std").Random;
 const arch = @import("arch.zig");
 const time = @import("time.zig");
 

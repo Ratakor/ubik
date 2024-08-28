@@ -20,15 +20,15 @@ pub const SpinLock = struct {
     }
 
     pub inline fn unlock(self: *SpinLock) void {
-        self.state.store(.unlocked, .Release);
+        self.state.store(.unlocked, .release);
     }
 
     inline fn isUnlocked(self: *SpinLock) bool {
-        return self.state.load(.Monotonic) == .unlocked;
+        return self.state.load(.monotonic) == .unlocked;
     }
 
     inline fn cmpxchg(self: *SpinLock, comptime strength: []const u8) bool {
         const casFn = @field(@TypeOf(self.state), "cmpxchg" ++ strength);
-        return casFn(&self.state, .unlocked, .locked, .Acquire, .Monotonic) == null;
+        return casFn(&self.state, .unlocked, .locked, .acquire, .monotonic) == null;
     }
 };

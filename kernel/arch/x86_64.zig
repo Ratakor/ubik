@@ -8,8 +8,8 @@ pub const Context = idt.Context;
 const mem = @import("x86_64/mem.zig");
 
 comptime {
-    @export(mem.cpy, .{ .name = "memcpy", .linkage = .Weak, .visibility = .default });
-    @export(mem.set, .{ .name = "memset", .linkage = .Weak, .visibility = .default });
+    @export(&mem.cpy, .{ .name = "memcpy", .linkage = .weak, .visibility = .default });
+    @export(&mem.set, .{ .name = "memset", .linkage = .weak, .visibility = .default });
 }
 
 pub fn init() void {

@@ -28,19 +28,19 @@ pub const std_options: std.Options = .{
 };
 
 pub const os = struct {
-    pub const system = ubik;
+    // pub const system = ubik;
     pub const heap = struct {
-        pub const page_allocator = std.mem.Allocator{
+        pub const page_allocator: std.mem.Allocator = .{
             .ptr = undefined,
             .vtable = &PageAllocator.vtable,
         };
     };
 };
 
-var gpa = std.heap.GeneralPurposeAllocator(.{
+var gpa: std.heap.GeneralPurposeAllocator(.{
     .MutexType = lib.SpinLock,
     .verbose_log = if (builtin.mode == .Debug) true else false,
-}){};
+}) = .{};
 pub const allocator = gpa.allocator();
 pub var tty0: ?*TTY = null;
 

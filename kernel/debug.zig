@@ -14,12 +14,16 @@ var panic_lock: SpinLock = .{};
 var fba_buffer: [32 * 1024 * 1024]u8 = undefined; // 32MiB
 var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
-var debug_info: ?std.dwarf.DwarfInfo = null;
+var debug_info: ?std.debug.Dwarf = null;
 
-var dmesg = blk: {
-    var dmesg_sfa = std.heap.stackFallback(4096, root.allocator);
-    break :blk std.ArrayList(u8).init(dmesg_sfa.get());
-};
+// https://github.com/ziglang/zig/issues/21233
+// var dmesg = blk: {
+//     var dmesg_sfa = std.heap.stackFallback(4096, root.allocator);
+//     break :blk std.ArrayList(u8).init(dmesg_sfa.get());
+// };
+var dmesg_fba_buffer: [1024 * 1024]u8 = undefined;
+var dmesg_fba = std.heap.FixedBufferAllocator.init(&dmesg_fba_buffer);
+var dmesg = std.ArrayList(u8).init(dmesg_fba.allocator());
 const dmesg_writer = dmesg.writer();
 
 pub fn log(
@@ -58,7 +62,7 @@ pub fn log(
 }
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     arch.disableInterrupts();
 
@@ -110,15 +114,15 @@ fn printStackIterator(writer: anytype, stack_iter: StackIterator) void {
 }
 
 fn printSymbolInfo(writer: anytype, address: u64) !void {
-    const symbol_info: std.debug.SymbolInfo = if (debug_info.?.findCompileUnit(address)) |compile_unit| .{
-        .symbol_name = debug_info.?.getSymbolName(address) orelse "???",
+    const symbol: std.debug.Symbol = if (debug_info.?.findCompileUnit(address)) |compile_unit| .{
+        .name = debug_info.?.getSymbolName(address) orelse "???",
         .compile_unit_name = compile_unit.die.getAttrString(
             &debug_info.?,
             std.dwarf.AT.name,
             debug_info.?.section(.debug_str),
             compile_unit.*,
         ) catch "???",
-        .line_info = debug_info.?.getLineNumberInfo(debug_allocator, compile_unit.*, address) catch |err| switch (err) {
+        .source_location = debug_info.?.getLineNumberInfo(debug_allocator, compile_unit, address) catch |err| switch (err) {
             error.MissingDebugInfo, error.InvalidDebugInfo => null,
             else => return err,
         },
@@ -126,21 +130,21 @@ fn printSymbolInfo(writer: anytype, address: u64) !void {
         error.MissingDebugInfo, error.InvalidDebugInfo => .{},
         else => return err,
     };
-    defer symbol_info.deinit(debug_allocator);
+    // defer symbol.deinit(debug_allocator);
 
-    if (symbol_info.line_info) |li| {
+    if (symbol.source_location) |sl| {
         try writer.print("\x1b[1m{s}:{d}:{d}\x1b[m: \x1b[2m0x{x:0>16} in {s} ({s})\x1b[m\n", .{
-            li.file_name,
-            li.line,
-            li.column,
+            sl.file_name,
+            sl.line,
+            sl.column,
             address,
-            symbol_info.symbol_name,
-            symbol_info.compile_unit_name,
+            symbol.name,
+            symbol.compile_unit_name,
         });
 
-        if (printLineFromFile(writer, li)) {
-            if (li.column > 0) {
-                try writer.writeByteNTimes(' ', li.column - 1);
+        if (printLineFromFile(writer, sl)) {
+            if (sl.column > 0) {
+                try writer.writeByteNTimes(' ', sl.column - 1);
                 try writer.writeAll("\x1b[32m^\x1b[m");
             }
             try writer.writeAll("\n");
@@ -151,8 +155,8 @@ fn printSymbolInfo(writer: anytype, address: u64) !void {
     } else {
         try writer.print("\x1b[1m???:?:?\x1b[m: \x1b[2m0x{x:0>16} in {s} ({s})\x1b[m\n", .{
             address,
-            symbol_info.symbol_name,
-            symbol_info.compile_unit_name,
+            symbol.name,
+            symbol.compile_unit_name,
         });
     }
 }
@@ -191,11 +195,11 @@ const source_files = [_][]const u8{
 };
 
 // TODO: get source files from filesystem instead + zig std lib files
-fn printLineFromFile(writer: anytype, line_info: std.debug.LineInfo) !void {
+fn printLineFromFile(writer: anytype, source_location: std.debug.SourceLocation) !void {
     var contents: []const u8 = undefined;
 
     inline for (source_files) |src_path| {
-        if (std.mem.endsWith(u8, line_info.file_name, src_path)) {
+        if (std.mem.endsWith(u8, source_location.file_name, src_path)) {
             contents = @embedFile(src_path);
             break;
         }
@@ -203,7 +207,7 @@ fn printLineFromFile(writer: anytype, line_info: std.debug.LineInfo) !void {
 
     var line: usize = 1;
     for (contents) |byte| {
-        if (line == line_info.line) {
+        if (line == source_location.line) {
             try writer.writeByte(byte);
             if (byte == '\n') return;
         }
@@ -214,7 +218,7 @@ fn printLineFromFile(writer: anytype, line_info: std.debug.LineInfo) !void {
 
     return error.EndOfFile;
 
-    // var f = try fs.openFile(line_info.file_name);
+    // var f = try fs.openFile(source_location.file_name);
     // defer f.close();
 
     // var buf: [std.mem.page_size]u8 = undefined;
@@ -224,7 +228,7 @@ fn printLineFromFile(writer: anytype, line_info: std.debug.LineInfo) !void {
     //     const slice = buf[0..amt_read];
 
     //     for (slice) |byte| {
-    //         if (line == line_info.line) {
+    //         if (line == source_location.line) {
     //             try writer.writeByte(byte);
     //             if (byte == '\n') return;
     //         }
@@ -262,7 +266,7 @@ fn initDebugInfo() !void {
         .is_macho = false,
     };
 
-    try std.dwarf.openDwarfDebugInfo(&debug_info.?, debug_allocator);
+    try debug_info.?.open(debug_allocator);
 }
 
 fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
