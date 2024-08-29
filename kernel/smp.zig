@@ -53,7 +53,7 @@ pub fn stopAll() void {
 }
 
 pub inline fn thisCpu() *CpuLocal {
-    std.debug.assert(arch.interruptState() == false); // or cpu.schedulin_disabled
+    std.debug.assert(arch.interruptState() == false); // or cpu.scheduling_disabled
     // TODO: use rdmsr or rdgsbase?
     return @ptrFromInt(arch.readRegister("gs:0x0"));
 }

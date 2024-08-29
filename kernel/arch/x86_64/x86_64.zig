@@ -60,6 +60,7 @@ pub inline fn enableInterrupts() void {
     asm volatile ("sti");
 }
 
+/// Return true if interrupts are enabled.
 pub inline fn interruptState() bool {
     return RFlags.get().IF != 0;
 }

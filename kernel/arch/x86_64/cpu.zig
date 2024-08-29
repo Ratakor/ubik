@@ -10,7 +10,7 @@ const idt = @import("idt.zig");
 const apic = @import("apic.zig");
 const log = std.log.scoped(.cpu);
 
-pub const CpuLocal = struct {
+pub const CpuLocal = extern struct {
     this: *CpuLocal,
 
     id: usize,

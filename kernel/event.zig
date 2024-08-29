@@ -57,7 +57,7 @@ pub fn init() void {
     }
 }
 
-pub fn awaitEvents(events: []*Event, blocking: bool) ?*Event {
+pub fn awaitEvents(events: []*Event, blocking: bool) ?union { ev: *Event, i: usize } {
     const old_state = arch.toggleInterrupts(false);
     defer _ = arch.toggleInterrupts(old_state);
 
@@ -65,7 +65,7 @@ pub fn awaitEvents(events: []*Event, blocking: bool) ?*Event {
     defer unlockEvents(events);
 
     if (getFirstPending(events)) |event| {
-        return event;
+        return .{ .ev = event };
     }
 
     if (!blocking) {
@@ -80,13 +80,16 @@ pub fn awaitEvents(events: []*Event, blocking: bool) ?*Event {
 
     arch.disableInterrupts();
 
-    // const ret = if (thread.enqueued_by_signal) -1 else thread.which_event;
-    const ret = thread.which_event; // TODO
+    // TODO
+    // if (thread.enqueued_by_signal) {
+    //     return error.
+    // }
+    const ret = .{ .i = thread.which_event };
 
     lockEvents(events);
     detachListeners(thread);
 
-    return @intCast(ret);
+    return ret;
 }
 
 fn intEventHandler(ctx: *arch.Context) callconv(.SysV) void {

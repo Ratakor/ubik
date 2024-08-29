@@ -113,8 +113,6 @@ const page_fault_vector = 0x0e;
 pub var panic_ipi_vector: u8 = undefined;
 var next_vector: u8 = exceptions.len;
 
-// TODO: replace isr with a interrupt dispatcher func?
-//       -> move all handlers to interrupt.zig?
 var isr = [_]InterruptHandler{defaultHandler} ** 256;
 var idt: IDT = .{};
 

@@ -55,7 +55,9 @@ pub const Timer = struct {
 
         if (self.idx < armed_timers.items.len) {
             _ = armed_timers.swapRemove(self.idx);
-            armed_timers.items[self.idx].idx = self.idx;
+            if (armed_timers.items.len > 0) {
+                armed_timers.items[self.idx].idx = self.idx;
+            }
             self.idx = bad_idx;
         }
     }

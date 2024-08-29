@@ -127,6 +127,16 @@ fn main() noreturn {
         boot_info.version,
     });
 
+    // DEBUG
+    // inline for (0..10) |i| {
+    //     const thread = sched.Thread.initKernel(@ptrCast(&dummy), null, 1) catch unreachable;
+    //     thread.tid = i;
+    //     std.log.debug("enqueuing thread {}", .{i});
+    //     sched.enqueue(thread) catch unreachable;
+    // }
+    // time.nanosleep(std.time.ns_per_s);
+    // try tty0.?.writer().print("Hello, World!\n", .{});
+
     arch.disableInterrupts();
     std.log.debug("cpu model: {}", .{smp.thisCpu().cpu_model});
     std.log.debug("cpu family: {}", .{smp.thisCpu().cpu_family});
@@ -137,4 +147,11 @@ fn main() noreturn {
     arch.enableInterrupts();
 
     sched.die();
+}
+
+fn dummy() void {
+    // arch.disableInterrupts();
+    // std.log.debug("in dummy with cpu {} and thread {*}", .{smp.thisCpu().id, smp.thisCpu().current_thread});
+    // arch.enableInterrupts();
+    // for (0..10_000) |_| { }
 }

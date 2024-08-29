@@ -357,9 +357,9 @@ pub fn enqueue(thread: *Thread) !void {
         if (cpu.current_thread == null) {
             // only for debug build
             // fix to not crash when starting the first kernel thread
-            if (comptime @import("builtin").mode == .Debug) {
-                if (cpu.id == smp.thisCpu().id) continue;
-            }
+            // if (comptime @import("builtin").mode == .Debug) {
+            //     if (cpu.id == smp.thisCpu().id) continue;
+            // }
 
             apic.sendIPI(cpu.lapic_id, .{ .vector = sched_vector });
             break;
@@ -394,6 +394,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     apic.timerStop();
 
     const cpu = smp.thisCpu();
+    log.debug("schedHandler on cpu: {}", .{cpu.id});
 
     // if (cpu.scheduling_disabled) {
     //     apic.eoi();
@@ -461,6 +462,7 @@ pub fn yield() noreturn {
     std.debug.assert(arch.interruptState() == false);
     // arch.disableInterrupts();
 
+    log.debug("yield on cpu: {}", .{smp.thisCpu().id});
     apic.timerStop();
     smp.thisCpu().current_thread = null; // TODO: removing this line causes kernel panic in debug build
     apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
@@ -485,11 +487,11 @@ pub fn yieldAwait() void {
 
     const thread = currentThread();
 
-    const use_yield_await = false;
+    const use_yield_await = false; // DEBUG
     if (use_yield_await) {
         thread.yield_await.lock();
     } else {
-        blockThread();
+        blockThread(thread);
     }
 
     apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
