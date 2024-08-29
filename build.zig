@@ -5,32 +5,47 @@ fn concat(b: *std.Build, slices: []const []const u8) []u8 {
 }
 
 fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
-    const optimize = b.standardOptimizeOption(.{});
-    var query: std.Target.Query = .{
-        .cpu_arch = .x86_64,
+    const arch = b.option(std.Target.Cpu.Arch, "arch", "The target CPU architecture") orelse .x86_64;
+    var target_query: std.Target.Query = .{
+        .cpu_arch = arch,
         .os_tag = .freestanding,
         .abi = .none,
     };
 
-    // Disable CPU features that require additional initialization
-    // like MMX, SSE/2 and AVX. That requires us to enable the soft-float feature.
-    const Feature = std.Target.x86.Feature;
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.mmx));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse2));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx));
-    query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
-    query.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
+    switch (arch) {
+        .x86_64 => {
+            // Disable CPU features that require additional initialization
+            // like MMX, SSE/2 and AVX. That requires us to enable the soft-float feature.
+            const Feature = std.Target.x86.Feature;
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.mmx));
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse));
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.sse2));
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx));
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.avx2));
+            target_query.cpu_features_add.addFeature(@intFromEnum(Feature.soft_float));
+        },
+        .aarch64 => {
+            const Feature = std.Target.aarch64.Feature;
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.fp_armv8));
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.crypto));
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.neon));
+        },
+        .riscv64 => {
+            const Feature = std.Target.riscv.Feature;
+            target_query.cpu_features_sub.addFeature(@intFromEnum(Feature.d));
+        },
+        else => std.debug.panic("Unsupported CPU architecture: {s}", .{@tagName(arch)}),
+    }
 
-    const target = b.resolveTargetQuery(query);
-    const arch = @tagName(target.result.cpu.arch);
+    const target = b.resolveTargetQuery(target_query);
+    const optimize = b.standardOptimizeOption(.{});
     const limine = b.dependency("limine", .{});
     const kernel = b.addExecutable(.{
         .name = "kernel.elf",
         .root_source_file = b.path("kernel/main.zig"),
         .target = target,
         .optimize = optimize,
-        .code_model = .kernel,
+        .code_model = if (arch == .x86_64) .kernel else .default,
         .strip = b.option(bool, "strip", "Strip the kernel") orelse switch (optimize) {
             .Debug, .ReleaseSafe => false,
             .ReleaseFast, .ReleaseSmall => true,
@@ -42,9 +57,9 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     kernel.root_module.addImport("ubik", b.createModule(.{ .root_source_file = b.path("lib/ubik.zig") }));
     kernel.pie = true;
     kernel.root_module.red_zone = false;
-    // kernel.root_module.stack_check = false;
-    // kernel.want_lto = false;
-    kernel.setLinkerScriptPath(b.path(concat(b, &[_][]const u8{ "kernel/linker-", arch, ".ld" })));
+    kernel.root_module.stack_check = false;
+    kernel.want_lto = false;
+    kernel.setLinkerScriptPath(b.path(concat(b, &[_][]const u8{ "kernel/linker-", @tagName(arch), ".ld" })));
 
     return kernel;
 }

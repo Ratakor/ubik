@@ -54,6 +54,7 @@ pub export var rsdp_request: limine.RsdpRequest = .{};
 pub export var smp_request: limine.SmpRequest = .{};
 pub export var boot_time_request: limine.BootTimeRequest = .{};
 pub export var module_request: limine.ModuleRequest = .{};
+pub export var base_revision: limine.BaseRevision = .{ .revision = 2 };
 
 fn callback(tty: *TTY, cb: TTY.Callback, arg1: u64, arg2: u64, arg3: u64) void {
     _ = tty;
@@ -70,6 +71,10 @@ fn callback(tty: *TTY, cb: TTY.Callback, arg1: u64, arg2: u64, arg3: u64) void {
 
 export fn _start() noreturn {
     arch.disableInterrupts();
+
+    if (!base_revision.is_supported()) {
+        unreachable;
+    }
 
     serial.init();
     arch.init();
