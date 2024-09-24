@@ -321,9 +321,9 @@ pub const Node = struct {
         return self.vtable.truncate(self);
     }
 
-    pub inline fn stat(self: *Node, statbuf: *ubik.Stat) StatError!void {
-        return self.vtable.stat(self, statbuf);
-    }
+    // pub inline fn stat(self: *Node, statbuf: *ubik.Stat) StatError!void {
+    //     return self.vtable.stat(self, statbuf);
+    // }
 
     pub fn writePath(self: *Node, writer: anytype) !void {
         if (self.parent) |parent| {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 fn concat(b: *std.Build, slices: []const []const u8) []u8 {
     return std.mem.concat(b.allocator, u8, slices) catch unreachable;
@@ -89,6 +90,7 @@ fn findModules(b: *std.Build) []const u8 {
 fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
     const image_dir = b.cache_root.join(b.allocator, &[_][]const u8{"image_root/"}) catch unreachable;
 
+    // zig fmt: off
     const image_params = &[_][]const u8{
         "/bin/sh", "-c",
         concat(b, &[_][]const u8{
@@ -110,11 +112,22 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
             "rm -rf ", image_dir,
         })
     };
+    // zig fmt: on
 
     return b.addSystemCommand(image_params);
 }
 
 pub fn build(b: *std.Build) void {
+    comptime {
+        const current_zig = builtin.zig_version;
+        const min_zig = std.SemanticVersion.parse("0.14.0-dev.1637+8c232922b") catch unreachable;
+        if (current_zig.order(min_zig) == .lt) {
+            @compileError(std.fmt.comptimePrint(
+                \\Your zig version ({}) does not meet the minimum required version ({})
+            , .{ current_zig, min_zig }));
+        }
+    }
+
     const kernel = buildKernel(b);
     b.installArtifact(kernel);
 
@@ -127,6 +140,7 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the image with qemu");
     const nodisplay = b.option(bool, "nodisplay", "Disable display for qemu") orelse false;
+    // zig fmt: off
     const run_cmd = b.addSystemCommand(&[_][]const u8{
         concat(b, &[_][]const u8{ "qemu-system-", arch }),
         "-no-reboot",
@@ -135,11 +149,13 @@ pub fn build(b: *std.Build) void {
         "-m", "1G",
         "-smp", "4",
         // "-d", "int,guest_errors",
+        // "-s", "-S",
         "-boot", "d",
         "-vga", "std",
         "-display", if (nodisplay) "none" else "gtk",
         "-cdrom", image_name
     });
+    // zig fmt: on
     run_cmd.step.dependOn(image_step);
     run_step.dependOn(&run_cmd.step);
 
@@ -151,7 +167,11 @@ pub fn build(b: *std.Build) void {
     }).step);
 
     const fmt_step = b.step("fmt", "Format all source files");
-    fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{ "kernel", "lib" } }).step);
+    fmt_step.dependOn(&b.addFmt(.{ .paths = &[_][]const u8{
+        "kernel",
+        "lib",
+        "build.zig",
+    } }).step);
 
     const clean_step = b.step("clean", "Remove build artifacts");
     clean_step.dependOn(&b.addRemoveDirTree(b.path(".zig-cache")).step);

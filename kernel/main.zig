@@ -72,10 +72,7 @@ fn callback(tty: *TTY, cb: TTY.Callback, arg1: u64, arg2: u64, arg3: u64) void {
 export fn _start() noreturn {
     arch.disableInterrupts();
 
-    if (!base_revision.is_supported()) {
-        unreachable;
-    }
-
+    std.debug.assert(base_revision.is_supported());
     serial.init();
     arch.init();
     pmm.init();

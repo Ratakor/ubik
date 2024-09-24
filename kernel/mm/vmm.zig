@@ -45,10 +45,10 @@ pub const PTE = packed struct(u64) {
     protection_key: u4,
     execute_disable: bool,
 
-    const present: u64 = 1 << 0;
-    const writable: u64 = 1 << 1;
-    const user: u64 = 1 << 2;
-    const noexec: u64 = 1 << 63;
+    const PRESENT: u64 = 1 << 0;
+    const WRITABLE: u64 = 1 << 1;
+    const USER: u64 = 1 << 2;
+    const NOEXEC: u64 = 1 << 63;
 
     pub inline fn getAddress(self: PTE) u64 {
         return @as(u64, self.address) << 12;
@@ -68,7 +68,7 @@ pub const PTE = packed struct(u64) {
         }
 
         const new_page_table = pmm.alloc(1, true) orelse return error.OutOfMemory;
-        self.* = @bitCast(new_page_table | present | writable | user);
+        self.* = @bitCast(new_page_table | PRESENT | WRITABLE | USER);
         return @ptrFromInt(new_page_table + hhdm_offset);
     }
 };
@@ -475,15 +475,15 @@ pub fn init() void {
         _ = kaddr_space.pml4[i].getNextLevel(true) catch unreachable;
     }
 
-    kaddr_space.mapSection("text", PTE.present);
-    kaddr_space.mapSection("rodata", PTE.present | PTE.noexec);
-    kaddr_space.mapSection("data", PTE.present | PTE.writable | PTE.noexec);
+    kaddr_space.mapSection("text", PTE.PRESENT);
+    kaddr_space.mapSection("rodata", PTE.PRESENT | PTE.NOEXEC);
+    kaddr_space.mapSection("data", PTE.PRESENT | PTE.WRITABLE | PTE.NOEXEC);
 
     // map the first 4 GiB
     var addr: u64 = 0x1000;
     while (addr < 0x100000000) : (addr += page_size) {
-        kaddr_space.mapPage(addr, addr, PTE.present | PTE.writable) catch unreachable;
-        kaddr_space.mapPage(addr + hhdm_offset, addr, PTE.present | PTE.writable | PTE.noexec) catch unreachable;
+        kaddr_space.mapPage(addr, addr, PTE.PRESENT | PTE.WRITABLE) catch unreachable;
+        kaddr_space.mapPage(addr + hhdm_offset, addr, PTE.PRESENT | PTE.WRITABLE | PTE.NOEXEC) catch unreachable;
     }
 
     // map the rest of the memory map
@@ -499,8 +499,8 @@ pub fn init() void {
         while (i < top) : (i += page_size) {
             if (i < 0x100000000) continue;
 
-            kaddr_space.mapPage(i, i, PTE.present | PTE.writable) catch unreachable;
-            kaddr_space.mapPage(i + hhdm_offset, i, PTE.present | PTE.writable | PTE.noexec) catch unreachable;
+            kaddr_space.mapPage(i, i, PTE.PRESENT | PTE.WRITABLE) catch unreachable;
+            kaddr_space.mapPage(i + hhdm_offset, i, PTE.PRESENT | PTE.WRITABLE | PTE.NOEXEC) catch unreachable;
         }
     }
 
@@ -533,12 +533,12 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
 }
 
 fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) !void {
-    var flags = PTE.present | PTE.user;
+    var flags = PTE.PRESENT | PTE.USER;
     if ((prot & ubik.PROT.WRITE) != 0) {
-        flags |= PTE.writable;
+        flags |= PTE.WRITABLE;
     }
     if ((prot & ubik.PROT.EXEC) == 0) {
-        flags |= PTE.noexec;
+        flags |= PTE.NOEXEC;
     }
 
     try global.shadow_addr_space.mapPage(vaddr, paddr, flags);
