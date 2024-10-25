@@ -10,6 +10,7 @@ A kernel
 - Support RISC-V64, aarch64 and x86_64
 - Replace @import("root") with @import("main.zig") to allow for testing
 - Replace limine with a custom bootloader?
+- write core in zig and the rest in nov?
 
 # Clone, build and run
 Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run

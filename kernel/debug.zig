@@ -17,14 +17,13 @@ const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.debug.Dwarf = null;
 
 // https://github.com/ziglang/zig/issues/21233
-// var dmesg = blk: {
-//     var dmesg_sfa = std.heap.stackFallback(4096, root.allocator);
-//     break :blk std.ArrayList(u8).init(dmesg_sfa.get());
-// };
-var dmesg_fba_buffer: [1024 * 1024]u8 = undefined;
-var dmesg_fba = std.heap.FixedBufferAllocator.init(&dmesg_fba_buffer);
-var dmesg = std.ArrayList(u8).init(dmesg_fba.allocator());
+var dmesg_sfa = std.heap.stackFallback(4096, root.allocator);
+var dmesg: std.ArrayList(u8) = undefined;
 const dmesg_writer = dmesg.writer();
+
+pub fn init() void {
+    dmesg = std.ArrayList(u8).init(dmesg_sfa.get());
+}
 
 pub fn log(
     comptime level: std.log.Level,

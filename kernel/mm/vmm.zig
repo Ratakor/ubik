@@ -18,7 +18,8 @@ const page_size = std.mem.page_size;
 
 // TODO: mapRange/unmapRange?
 // TODO: move paging code to paging.zig
-// TODO: use ArenaAllocator for vmm
+// TODO: use ArenaAllocator for vmm, especially where there is a lot of
+//       allocation in a loop or batch alloc/dealloc
 
 pub const MapError = error{
     OutOfMemory,

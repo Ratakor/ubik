@@ -73,6 +73,7 @@ export fn _start() noreturn {
     arch.disableInterrupts();
 
     std.debug.assert(base_revision.is_supported());
+    debug.init();
     serial.init();
     arch.init();
     pmm.init();

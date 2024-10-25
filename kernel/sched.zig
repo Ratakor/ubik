@@ -357,7 +357,7 @@ pub fn enqueue(thread: *Thread) !void {
         if (cpu.current_thread == null) {
             // only for debug build
             // fix to not crash when starting the first kernel thread
-            // if (comptime @import("builtin").mode == .Debug) {
+            // if (@import("builtin").mode == .Debug) {
             //     if (cpu.id == smp.thisCpu().id) continue;
             // }
 
@@ -415,7 +415,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
         current_thread.ctx = ctx.*;
 
-        if (comptime arch.arch == .x86_64) {
+        if (arch.arch == .x86_64) {
             current_thread.fs_base = arch.rdmsr(.fs_base);
             current_thread.cr3 = arch.readRegister("cr3");
             arch.cpu.fpuSave(current_thread.fpu_storage);
@@ -425,7 +425,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     }
 
     if (maybe_next_thread) |next_thread| {
-        if (comptime arch.arch == .x86_64) {
+        if (arch.arch == .x86_64) {
             arch.wrmsr(.fs_base, next_thread.fs_base);
             cpu.current_thread = next_thread;
 
