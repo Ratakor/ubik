@@ -6,6 +6,11 @@ on:
     branches:
       - master
 
+concurrency:
+  # Cancels pending runs when a PR gets updated.
+  group: ${{ github.head_ref || github.run_id }}-${{ github.actor }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -50,4 +55,4 @@ jobs:
           version: master
 
       - name: Lint
-        run: zig fmt --check kernel/*.zig lib/*.zig build.zig
+        run: zig fmt --check kernel lib build.zig
