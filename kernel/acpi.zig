@@ -269,7 +269,6 @@ pub fn shutdown() noreturn {
     unreachable;
 }
 
-// TODO: does this get optimized away correctly?
 inline fn parseInt(s5_addr: []const u8, value: *u64) usize {
     switch (s5_addr[0]) {
         0x0 => {

@@ -286,8 +286,8 @@ export fn commonStub() callconv(.Naked) void {
         \\push %rax
     );
 
-    // cld?
     asm volatile (
+        \\cld
         \\mov 0x88(%rsp), %rdi
         \\imul $8, %rdi
         \\add %rdi, %rax

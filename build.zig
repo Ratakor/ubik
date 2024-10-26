@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 fn concat(b: *std.Build, slices: []const []const u8) []u8 {
-    return std.mem.concat(b.allocator, u8, slices) catch unreachable;
+    return std.mem.concat(b.allocator, u8, slices) catch @panic("OOM");
 }
 
 fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
@@ -40,7 +40,8 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
 
     const target = b.resolveTargetQuery(target_query);
     const optimize = b.standardOptimizeOption(.{});
-    const limine = b.dependency("limine", .{});
+    const limine = b.dependency("limine", .{}).module("limine");
+    const ubik = b.createModule(.{ .root_source_file = b.path("lib/ubik.zig") });
     const kernel = b.addExecutable(.{
         .name = "kernel.elf",
         .root_source_file = b.path("kernel/main.zig"),
@@ -54,8 +55,8 @@ fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
         // .omit_frame_pointer = false,
         // .pic = true,
     });
-    kernel.root_module.addImport("limine", limine.module("limine"));
-    kernel.root_module.addImport("ubik", b.createModule(.{ .root_source_file = b.path("lib/ubik.zig") }));
+    kernel.root_module.addImport("limine", limine);
+    kernel.root_module.addImport("ubik", ubik);
     kernel.pie = true;
     kernel.root_module.red_zone = false;
     kernel.root_module.stack_check = false;
@@ -79,16 +80,11 @@ fn findModules(b: *std.Build) []const u8 {
         }
     }
 
-    var modules_str: []const u8 = "";
-    for (modules.items) |module| {
-        modules_str = concat(b, &[_][]const u8{ modules_str, module, " " });
-    }
-
-    return modules_str;
+    return std.mem.join(b.allocator, " ", modules.items) catch @panic("OOM");
 }
 
 fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
-    const image_dir = b.cache_root.join(b.allocator, &[_][]const u8{"image_root/"}) catch unreachable;
+    const image_dir = ".zig-cache/image_root/";
 
     // zig fmt: off
     const image_params = &[_][]const u8{
@@ -110,7 +106,7 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
                 image_dir, " -o ", image_name, " && ",
             "./limine/limine bios-install ", image_name, " && ",
             "rm -rf ", image_dir,
-        })
+        }),
     };
     // zig fmt: on
 

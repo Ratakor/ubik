@@ -2,6 +2,7 @@
 A kernel
 
 # TODO
+- Rework VMM -> rework sched -> work on VFS -> work on ELF
 - Add a checklist/roadmap
 - Move tty and drivers out of kernel space
 - Replace json with zon
@@ -10,7 +11,7 @@ A kernel
 - Support RISC-V64, aarch64 and x86_64
 - Replace @import("root") with @import("main.zig") to allow for testing
 - Replace limine with a custom bootloader?
-- write core in zig and the rest in nov?
+- write core in zig and the rest in nov
 
 # Clone, build and run
 Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
@@ -22,7 +23,7 @@ Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
 
 # File structure
 This shouldn't be in readme.
-TODO: move init function at the end of file?
+TODO: move init function at the end of file (or top?)
 
 1. imports
 2. type definitions

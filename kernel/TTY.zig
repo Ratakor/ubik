@@ -67,7 +67,7 @@ saved_state_current_charset: usize,
 saved_state_current_fg: ?usize,
 saved_state_current_bg: ?usize,
 
-// TODO: lock? also don't forget to init it
+// TODO: lock?
 // read_lock: SpinLock,
 // write_lock: SpinLock,
 

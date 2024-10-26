@@ -173,7 +173,6 @@ const source_files = [_][]const u8{
     "fs/zero.zig",
     "lib/lock.zig",
     "lib/term.zig",
-    "lib/tree.zig",
     "mm/pmm.zig",
     "mm/vmm.zig",
     "acpi.zig",
@@ -195,17 +194,14 @@ const source_files = [_][]const u8{
 
 // TODO: get source files from filesystem instead + zig std lib files
 fn printLineFromFile(writer: anytype, source_location: std.debug.SourceLocation) !void {
-    var contents: []const u8 = undefined;
-
-    inline for (source_files) |src_path| {
+    const content = inline for (source_files) |src_path| {
         if (std.mem.endsWith(u8, source_location.file_name, src_path)) {
-            contents = @embedFile(src_path);
-            break;
+            break @embedFile(src_path);
         }
     } else return error.FileNotFound;
 
     var line: usize = 1;
-    for (contents) |byte| {
+    for (content) |byte| {
         if (line == source_location.line) {
             try writer.writeByte(byte);
             if (byte == '\n') return;

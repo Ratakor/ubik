@@ -5,7 +5,7 @@ const vmm = root.vmm;
 const page_size = std.mem.page_size;
 const alignForward = std.mem.alignForward;
 
-pub const vtable = std.mem.Allocator.VTable{
+pub const vtable: std.mem.Allocator.VTable = .{
     .alloc = alloc,
     .resize = resize,
     .free = free,

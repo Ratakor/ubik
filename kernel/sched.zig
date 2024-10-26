@@ -14,6 +14,8 @@ const Event = @import("event.zig").Event;
 const SpinLock = root.SpinLock;
 const log = std.log.scoped(.sched);
 
+// TODO: merge Process and Thread
+
 // TODO: if a process create a lot of thread it can suck all the cpu
 //       -> check the process of the chosen thread smh to fix that
 
@@ -355,6 +357,7 @@ pub fn enqueue(thread: *Thread) !void {
 
     for (smp.cpus) |cpu| {
         if (cpu.current_thread == null) {
+            // this was with 0.12.0 idk how it is now
             // only for debug build
             // fix to not crash when starting the first kernel thread
             // if (@import("builtin").mode == .Debug) {

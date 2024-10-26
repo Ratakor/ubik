@@ -97,19 +97,18 @@ fn main() noreturn {
     std.log.debug("in main with cpu {}", .{smp.thisCpu().id});
     arch.enableInterrupts();
 
-    vfs.init(); // TODO
-    tmpfs.init(); // TODO
-    vfs.mount(vfs.root_node, null, "/", "tmpfs") catch unreachable;
-    // vfs.create(
+    // TODO: filesystem
+    // vfs.init();
+    // tmpfs.init();
+    // vfs.mount(vfs.root_node, null, "/", "tmpfs") catch unreachable;
 
     // TODO: pci
     // TODO: basic syscalls
     // TODO: basic IPC
 
-    // TODO: start /bin/init <- load elf with std.elf?
+    // TODO: start /bin/init
 
-    // extern, I think
-
+    // move these to userspace
     // TODO: server with posix syscalls
     // TODO: filesystem
     // TODO: IPC: pipe, socket (TCP, UDP, Unix)
@@ -125,13 +124,13 @@ fn main() noreturn {
         boot_info.version,
     });
 
-    // DEBUG
-    // inline for (0..10) |i| {
-    //     const thread = sched.Thread.initKernel(@ptrCast(&dummy), null, 1) catch unreachable;
-    //     thread.tid = i;
-    //     std.log.debug("enqueuing thread {}", .{i});
-    //     sched.enqueue(thread) catch unreachable;
-    // }
+    // DEBUG: for some reason the kernel hangs after creating some threads
+    inline for (0..10) |i| {
+        const thread = sched.Thread.initKernel(@ptrCast(&dummy), null, 1) catch unreachable;
+        thread.tid = i;
+        std.log.debug("enqueuing thread {}", .{i});
+        sched.enqueue(thread) catch unreachable;
+    }
     // time.nanosleep(std.time.ns_per_s);
     // try tty0.?.writer().print("Hello, World!\n", .{});
 
@@ -148,8 +147,9 @@ fn main() noreturn {
 }
 
 fn dummy() void {
-    // arch.disableInterrupts();
-    // std.log.debug("in dummy with cpu {} and thread {*}", .{smp.thisCpu().id, smp.thisCpu().current_thread});
-    // arch.enableInterrupts();
-    // for (0..10_000) |_| { }
+    arch.disableInterrupts();
+    const cpu = smp.thisCpu();
+    std.log.debug("in dummy with cpu {} and thread {*}", .{ cpu.id, cpu.current_thread });
+    arch.enableInterrupts();
+    // for (0..10_000) |_| {}
 }

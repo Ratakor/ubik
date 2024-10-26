@@ -5,16 +5,13 @@ const SpinLock = root.SpinLock;
 const log = std.log.scoped(.pmm);
 const page_size = std.mem.page_size;
 const free_page = false;
-// const used_page = 1;
-// const cache_page = 2;
 
 var bitmap: []bool = undefined;
 var last_idx: u64 = 0;
 var usable_pages: u64 = 0;
 var used_pages: u64 = 0;
 var reserved_pages: u64 = 0;
-var lock: SpinLock = .{}; // TODO: remove lock on pmm and only use
-//                                 root.allocator for allocations
+var lock: SpinLock = .{}; // TODO: remove lock on pmm and only use root.allocator for allocations
 
 pub fn init() void {
     const memory_map = root.memory_map_request.response.?;
