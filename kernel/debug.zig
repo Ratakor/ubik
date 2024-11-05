@@ -37,7 +37,7 @@ pub fn log(
         .info => "\x1b[32minfo\x1b[m",
         .debug => "\x1b[36mdebug\x1b[m",
     };
-    const scope_prefix = (if (scope != .default) "@" ++ @tagName(scope) else "") ++ ": ";
+    const scope_prefix = if (scope == .default) ": " else "@" ++ @tagName(scope) ++ ": ";
     const fmt = level_txt ++ scope_prefix ++ format ++ "\n";
 
     log_lock.lock();
@@ -141,7 +141,7 @@ fn printSymbolInfo(writer: anytype, address: u64) !void {
             symbol.compile_unit_name,
         });
 
-        if (printLineFromFile(writer, sl)) {
+        if (printLineFromFile(writer, &sl)) {
             if (sl.column > 0) {
                 try writer.writeByteNTimes(' ', sl.column - 1);
                 try writer.writeAll("\x1b[32m^\x1b[m");
@@ -193,7 +193,7 @@ const source_files = [_][]const u8{
 };
 
 // TODO: get source files from filesystem instead + zig std lib files
-fn printLineFromFile(writer: anytype, source_location: std.debug.SourceLocation) !void {
+fn printLineFromFile(writer: anytype, source_location: *const std.debug.SourceLocation) !void {
     const content = inline for (source_files) |src_path| {
         if (std.mem.endsWith(u8, source_location.file_name, src_path)) {
             break @embedFile(src_path);

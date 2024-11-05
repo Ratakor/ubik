@@ -46,6 +46,7 @@ pub const PTE = packed struct(u64) {
     protection_key: u4,
     execute_disable: bool,
 
+    // TODO: remove and replace usage with named decl
     const PRESENT: u64 = 1 << 0;
     const WRITABLE: u64 = 1 << 1;
     const USER: u64 = 1 << 2;

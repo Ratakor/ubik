@@ -51,7 +51,7 @@ const RSDP = extern struct {
     extended_checksum: u8 align(1),
     reserved: [3]u8 align(1),
 
-    inline fn useXSDT(self: RSDP) bool {
+    inline fn useXSDT(self: *const RSDP) bool {
         return self.revision >= 2 and self.xsdt_addr != 0;
     }
 };

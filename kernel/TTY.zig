@@ -229,7 +229,6 @@ const ansi_bright_colors = [8]Color{
     Color.bright_grey,
 };
 
-// zig fmt: off
 const col256 = [_]u32{
     0x000000, 0x00005f, 0x000087, 0x0000af, 0x0000d7, 0x0000ff, 0x005f00, 0x005f5f,
     0x005f87, 0x005faf, 0x005fd7, 0x005fff, 0x008700, 0x00875f, 0x008787, 0x0087af,
@@ -260,7 +259,7 @@ const col256 = [_]u32{
     0xffd7d7, 0xffd7ff, 0xffff00, 0xffff5f, 0xffff87, 0xffffaf, 0xffffd7, 0xffffff,
     0x080808, 0x121212, 0x1c1c1c, 0x262626, 0x303030, 0x3a3a3a, 0x444444, 0x4e4e4e,
     0x585858, 0x626262, 0x6c6c6c, 0x767676, 0x808080, 0x8a8a8a, 0x949494, 0x9e9e9e,
-    0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee
+    0xa8a8a8, 0xb2b2b2, 0xbcbcbc, 0xc6c6c6, 0xd0d0d0, 0xdadada, 0xe4e4e4, 0xeeeeee,
 };
 
 const control_code = std.ascii.control_code;
@@ -268,33 +267,32 @@ const esc = control_code.esc;
 const bs = control_code.bs;
 
 const convtab_nomod = [_]u8{
-    0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
-    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n', 0, 'a', 's',
-    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0, '\\', 'z', 'x', 'c', 'v',
-    'b', 'n', 'm', ',', '.', '/', 0, 0, 0, ' ',
+    0,   esc, '1', '2', '3', '4', '5', '6', '7',  '8', '9', '0',  '-',  '=', bs,  '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o',  'p', '[', ']',  '\n', 0,   'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0,   '\\', 'z',  'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0,   0,   0,    ' ',
 };
 
 const convtab_capslock = [_]u8{
-    0, esc, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', bs, '\t',
-    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\n', 0, 'A', 'S',
-    'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\'', '`', 0, '\\', 'Z', 'X', 'C', 'V',
-    'B', 'N', 'M', ',', '.', '/', 0, 0, 0, ' ',
+    0,   esc, '1', '2', '3', '4', '5', '6', '7',  '8', '9', '0',  '-',  '=', bs,  '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O',  'P', '[', ']',  '\n', 0,   'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\'', '`', 0,   '\\', 'Z',  'X', 'C', 'V',
+    'B', 'N', 'M', ',', '.', '/', 0,   0,   0,    ' ',
 };
 
 const convtab_shift = [_]u8{
-    0, esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', bs, '\t',
-    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0, 'A', 'S',
-    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0, '|', 'Z', 'X', 'C', 'V',
-    'B', 'N', 'M', '<', '>', '?', 0, 0, 0, ' ',
+    0,   esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_',  '+', bs,  '\t',
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n', 0,   'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0,   '|', 'Z',  'X', 'C', 'V',
+    'B', 'N', 'M', '<', '>', '?', 0,   0,   0,   ' ',
 };
 
 const convtab_shift_capslock = [_]u8{
-    0, esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', bs, '\t',
-    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '{', '}', '\n', 0, 'a', 's',
-    'd', 'f', 'g', 'h', 'j', 'k', 'l', ':', '"', '~', 0, '|', 'z', 'x', 'c', 'v',
-    'b', 'n', 'm', '<', '>', '?', 0, 0, 0, ' '
+    0,   esc, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_',  '+', bs,  '\t',
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '{', '}', '\n', 0,   'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ':', '"', '~', 0,   '|', 'z',  'x', 'c', 'v',
+    'b', 'n', 'm', '<', '>', '?', 0,   0,   0,   ' ',
 };
-// zig fmt: on
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -420,7 +418,7 @@ fn plotChar(self: *TTY, c: *const Char, _x: usize, _y: usize) void {
     }
 }
 
-fn plotCharFast(self: TTY, old: *const Char, c: *const Char, _x: usize, _y: usize) void {
+fn plotCharFast(self: *const TTY, old: *const Char, c: *const Char, _x: usize, _y: usize) void {
     if (_x >= self.cols or _y >= self.rows) return;
 
     const x = self.offset_x + _x * font_width;
@@ -1032,12 +1030,12 @@ fn controlSequenceParse(self: *TTY, c: u8) void {
                 esc_values[0] = @intCast(y);
             }
             var dest_y = y - esc_values[0];
-            // zig fmt: off
             if ((self.scroll_top_margin >= dest_y and self.scroll_top_margin <= y) or
-                (self.scroll_bottom_margin >= dest_y and self.scroll_bottom_margin <= y)) {
-                    if (dest_y < self.scroll_top_margin) {
-                        dest_y = self.scroll_top_margin;
-                    }
+                (self.scroll_bottom_margin >= dest_y and self.scroll_bottom_margin <= y))
+            {
+                if (dest_y < self.scroll_top_margin) {
+                    dest_y = self.scroll_top_margin;
+                }
             }
             self.setCursorPos(x, dest_y);
         },
@@ -1047,12 +1045,12 @@ fn controlSequenceParse(self: *TTY, c: u8) void {
             }
             var dest_y = y + esc_values[0];
             if ((self.scroll_top_margin >= y and self.scroll_top_margin <= dest_y) or
-                (self.scroll_bottom_margin >= y and self.scroll_bottom_margin <= dest_y)) {
-                    if (dest_y >= self.scroll_bottom_margin) {
-                        dest_y = self.scroll_bottom_margin - 1;
-                    }
+                (self.scroll_bottom_margin >= y and self.scroll_bottom_margin <= dest_y))
+            {
+                if (dest_y >= self.scroll_bottom_margin) {
+                    dest_y = self.scroll_bottom_margin - 1;
+                }
             }
-            // zig fmt: on
             self.setCursorPos(x, dest_y);
         },
         'a', 'C' => {

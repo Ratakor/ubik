@@ -103,7 +103,7 @@ pub const CpuLocal = extern struct {
     }
 };
 
-const PAT = packed struct {
+const PAT = packed struct(u64) {
     // zig fmt: off
     pat0: Flags, reserved0: u5,
     pat1: Flags, reserved1: u5,
@@ -123,11 +123,6 @@ const PAT = packed struct {
         write_back = 6,
         uncached = 7,
     };
-
-    comptime {
-        std.debug.assert(@sizeOf(PAT) == @sizeOf(u64));
-        std.debug.assert(@bitSizeOf(PAT) == @bitSizeOf(u64));
-    }
 };
 
 /// https://en.wikipedia.org/wiki/CPUID#EAX=1:_Processor_Info_and_Feature_Bits
