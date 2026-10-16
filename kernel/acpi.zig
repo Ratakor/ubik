@@ -3,7 +3,8 @@
 
 const std = @import("std");
 const root = @import("root");
-const arch = @import("arch.zig");
+const target = @import("arch.zig");
+const arch = target.native;
 const apic = arch.apic;
 const vmm = root.vmm;
 const log = std.log.scoped(.acpi);
@@ -170,11 +171,11 @@ fn parse(comptime T: type, addr: T) void {
         const sdt: *const SDT = @ptrFromInt(entry + vmm.hhdm_offset);
         sdt.doChecksum();
 
-        switch (readInt(u32, &sdt.signature, arch.endian)) {
-            readInt(u32, "APIC", arch.endian) => handleMADT(sdt),
-            readInt(u32, "FACP", arch.endian) => handleFADT(sdt),
-            readInt(u32, "HPET", arch.endian) => {}, // TODO
-            readInt(u32, "WAET", arch.endian) => {}, // ignored
+        switch (readInt(u32, &sdt.signature, target.endian)) {
+            readInt(u32, "APIC", target.endian) => handleMADT(sdt),
+            readInt(u32, "FACP", target.endian) => handleFADT(sdt),
+            readInt(u32, "HPET", target.endian) => {}, // TODO
+            readInt(u32, "WAET", target.endian) => {}, // ignored
             else => log.warn("unhandled ACPI table: {s}", .{sdt.signature}),
         }
     }
@@ -182,7 +183,7 @@ fn parse(comptime T: type, addr: T) void {
 
 /// https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#multiple-apic-description-table-madt
 fn handleMADT(madt: *const SDT) void {
-    apic.lapic_base = readInt(u32, madt.data()[0..4], arch.endian) + vmm.hhdm_offset;
+    apic.lapic_base = readInt(u32, madt.data()[0..4], target.endian) + vmm.hhdm_offset;
     log.info("lapic base: 0x{x}", .{apic.lapic_base});
     var data = madt.data()[8..]; // discard the rest of madt header
 
@@ -288,15 +289,15 @@ inline fn parseInt(s5_addr: []const u8, value: *u64) usize {
             return 2;
         },
         0xb => {
-            value.* = readInt(u16, s5_addr[1..3], arch.endian);
+            value.* = readInt(u16, s5_addr[1..3], target.endian);
             return 3;
         },
         0xc => {
-            value.* = readInt(u32, s5_addr[1..5], arch.endian);
+            value.* = readInt(u32, s5_addr[1..5], target.endian);
             return 5;
         },
         0xe => {
-            value.* = readInt(u64, s5_addr[1..9], arch.endian);
+            value.* = readInt(u64, s5_addr[1..9], target.endian);
             return 9;
         },
         else => unreachable,

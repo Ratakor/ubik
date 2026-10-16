@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const root = @import("root");
+const target = @import("arch.zig");
 const arch = root.arch;
 const serial = @import("serial.zig");
 const smp = root.smp;
@@ -150,16 +151,16 @@ fn printStackIterator(writer: *std.Io.Writer, stack_iter: StackIterator) void {
 }
 
 fn printSymbolInfo(writer: *std.Io.Writer, address: u64) !void {
-    const symbol: std.debug.Symbol = if (debug_info.?.findCompileUnit(arch.endian, address)) |compile_unit| .{
+    const symbol: std.debug.Symbol = if (debug_info.?.findCompileUnit(target.endian, address)) |compile_unit| .{
         .name = debug_info.?.getSymbolName(address) orelse "???",
         .compile_unit_name = compile_unit.die.getAttrString(
             &debug_info.?,
-            arch.endian,
+            target.endian,
             std.dwarf.AT.name,
             debug_info.?.section(.debug_str),
             compile_unit,
         ) catch "???",
-        .source_location = debug_info.?.getLineNumberInfo(debug_allocator, debug_allocator, arch.endian, compile_unit, address) catch |err| switch (err) {
+        .source_location = debug_info.?.getLineNumberInfo(debug_allocator, debug_allocator, target.endian, compile_unit, address) catch |err| switch (err) {
             error.MissingDebugInfo, error.InvalidDebugInfo => null,
             else => return err,
         },
@@ -293,12 +294,12 @@ fn initDebugInfo() !void {
         }
     }
 
-    try debug_info.?.open(debug_allocator, arch.endian);
+    try debug_info.?.open(debug_allocator, target.endian);
 }
 
 fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
-    const sh_strndx = std.mem.readInt(u16, elf[62 .. 62 + 2], arch.endian);
-    const sh_num = std.mem.readInt(u16, elf[60 .. 60 + 2], arch.endian);
+    const sh_strndx = std.mem.readInt(u16, elf[62 .. 62 + 2], target.endian);
+    const sh_num = std.mem.readInt(u16, elf[60 .. 60 + 2], target.endian);
 
     if (sh_strndx >= sh_num) {
         return error.ShstrndxOutOfRange;
@@ -319,22 +320,22 @@ fn getSectionSlice(elf: [*]const u8, section_name: []const u8) ![]const u8 {
 }
 
 fn getShdr(elf: [*]const u8, idx: u16) []const u8 {
-    const sh_offset = std.mem.readInt(u64, elf[40 .. 40 + 8], arch.endian);
-    const sh_entsize = std.mem.readInt(u16, elf[58 .. 58 + 2], arch.endian);
+    const sh_offset = std.mem.readInt(u64, elf[40 .. 40 + 8], target.endian);
+    const sh_entsize = std.mem.readInt(u16, elf[58 .. 58 + 2], target.endian);
     const off = sh_offset + sh_entsize * idx;
 
     return elf[off .. off + sh_entsize];
 }
 
 fn getSectionData(elf: [*]const u8, shdr: []const u8) []const u8 {
-    const offset = std.mem.readInt(u64, shdr[24..][0..8], arch.endian);
-    const size = std.mem.readInt(u64, shdr[32..][0..8], arch.endian);
+    const offset = std.mem.readInt(u64, shdr[24..][0..8], target.endian);
+    const size = std.mem.readInt(u64, shdr[32..][0..8], target.endian);
 
     return elf[offset .. offset + size];
 }
 
 fn getSectionName(names: []const u8, shdr: []const u8) ?[]const u8 {
-    const offset = std.mem.readInt(u32, shdr[0..][0..4], arch.endian);
+    const offset = std.mem.readInt(u32, shdr[0..][0..4], target.endian);
     const len = std.mem.indexOfScalar(u8, names[offset..], 0) orelse return null;
 
     return names[offset .. offset + len];

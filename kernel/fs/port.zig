@@ -1,6 +1,7 @@
 const std = @import("std");
 const root = @import("root");
 const vfs = root.vfs;
+const target = @import("../arch.zig");
 const arch = root.arch;
 
 const vtable = vfs.Node.VTable{
@@ -35,8 +36,8 @@ fn write(node: *vfs.Node, buf: []const u8, offset: std.os.off_t) vfs.WriteError!
     const port: u16 = @intCast(offset);
     switch (buf.len) {
         @sizeOf(u8) => arch.out(u8, port, buf[0]),
-        @sizeOf(u16) => arch.out(u16, port, std.mem.readInt(u16, buf[0..@sizeOf(u16)], arch.endian)),
-        @sizeOf(u32) => arch.out(u32, port, std.mem.readInt(u32, buf[0..@sizeOf(u32)], arch.endian)),
+        @sizeOf(u16) => arch.out(u16, port, std.mem.readInt(u16, buf[0..@sizeOf(u16)], target.endian)),
+        @sizeOf(u32) => arch.out(u32, port, std.mem.readInt(u32, buf[0..@sizeOf(u32)], target.endian)),
         else => for (buf, 0..) |byte, i| {
             arch.out(u8, @intCast(port + i), byte);
         },

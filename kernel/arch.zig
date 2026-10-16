@@ -1,40 +1,9 @@
 pub const arch = @import("builtin").cpu.arch;
 pub const endian = arch.endian();
 
-const implementation = switch (arch) {
+pub const native = switch (arch) {
     .x86_64 => @import("arch/x86_64.zig"),
     .riscv64 => @import("arch/riscv64.zig"),
     .aarch64 => @import("arch/aarch64.zig"),
     else => @compileError("Unsupported architecture: " ++ @tagName(arch)),
 };
-
-pub const RFlags = implementation.RFlags;
-pub const MSR = implementation.MSR;
-pub const CpuID = implementation.CpuID;
-pub const halt = implementation.halt;
-pub const disableInterrupts = implementation.disableInterrupts;
-pub const enableInterrupts = implementation.enableInterrupts;
-pub const interruptState = implementation.interruptState;
-pub const toggleInterrupts = implementation.toggleInterrupts;
-pub const out = implementation.out;
-pub const in = implementation.in;
-pub const readRegister = implementation.readRegister;
-pub const writeRegister = implementation.writeRegister;
-pub const cpuid = implementation.cpuid;
-pub const rdmsr = implementation.rdmsr;
-pub const wrmsr = implementation.wrmsr;
-pub const wrxcr = implementation.wrxcr;
-pub const xsave = implementation.xsave;
-pub const xrstor = implementation.xrstor;
-pub const fxsave = implementation.fxsave;
-pub const fxrstor = implementation.fxrstor;
-pub const rdseed = implementation.rdseed;
-pub const rdrand = implementation.rdrand;
-pub const invlpg = implementation.invlpg;
-pub const gdt = implementation.gdt;
-pub const idt = implementation.idt;
-pub const apic = implementation.apic;
-pub const cpu = implementation.cpu;
-pub const pit = implementation.pit;
-pub const Context = implementation.Context;
-pub const init = implementation.init;

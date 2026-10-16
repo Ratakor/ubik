@@ -1,7 +1,8 @@
 const std = @import("std");
 const limine = @import("limine");
 const root = @import("root");
-const arch = @import("arch.zig");
+const target = @import("arch.zig");
+const arch = target.native;
 const idt = arch.idt;
 const apic = arch.apic;
 const sched = @import("sched.zig");
@@ -23,7 +24,7 @@ pub fn init() void {
     for (smp.cpus(), cpus, 0..) |cpu, *cpu_local, id| {
         cpu.extra_argument = @intFromPtr(cpu_local);
         cpu_local.id = id;
-        if (arch.arch == .x86_64) {
+        if (target.arch == .x86_64) {
             cpu_local.lapic_id = cpu.lapic_id;
         }
 

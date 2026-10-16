@@ -1,5 +1,5 @@
 pub const Pcg = @import("std").Random.Pcg;
-const arch = @import("arch.zig");
+const arch = @import("arch.zig").native;
 const time = @import("time.zig");
 
 pub fn getSeedSlow() u64 {

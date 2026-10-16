@@ -1,6 +1,6 @@
 const std = @import("std");
 const root = @import("root");
-const arch = @import("arch.zig");
+const arch = @import("arch.zig").native;
 const sched = @import("sched.zig");
 const SpinLock = root.SpinLock;
 

@@ -1,7 +1,7 @@
 const std = @import("std");
 const ubik = @import("ubik");
 const root = @import("root");
-const arch = @import("arch.zig");
+const target = @import("arch.zig");
 const pmm = root.pmm;
 const vmm = root.vmm;
 const page_size = pmm.page_size;
@@ -18,7 +18,7 @@ pub const AuxVal = struct {
 pub fn load(elf_addr: u64, addr_space: *vmm.AddressSpace, load_base: u64) !AuxVal {
     const header = try std.elf.Header.parse(@ptrFromInt(elf_addr));
 
-    if (!header.is_64 or header.endian != arch.endian or header.machine != .X86_64) {
+    if (!header.is_64 or header.endian != target.endian or header.machine != .X86_64) {
         return error.InvalidElf;
     }
 

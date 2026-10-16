@@ -1,7 +1,8 @@
 const std = @import("std");
 const root = @import("root");
 const ubik = @import("ubik");
-const arch = @import("arch.zig");
+const target = @import("arch.zig");
+const arch = target.native;
 const gdt = arch.gdt;
 const idt = arch.idt;
 const apic = arch.apic;
@@ -469,7 +470,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.{ .x86_64_sysv = .{} }) void {
 
         current_thread.ctx = ctx.*;
 
-        if (arch.arch == .x86_64) {
+        if (target.arch == .x86_64) {
             current_thread.fs_base = arch.rdmsr(.fs_base);
             current_thread.cr3 = arch.readRegister("cr3");
             arch.cpu.fpuSave(current_thread.fpu_storage);
@@ -488,7 +489,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.{ .x86_64_sysv = .{} }) void {
     }
 
     if (maybe_next_thread) |next_thread| {
-        if (arch.arch == .x86_64) {
+        if (target.arch == .x86_64) {
             arch.wrmsr(.fs_base, next_thread.fs_base);
             cpu.current_thread = next_thread;
 
