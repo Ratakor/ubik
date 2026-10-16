@@ -169,15 +169,17 @@ pub const AddressSpace = struct {
         for (self.mmap_ranges.items) |local_range| {
             self.munmap(local_range.base, local_range.length) catch unreachable;
         }
-        self.lock.lock(); // TODO: useless or may cause deadlocks?
+        // The caller must have retired this address space from all CPUs.
+        const interrupt_state = lockVmm(&self.lock);
         destroyLevel(self.pml4, 0, 256, 4);
+        unlockVmm(&self.lock, interrupt_state);
         root.allocator.destroy(self);
     }
 
     // TODO
     pub fn fork(self: *AddressSpace) !*AddressSpace {
-        self.lock.lock();
-        defer self.lock.unlock();
+        const interrupt_state = lockVmm(&self.lock);
+        defer unlockVmm(&self.lock, interrupt_state);
 
         const new_addr_space = try AddressSpace.init();
         errdefer new_addr_space.deinit();
@@ -262,8 +264,8 @@ pub const AddressSpace = struct {
     }
 
     pub fn mapPage(self: *AddressSpace, vaddr: u64, paddr: u64, flags: u64) MapError!void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        const interrupt_state = lockVmm(&self.lock);
+        defer unlockVmm(&self.lock, interrupt_state);
 
         // TODO: when virt2pte fails the memory it allocated is not freed
         const pte = try self.virt2pte(vaddr, true);
@@ -273,8 +275,8 @@ pub const AddressSpace = struct {
     }
 
     pub fn remapPage(self: *AddressSpace, vaddr: u64, flags: u64) MapError!void {
-        self.lock.lock();
-        defer self.lock.unlock();
+        const interrupt_state = lockVmm(&self.lock);
+        defer unlockVmm(&self.lock, interrupt_state);
 
         const pte = try self.virt2pte(vaddr, false);
         if (!pte.present) return error.NotMapped;
@@ -283,8 +285,10 @@ pub const AddressSpace = struct {
     }
 
     pub fn unmapPage(self: *AddressSpace, vaddr: u64, lock: bool) MapError!void {
-        if (lock) self.lock.lock();
-        defer if (lock) self.lock.unlock();
+        const interrupt_state = if (lock) lockVmm(&self.lock) else arch.toggleInterrupts(false);
+        defer if (lock) unlockVmm(&self.lock, interrupt_state) else {
+            _ = arch.toggleInterrupts(interrupt_state);
+        };
 
         const pte = try self.virt2pte(vaddr, false);
         if (!pte.present) return error.NotMapped;
@@ -310,26 +314,29 @@ pub const AddressSpace = struct {
         return @intFromPtr(self.pml4) - hhdm_offset;
     }
 
-    // TODO: lock?
     fn flush(self: *AddressSpace, vaddr: u64) void {
-        // std.debug.assert(arch.interruptState() == false);
-        const old_state = arch.toggleInterrupts(false);
-        defer _ = arch.toggleInterrupts(old_state);
+        const old_state = lockVmm(&shootdown_lock);
+        defer unlockVmm(&shootdown_lock, old_state);
 
-        // TODO: is `if` useful?
-        if (self.cr3() == arch.readRegister("cr3")) {
+        // Higher-half page tables are shared by every address space.
+        if (vaddr >= 0xffff800000000000 or self.cr3() == arch.readRegister("cr3")) {
             arch.invlpg(vaddr);
         }
-
         if (!smp.initialized) return;
 
+        shootdown_cr3 = self.cr3();
+        shootdown_addr = vaddr;
         const this_cpu = smp.thisCpu();
         for (smp.cpus) |*cpu| {
             if (cpu == this_cpu) continue;
-
-            cpu.tlb_shootdown_cr3 = self.cr3();
-            asm volatile ("" ::: "memory");
+            @atomicStore(u64, &cpu.tlb_shootdown_cr3, 1, .release);
             apic.sendIPI(cpu.lapic_id, .{ .vector = tlb_shootdown_ipi_vector });
+        }
+        for (smp.cpus) |*cpu| {
+            if (cpu == this_cpu) continue;
+            while (@atomicLoad(u64, &cpu.tlb_shootdown_cr3, .acquire) != 0) {
+                std.atomic.spinLoopHint();
+            }
         }
     }
 
@@ -367,10 +374,9 @@ pub const AddressSpace = struct {
         try global_range.locals.append(root.allocator, local_range);
 
         {
-            self.lock.lock();
-            errdefer self.lock.unlock();
+            const interrupt_state = lockVmm(&self.lock);
+            defer unlockVmm(&self.lock, interrupt_state);
             try self.mmap_ranges.append(root.allocator, local_range);
-            self.lock.unlock();
         }
 
         var i: usize = 0;
@@ -401,8 +407,8 @@ pub const AddressSpace = struct {
             const snip_end = i;
             const snip_size = snip_end - snip_start;
 
-            self.lock.lock();
-            errdefer self.lock.unlock();
+            const interrupt_state = lockVmm(&self.lock);
+            errdefer unlockVmm(&self.lock, interrupt_state);
 
             if (snip_start > local_range.base and snip_end < local_range.base + local_range.length) {
                 const postsplit_range = try root.allocator.create(MMapRangeLocal); // if this fail we're in bad state
@@ -434,7 +440,7 @@ pub const AddressSpace = struct {
                 }
             }
 
-            self.lock.unlock();
+            unlockVmm(&self.lock, interrupt_state);
 
             if (snip_size == local_range.length and global_range.locals.items.len == 1) {
                 if (local_range.flags.ANONYMOUS) {
@@ -463,6 +469,35 @@ pub const AddressSpace = struct {
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
 pub var kaddr_space: *AddressSpace = undefined;
 var tlb_shootdown_ipi_vector: u8 = undefined;
+var shootdown_lock: SpinLock = .{};
+var shootdown_cr3: u64 = undefined;
+var shootdown_addr: u64 = undefined;
+
+// All VMM lock waiters must service shootdowns: a sender can hold the very
+// address-space lock a target is waiting for with interrupts disabled.
+fn lockVmm(lock: *SpinLock) bool {
+    const old_state = arch.toggleInterrupts(false);
+    while (!lock.tryLock()) {
+        serviceShootdown();
+        std.atomic.spinLoopHint();
+    }
+    return old_state;
+}
+
+fn unlockVmm(lock: *SpinLock, old_state: bool) void {
+    lock.unlock();
+    _ = arch.toggleInterrupts(old_state);
+}
+
+fn serviceShootdown() void {
+    if (!smp.initialized) return;
+    const cpu = smp.thisCpu();
+    if (@atomicLoad(u64, &cpu.tlb_shootdown_cr3, .acquire) == 0) return;
+    if (shootdown_addr >= 0xffff800000000000 or shootdown_cr3 == arch.readRegister("cr3")) {
+        arch.invlpg(shootdown_addr);
+    }
+    @atomicStore(u64, &cpu.tlb_shootdown_cr3, 0, .release);
+}
 
 pub fn init() void {
     log.info("hhdm offset: 0x{x}", .{hhdm_offset});
@@ -518,9 +553,11 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
     if (reason.present) return error.PageProtectionViolation;
 
     const addr_space = sched.currentThread().process.addr_space;
-    addr_space.lock.lock();
-    const range = try Addr2Range.init(addr_space, cr2);
-    addr_space.lock.unlock();
+    const range = blk: {
+        const interrupt_state = lockVmm(&addr_space.lock);
+        defer unlockVmm(&addr_space.lock, interrupt_state);
+        break :blk try Addr2Range.init(addr_space, cr2);
+    };
 
     // TODO: enable interrupts?
 
@@ -554,10 +591,7 @@ fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) 
 fn tlbShootdownHandler(ctx: *arch.Context) callconv(.SysV) void {
     _ = ctx;
 
-    if (smp.thisCpu().tlb_shootdown_cr3 == arch.readRegister("cr3")) {
-        // TODO: invlpg cpu.tlb_Shootdown_addr?
-        arch.writeRegister("cr3", arch.readRegister("cr3"));
-    }
+    serviceShootdown();
 
     apic.eoi();
 }
