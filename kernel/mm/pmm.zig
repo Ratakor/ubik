@@ -39,10 +39,10 @@ pub fn init() void {
     }
 
     const bitmap_size = highest_addr / page_size;
-    const aligned_size = std.mem.alignForward(u64, bitmap_size / 8, page_size);
+    const aligned_size = std.mem.alignForward(u64, bitmap_size * @sizeOf(bool), page_size);
 
     log.info("highest address: 0x{x}", .{highest_addr});
-    log.info("bitmap size: {} bits", .{bitmap_size});
+    log.info("bitmap size: {} bytes", .{bitmap_size * @sizeOf(bool)});
 
     // find a hole in the memory map to fit the bitmap
     bitmap = for (entries) |entry| {
