@@ -82,10 +82,10 @@ pub const Process = struct {
     pub fn deinit(self: *Process) void {
         // TODO: items of each arraylist + addr_space + parent + processes
 
-        self.threads.deinit();
-        self.children.deinit();
-        self.child_events.deinit();
-        self.fds.deinit();
+        self.threads.deinit(root.allocator);
+        self.children.deinit(root.allocator);
+        self.child_events.deinit(root.allocator);
+        self.fds.deinit(root.allocator);
         root.allocator.destroy(self);
     }
 };
@@ -199,8 +199,8 @@ pub const Thread = struct {
                 process.thread_stack_top - stack_size,
                 stack_phys,
                 stack_size,
-                vmm.PROT.READ | vmm.PROT.WRITE,
-                vmm.MAP.ANONYMOUS,
+                ubik.PROT.READ | ubik.PROT.WRITE,
+                .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             );
             process.thread_stack_top -= stack_size - std.mem.page_size;
         }
@@ -239,15 +239,13 @@ pub const Thread = struct {
             \\fldcw %[fcw]
             :
             : [fcw] "m" (default_fcw),
-            : "memory"
-        );
+            : "memory");
         const default_mxcsr: u32 = 0b1111110000000;
         asm volatile (
             \\ldmxcsr %[mxcsr]
             :
             : [mxcsr] "m" (default_mxcsr),
-            : "memory"
-        );
+            : "memory");
         arch.cpu.fpuSave(thread.fpu_storage);
 
         thread.tid = process.threads.items.len; // TODO?
@@ -536,7 +534,6 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         \\iretq
         :
         : [ctx] "rm" (ctx),
-        : "memory"
-    );
+        : "memory");
     unreachable;
 }
