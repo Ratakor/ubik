@@ -1,12 +1,9 @@
 .{
-    .name = "ubik",
+    .name = .ubik,
+    .fingerprint = 0x58a9f8c2211faf62,
+    .minimum_zig_version = "0.16.0",
     .version = "0.1.0",
-    .dependencies = .{
-        .limine = .{
-            .url = "https://api.github.com/repos/48cf/limine-zig/tarball/7b29b6e6f6d35052f01ed3831085a39aae131705",
-            .hash = "1220f946f839eab2ec49dca1c805ce72ac3e3ef9c47b3afcdecd1c05a7b35f66d277",
-        },
-    },
+    .dependencies = .{},
     .paths = .{
         "lib",
         "build.zig",
