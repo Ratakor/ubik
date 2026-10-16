@@ -166,9 +166,17 @@ pub const AddressSpace = struct {
     }
 
     pub fn deinit(self: *AddressSpace) void {
-        for (self.mmap_ranges.items) |local_range| {
-            self.munmap(local_range.base, local_range.length) catch unreachable;
+        const interrupt_state = lockVmm(&range_lock);
+        defer unlockVmm(&range_lock, interrupt_state);
+        self.deinitLocked();
+    }
+
+    fn deinitLocked(self: *AddressSpace) void {
+        while (self.mmap_ranges.items.len != 0) {
+            const local = self.mmap_ranges.items[self.mmap_ranges.items.len - 1];
+            self.munmapLocked(local.base, local.length) catch unreachable;
         }
+        self.mmap_ranges.deinit(root.allocator);
         // The caller must have retired this address space from all CPUs.
         const interrupt_state = lockVmm(&self.lock);
         destroyLevel(self.pml4, 0, 256, 4);
@@ -386,82 +394,92 @@ pub const AddressSpace = struct {
         }
     }
 
-    // TODO
     pub fn munmap(self: *AddressSpace, addr: u64, constlen: usize) !void {
-        if (constlen == 0) return error.EINVAL;
-        const len = alignForward(usize, constlen, page_size);
+        const interrupt_state = lockVmm(&range_lock);
+        defer unlockVmm(&range_lock, interrupt_state);
+        try self.munmapLocked(addr, constlen);
+    }
+
+    // range_lock protects both lists and all local/global range lifetimes.
+    fn munmapLocked(self: *AddressSpace, addr: u64, constlen: usize) !void {
+        if (constlen == 0 or addr % page_size != 0) return error.EINVAL;
+        const padded = std.math.add(usize, constlen, page_size - 1) catch return error.EINVAL;
+        const len = alignBackward(usize, padded, page_size);
+        const end = std.math.add(u64, addr, len) catch return error.EINVAL;
+        const interrupt_state = lockVmm(&self.lock);
+        defer unlockVmm(&self.lock, interrupt_state);
 
         var i = addr;
-        while (i < addr + len) : (i += page_size) {
-            const range = Addr2Range.init(self, i) catch continue;
-            const local_range = range.range;
-            const global_range = local_range.global;
-
-            const snip_start = i;
-            while (true) {
+        while (i < end) {
+            const range = Addr2Range.init(self, i) catch {
                 i += page_size;
-                if (i >= local_range.base + local_range.length or i >= addr + len) {
-                    break;
-                }
-            }
-            const snip_end = i;
-            const snip_size = snip_end - snip_start;
+                continue;
+            };
+            const local = range.range;
+            const global = local.global;
+            const old_end = local.base + local.length;
+            const snip_end = @min(old_end, end);
+            const anonymous = local.flags.ANONYMOUS;
 
-            const interrupt_state = lockVmm(&self.lock);
-            errdefer unlockVmm(&self.lock, interrupt_state);
-
-            if (snip_start > local_range.base and snip_end < local_range.base + local_range.length) {
-                const postsplit_range = try root.allocator.create(MMapRangeLocal); // if this fail we're in bad state
-                errdefer root.allocator.destroy(postsplit_range);
-                postsplit_range.addr_space = local_range.addr_space;
-                postsplit_range.global = global_range;
-                postsplit_range.base = snip_end;
-                postsplit_range.length = (local_range.base + local_range.length) - snip_end;
-                postsplit_range.offset = local_range.offset + @as(isize, @intCast(snip_end - local_range.base));
-                postsplit_range.prot = local_range.prot;
-                postsplit_range.flags = local_range.flags;
-
-                try self.mmap_ranges.append(root.allocator, postsplit_range);
-
-                local_range.length -= postsplit_range.length;
+            // Reserve both registrations before changing either list or PTEs.
+            if (i > local.base and snip_end < old_end) {
+                const tail = try root.allocator.create(MMapRangeLocal);
+                errdefer root.allocator.destroy(tail);
+                try self.mmap_ranges.ensureUnusedCapacity(root.allocator, 1);
+                try global.locals.ensureUnusedCapacity(root.allocator, 1);
+                tail.* = local.*;
+                tail.base = snip_end;
+                tail.length = old_end - snip_end;
+                tail.offset += @intCast(snip_end - local.base);
+                self.mmap_ranges.appendAssumeCapacity(tail);
+                global.locals.appendAssumeCapacity(tail);
             }
 
-            var j = snip_start;
-            while (j < snip_end) : (j += page_size) {
-                try self.unmapPage(j, false);
-            }
-
-            if (snip_size == local_range.length) {
-                for (self.mmap_ranges.items, 0..) |mmap_range, k| {
-                    if (mmap_range == local_range) {
-                        _ = self.mmap_ranges.swapRemove(k);
+            if (i == local.base and snip_end == old_end) {
+                for (self.mmap_ranges.items, 0..) |entry, index| {
+                    if (entry == local) {
+                        _ = self.mmap_ranges.swapRemove(index);
                         break;
                     }
                 }
-            }
-
-            unlockVmm(&self.lock, interrupt_state);
-
-            if (snip_size == local_range.length and global_range.locals.items.len == 1) {
-                if (local_range.flags.ANONYMOUS) {
-                    var k = global_range.base;
-                    while (k < global_range.base + global_range.length) : (k += page_size) {
-                        const paddr = global_range.shadow_addr_space.virt2phys(j) catch continue;
-                        try global_range.shadow_addr_space.unmapPage(j, false); // if this fail we're in really bad state
-                        pmm.free(paddr, 1);
+                for (global.locals.items, 0..) |entry, index| {
+                    if (entry == local) {
+                        _ = global.locals.swapRemove(index);
+                        break;
                     }
-                } else {
-                    // TODO: unamp res
                 }
-
-                root.allocator.destroy(local_range);
+                root.allocator.destroy(local);
+            } else if (i == local.base) {
+                local.offset += @intCast(snip_end - local.base);
+                local.base = snip_end;
+                local.length = old_end - snip_end;
             } else {
-                if (snip_start == local_range.base) {
-                    local_range.offset += @intCast(snip_size);
-                    local_range.base = snip_end;
-                }
-                local_range.length -= snip_size;
+                local.length = i - local.base;
             }
+
+            var page = i;
+            while (page < snip_end) : (page += page_size) {
+                self.unmapPage(page, false) catch |err| switch (err) {
+                    error.NotMapped => {},
+                    else => unreachable,
+                };
+                // Split ranges and forked aliases may still own this backing.
+                const retained = for (global.locals.items) |other| {
+                    if (page >= other.base and page < other.base + other.length) break true;
+                } else false;
+                if (!retained) {
+                    const physical = global.shadow_addr_space.virt2phys(page) catch continue;
+                    global.shadow_addr_space.unmapPage(page, true) catch unreachable;
+                    // unmapPage waits for all TLB acknowledgments before reuse.
+                    if (anonymous) pmm.free(physical, 1);
+                }
+            }
+            if (global.locals.items.len == 0) {
+                global.shadow_addr_space.deinitLocked();
+                global.locals.deinit(root.allocator);
+                root.allocator.destroy(global);
+            }
+            i = snip_end;
         }
     }
 };
@@ -469,6 +487,7 @@ pub const AddressSpace = struct {
 pub var hhdm_offset: u64 = undefined; // set in pmm.zig
 pub var kaddr_space: *AddressSpace = undefined;
 var tlb_shootdown_ipi_vector: u8 = undefined;
+var range_lock: SpinLock = .{};
 var shootdown_lock: SpinLock = .{};
 var shootdown_cr3: u64 = undefined;
 var shootdown_addr: u64 = undefined;
