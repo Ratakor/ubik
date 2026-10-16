@@ -12,7 +12,6 @@ const vmm = root.vmm;
 const vfs = @import("vfs.zig");
 const Event = @import("event.zig").Event;
 const SpinLock = root.SpinLock;
-const log = std.log.scoped(.sched);
 
 // TODO: merge Process and Thread
 
@@ -99,6 +98,8 @@ pub const Thread = struct {
     tickets: usize,
 
     enqueued: bool,
+    run_prev: ?*Thread = null,
+    run_next: ?*Thread = null,
     // enqueued_by_signal: bool, // TODO: for events
     yield_await: SpinLock = .{},
     // gs_base
@@ -320,7 +321,8 @@ const quantum = 50_000;
 
 pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
-var running_threads: std.AutoArrayHashMapUnmanaged(*Thread, void) = .{};
+// Intrusive links avoid allocation (and allocator lock inversion) under sched_lock.
+var running_threads: ?*Thread = null;
 var waiting_threads: std.AutoArrayHashMapUnmanaged(*Thread, void) = .{};
 var total_tickets: usize = 0;
 
@@ -345,64 +347,84 @@ pub inline fn currentProcess() *Process {
 }
 
 fn nextThread() ?*Thread {
-    const ticket = pcg.random().uintLessThan(usize, total_tickets + 1);
-    var sum: usize = 0;
-
     sched_lock.lock();
     defer sched_lock.unlock();
+    if (total_tickets == 0) return null;
 
-    var iter = running_threads.iterator();
-    while (iter.next()) |entry| {
-        const thread = entry.key_ptr.*;
+    const ticket = pcg.random().uintLessThan(usize, total_tickets);
+    var sum: usize = 0;
+    var cursor = running_threads;
+    while (cursor) |thread| : (cursor = thread.run_next) {
         sum += thread.tickets;
-        if (sum >= ticket and thread.lock.tryLock()) {
-            return thread;
+        if (ticket < sum) {
+            // A running winner cannot migrate until its outgoing context is saved.
+            // Walk the queue once so a busy winner cannot hide runnable work.
+            var candidate = thread;
+            while (true) {
+                if (candidate.lock.tryLock()) return candidate;
+                candidate = candidate.run_next orelse running_threads.?;
+                if (candidate == thread) return null;
+            }
         }
     }
-    return null;
+    unreachable;
 }
 
 pub fn enqueue(thread: *Thread) !void {
-    if (thread.enqueued) return;
-
+    const interrupt_state = arch.toggleInterrupts(false);
+    defer _ = arch.toggleInterrupts(interrupt_state);
     sched_lock.lock();
-    errdefer sched_lock.unlock();
-
-    try running_threads.putNoClobber(root.allocator, thread, {});
-    total_tickets += thread.tickets;
-    thread.enqueued = true;
-    log.info("enqueued thread: {*}", .{thread});
-
+    enqueueLocked(thread) catch |err| {
+        sched_lock.unlock();
+        return err;
+    };
     sched_lock.unlock();
+    notifyRunnable();
+}
 
-    for (smp.cpus) |cpu| {
-        if (cpu.current_thread == null) {
-            // this was with 0.12.0 idk how it is now
-            // only for debug build
-            // fix to not crash when starting the first kernel thread
-            // if (@import("builtin").mode == .Debug) {
-            //     if (cpu.id == smp.thisCpu().id) continue;
-            // }
+fn enqueueLocked(thread: *Thread) !void {
+    if (thread.enqueued) return;
+    if (thread.tickets == 0) return error.InvalidTickets;
+    const tickets = try std.math.add(usize, total_tickets, thread.tickets);
+    thread.run_prev = null;
+    thread.run_next = running_threads;
+    if (running_threads) |head| head.run_prev = thread;
+    running_threads = thread;
+    total_tickets = tickets;
+    thread.enqueued = true;
+}
 
-            apic.sendIPI(cpu.lapic_id, .{ .vector = sched_vector });
-            break;
-        }
-    }
+fn notifyRunnable() void {
+    // Do not race another CPU's current_thread just to choose an idle target.
+    apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .all_including_self });
 }
 
 pub fn dequeue(thread: *Thread) void {
-    if (!thread.enqueued) return;
-
+    const interrupt_state = arch.toggleInterrupts(false);
+    defer _ = arch.toggleInterrupts(interrupt_state);
     sched_lock.lock();
     defer sched_lock.unlock();
+    dequeueLocked(thread);
+}
 
-    if (running_threads.swapRemove(thread)) {
-        total_tickets -= thread.tickets;
-        thread.enqueued = false;
-        log.info("dequeued thread: {*}", .{thread});
+fn dequeueLocked(thread: *Thread) void {
+    if (!thread.enqueued) return;
+    if (thread.run_prev) |previous| {
+        previous.run_next = thread.run_next;
     } else {
-        log.warn("trying to dequeue unknown thread: {*}", .{thread});
+        running_threads = thread.run_next;
     }
+    if (thread.run_next) |next| next.run_prev = thread.run_prev;
+    total_tickets -= thread.tickets;
+    thread.enqueued = false;
+    thread.run_prev = null;
+    thread.run_next = null;
+}
+
+fn isEnqueued(thread: *Thread) bool {
+    sched_lock.lock();
+    defer sched_lock.unlock();
+    return thread.enqueued;
 }
 
 pub fn die() noreturn {
@@ -417,7 +439,6 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     apic.timerStop();
 
     const cpu = smp.thisCpu();
-    log.debug("schedHandler on cpu: {}", .{cpu.id});
 
     // if (cpu.scheduling_disabled) {
     //     apic.eoi();
@@ -430,7 +451,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     if (cpu.current_thread) |current_thread| {
         // current_thread.yield_await.unlock(); // TODO
 
-        if (maybe_next_thread == null and current_thread.enqueued) {
+        if (maybe_next_thread == null and isEnqueued(current_thread)) {
             apic.eoi();
             apic.timerOneShot(quantum, sched_vector);
             return;
@@ -485,7 +506,6 @@ pub fn yield() noreturn {
     std.debug.assert(arch.interruptState() == false);
     // arch.disableInterrupts();
 
-    log.debug("yield on cpu: {}", .{smp.thisCpu().id});
     apic.timerStop();
     smp.thisCpu().current_thread = null; // TODO: removing this line causes kernel panic in debug build
     apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
