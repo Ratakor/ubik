@@ -119,22 +119,28 @@ pub const Thread = struct {
 
     // TODO: merge initUser and initKernel?
     pub fn initKernel(func: *const anyopaque, arg: ?*anyopaque, tickets: usize) !*Thread {
+        if (tickets == 0) return error.InvalidTickets;
         const thread = try root.allocator.create(Thread);
         errdefer root.allocator.destroy(thread);
 
         thread.* = .{
             .tid = undefined,
             .process = kernel_process,
-            .ctx = undefined, // defined after
+            .ctx = std.mem.zeroes(arch.Context),
             .tickets = tickets,
             .enqueued = false,
-            .fs_base = undefined,
+            .fs_base = 0,
             .cr3 = kernel_process.addr_space.cr3(),
             .fpu_storage = undefined, // defined after
             .pf_stack = undefined,
             .kernel_stack = undefined,
             .which_event = undefined,
         };
+
+        errdefer {
+            for (thread.stacks.items) |stack| pmm.free(stack, stack_pages);
+            thread.stacks.deinit(root.allocator);
+        }
 
         const fpu_storage = try root.allocator.alloc(u8, arch.cpu.fpu_storage_size);
         errdefer root.allocator.free(fpu_storage);
@@ -146,15 +152,14 @@ pub const Thread = struct {
         thread.ctx.es = gdt.kernel_data;
         thread.ctx.ss = gdt.kernel_data;
         thread.ctx.rflags = @bitCast(arch.RFlags{ .IF = 1 });
-        thread.ctx.rip = @intFromPtr(func);
-        thread.ctx.rdi = @intFromPtr(arg);
-        thread.ctx.rsp = blk: {
-            // TODO: use root.allocator
-            const stack_phys = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
-            errdefer pmm.free(stack_phys, stack_pages);
-            try thread.stacks.append(root.allocator, stack_phys);
-            break :blk stack_phys + stack_size + vmm.hhdm_offset;
-        };
+        thread.ctx.rip = @intFromPtr(&kernelEntry);
+        thread.ctx.rdi = @intFromPtr(func);
+        thread.ctx.rsi = @intFromPtr(arg);
+        thread.kernel_stack = try thread.allocateStack();
+        thread.pf_stack = try thread.allocateStack();
+        // IRET enters a function as if CALL had pushed an eight-byte return address.
+        thread.ctx.rsp = thread.kernel_stack - @sizeOf(u64);
+        @as(*u64, @ptrFromInt(thread.ctx.rsp)).* = 0;
 
         // TODO
         // kernel_process.threads.append(root.allocator, thread);
@@ -239,13 +244,15 @@ pub const Thread = struct {
             \\fldcw %[fcw]
             :
             : [fcw] "m" (default_fcw),
-            : "memory");
+            : "memory"
+        );
         const default_mxcsr: u32 = 0b1111110000000;
         asm volatile (
             \\ldmxcsr %[mxcsr]
             :
             : [mxcsr] "m" (default_mxcsr),
-            : "memory");
+            : "memory"
+        );
         arch.cpu.fpuSave(thread.fpu_storage);
 
         thread.tid = process.threads.items.len; // TODO?
@@ -280,6 +287,18 @@ pub const Thread = struct {
 
         @compileError("not finished yet");
         // return thread;
+    }
+
+    fn allocateStack(self: *Thread) !u64 {
+        const physical = pmm.alloc(stack_pages, true) orelse return error.OutOfMemory;
+        errdefer pmm.free(physical, stack_pages);
+        try self.stacks.append(root.allocator, physical);
+        return physical + stack_size + vmm.hhdm_offset;
+    }
+
+    fn kernelEntry(entry: *const fn (?*anyopaque) callconv(.SysV) void, arg: ?*anyopaque) callconv(.SysV) noreturn {
+        entry(arg);
+        die();
     }
 
     pub fn deinit(self: *Thread) void {
@@ -534,6 +553,7 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         \\iretq
         :
         : [ctx] "rm" (ctx),
-        : "memory");
+        : "memory"
+    );
     unreachable;
 }
