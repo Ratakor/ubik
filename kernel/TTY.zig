@@ -28,7 +28,7 @@ g_select: u8,
 charsets: [2]Charset,
 current_charset: usize,
 escape_offset: usize,
-esc_values: std.BoundedArray(u32, 16),
+esc_values: EscapeValues,
 current_fg: ?usize,
 current_bg: ?usize,
 scroll_top_margin: usize,
@@ -78,8 +78,48 @@ capslock_active: bool,
 
 callback: *const CallbackFn,
 
-pub const Reader = std.io.GenericReader(*TTY, error{}, read); // TODO: change to AnyReader?
-pub const Writer = std.io.Writer(*TTY, error{}, write);
+input: std.Io.Reader,
+output: std.Io.Writer,
+
+pub const Reader = std.Io.Reader;
+pub const Writer = std.Io.Writer;
+
+const EscapeValues = struct {
+    buffer: [16]u32 = @splat(0),
+    len: usize = 0,
+
+    fn constSlice(self: *const EscapeValues) []const u32 {
+        return self.buffer[0..self.len];
+    }
+
+    fn slice(self: *EscapeValues) []u32 {
+        return self.buffer[0..self.len];
+    }
+
+    fn get(self: *const EscapeValues, index: usize) u32 {
+        return self.constSlice()[index];
+    }
+
+    fn capacity(_: *const EscapeValues) usize {
+        return 16;
+    }
+
+    fn unusedCapacitySlice(self: *EscapeValues) []u32 {
+        return self.buffer[self.len..];
+    }
+
+    fn addOneAssumeCapacity(self: *EscapeValues) *u32 {
+        std.debug.assert(self.len < self.buffer.len);
+        const item = &self.buffer[self.len];
+        self.len += 1;
+        return item;
+    }
+
+    fn append(self: *EscapeValues, value: u32) error{Overflow}!void {
+        if (self.len == self.buffer.len) return error.Overflow;
+        self.addOneAssumeCapacity().* = value;
+    }
+};
 pub const CallbackFn = fn (*TTY, Callback, u64, u64, u64) void;
 
 pub const Callback = enum(u64) {
@@ -332,6 +372,9 @@ pub fn init(
     @memset(tty.framebuffer, @intFromEnum(default_bg));
 
     tty.callback = callback orelse dummyCallBack;
+    // Input is still an EOF-only stub, matching read(). Output is unbuffered.
+    tty.input = .fixed(&.{});
+    tty.output = .{ .vtable = &.{ .drain = drain }, .buffer = &.{} };
 
     tty.reinit();
     tty.drawCursor();
@@ -385,12 +428,28 @@ pub fn write(self: *TTY, buf: []const u8) error{}!usize {
     return buf.len;
 }
 
-pub fn reader(tty: *TTY) Reader {
-    return .{ .context = tty };
+pub fn reader(tty: *TTY) *Reader {
+    return &tty.input;
 }
 
-pub fn writer(tty: *TTY) Writer {
-    return .{ .context = tty };
+pub fn writer(tty: *TTY) *Writer {
+    return &tty.output;
+}
+
+fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+    const tty: *TTY = @fieldParentPtr("output", w);
+    var written: usize = 0;
+    for (data[0 .. data.len - 1]) |str| {
+        for (str) |char| tty.putChar(char);
+        written += str.len;
+    }
+    const pattern = data[data.len - 1];
+    for (0..splat) |_| {
+        for (pattern) |char| tty.putChar(char);
+        written += pattern.len;
+    }
+    tty.doubleBufferFlush();
+    return written;
 }
 
 fn dummyCallBack(_: *TTY, _: Callback, _: u64, _: u64, _: u64) void {}
@@ -1698,19 +1757,19 @@ pub fn readKey(self: *TTY, input: u8) void {
             },
             // TODO for arrows we could also output A, B, C or D depending on termios settings
             .arrow_up => {
-                try term.cursorUp(self.writer(), 1);
+                term.cursorUp(self.writer(), 1) catch unreachable;
                 return;
             },
             .arrow_left => {
-                try term.cursorBackward(self.writer(), 1);
+                term.cursorBackward(self.writer(), 1) catch unreachable;
                 return;
             },
             .arrow_down => {
-                try term.cursorDown(self.writer(), 1);
+                term.cursorDown(self.writer(), 1) catch unreachable;
                 return;
             },
             .arrow_right => {
-                try term.cursorForward(self.writer(), 1);
+                term.cursorForward(self.writer(), 1) catch unreachable;
                 return;
             },
             .insert, .home, .end, .pgup, .pgdown, .delete => return,

@@ -16,32 +16,34 @@ pub const vfs = @import("vfs.zig");
 const tmpfs = @import("fs/tmpfs.zig");
 const ps2 = @import("ps2.zig");
 const TTY = @import("TTY.zig");
-const PageAllocator = @import("mm/PageAllocator.zig");
+const HeapAllocator = @import("mm/HeapAllocator.zig");
 const lib = @import("lib.zig");
 
-pub usingnamespace lib;
+pub const SpinLock = lib.SpinLock;
+pub const term = lib.term;
 
-pub const panic = debug.panic;
+pub const panic = std.debug.FullPanic(debug.panic);
 pub const std_options: std.Options = .{
+    .page_size_min = pmm.page_size,
+    .page_size_max = pmm.page_size,
     .log_level = if (builtin.mode == .Debug) .debug else .info,
     .logFn = debug.log,
 };
 
+// Standard-library diagnostics must not create hosted threads or perform OS I/O.
+pub const std_options_debug_io: std.Io = .failing;
+pub const std_options_debug_threaded_io: ?*std.Io.Threaded = null;
 pub const os = struct {
-    // pub const system = ubik;
     pub const heap = struct {
         pub const page_allocator: std.mem.Allocator = .{
             .ptr = undefined,
-            .vtable = &PageAllocator.vtable,
+            .vtable = &@import("mm/PageAllocator.zig").vtable,
         };
     };
 };
 
-var gpa: std.heap.GeneralPurposeAllocator(.{
-    .MutexType = lib.SpinLock,
-    .verbose_log = if (builtin.mode == .Debug) true else false,
-}) = .{};
-pub const allocator = gpa.allocator();
+var heap: HeapAllocator = .{};
+pub const allocator = heap.allocator();
 pub var tty0: ?*TTY = null;
 
 pub export var boot_info_request: limine.BootloaderInfoRequest = .{};
@@ -119,10 +121,10 @@ fn main() noreturn {
     tty0 = TTY.init(allocator, fb.address, fb.width, fb.height, callback) catch unreachable;
 
     const boot_info = boot_info_request.response.?;
-    try tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
+    tty0.?.writer().print("Welcome to Ubik, brought to you by {s} {s} :)\n", .{
         boot_info.name,
         boot_info.version,
-    });
+    }) catch unreachable;
 
     // DEBUG: for some reason the kernel hangs after creating some threads
     inline for (0..10) |i| {

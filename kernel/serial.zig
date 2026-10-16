@@ -2,7 +2,7 @@
 //! https://wiki.osdev.org/Serial_Ports
 
 const std = @import("std");
-const arch = @import("arch.zig");
+const arch = @import("root").arch;
 const SpinLock = @import("root").SpinLock;
 const log = std.log.scoped(.serial);
 
@@ -17,7 +17,10 @@ pub const Port = enum(u16) {
     // com8 = 0x4e8,
 };
 
-pub const writer = std.io.Writer(void, error{}, com1Write){ .context = {} };
+pub var writer: std.Io.Writer = .{
+    .vtable = &.{ .drain = drain },
+    .buffer = &.{},
+};
 
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     writer.print(fmt, args) catch unreachable;
@@ -62,9 +65,16 @@ inline fn transmitData(port: Port, value: u8) void {
     arch.out(u8, @intFromEnum(port), value);
 }
 
-fn com1Write(_: void, str: []const u8) error{}!usize {
-    for (str) |char| {
-        transmitData(Port.com1, char);
+fn drain(_: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+    var written: usize = 0;
+    for (data[0 .. data.len - 1]) |str| {
+        for (str) |char| transmitData(.com1, char);
+        written += str.len;
     }
-    return str.len;
+    const pattern = data[data.len - 1];
+    for (0..splat) |_| {
+        for (pattern) |char| transmitData(.com1, char);
+        written += pattern.len;
+    }
+    return written;
 }
