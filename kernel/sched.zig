@@ -142,9 +142,12 @@ pub const Thread = struct {
             thread.stacks.deinit(root.allocator);
         }
 
-        const fpu_storage = try root.allocator.alloc(u8, arch.cpu.fpu_storage_size);
+        const fpu_storage = try root.allocator.alignedAlloc(u8, arch.cpu.fpu_storage_alignment, arch.cpu.fpu_storage_size);
         errdefer root.allocator.free(fpu_storage);
         @memset(fpu_storage, 0);
+        // The legacy FXSAVE region also supplies defaults when XSAVE is unavailable.
+        std.mem.writeInt(u16, fpu_storage[0..2], 0x037f, .little);
+        std.mem.writeInt(u32, fpu_storage[24..28], 0x1f80, .little);
         thread.fpu_storage = @intFromPtr(fpu_storage.ptr);
 
         thread.ctx.cs = gdt.kernel_code;
@@ -306,7 +309,7 @@ pub const Thread = struct {
             pmm.free(stack, stack_pages);
         }
         self.stacks.deinit(root.allocator);
-        const fpu_storage: [*]u8 = @ptrFromInt(self.fpu_storage);
+        const fpu_storage: [*]align(arch.cpu.fpu_storage_alignment) u8 = @ptrFromInt(self.fpu_storage);
         root.allocator.free(fpu_storage[0..arch.cpu.fpu_storage_size]);
         root.allocator.destroy(self);
     }

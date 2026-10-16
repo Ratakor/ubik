@@ -251,6 +251,7 @@ const XCR0 = enum(u64) {
 
 pub var use_xsave = false;
 pub var fpu_storage_size: usize = 512; // 512 = fxsave storage
+pub const fpu_storage_alignment = 64; // XSAVE requires 64 bytes; FXSAVE requires 16.
 
 pub inline fn fpuSave(ctx: u64) void {
     if (use_xsave) x86.xsave(ctx) else x86.fxsave(ctx);
