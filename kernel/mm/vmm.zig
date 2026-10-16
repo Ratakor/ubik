@@ -222,7 +222,8 @@ pub const AddressSpace = struct {
 
             var page = local.base;
             while (page < local.base + local.length) : (page += page_size) {
-                const source = self.virt2pte(page, false) catch |err| switch (err) {
+                const source_space = if (local.flags.TYPE == .SHARED) self else local.global.shadow_addr_space;
+                const source = source_space.virt2pte(page, false) catch |err| switch (err) {
                     error.NotMapped => continue,
                     else => return err,
                 };
@@ -236,8 +237,8 @@ pub const AddressSpace = struct {
                     const old_bytes = @as([*]const u8, @ptrFromInt(source.getAddress() + hhdm_offset))[0..page_size];
                     const new_bytes = @as([*]u8, @ptrFromInt(physical + hhdm_offset))[0..page_size];
                     @memcpy(new_bytes, old_bytes);
-                    destination.* = @bitCast(source.getFlags() | physical);
-                    shadow.* = destination.*;
+                    destination.* = @bitCast(protectionFlags(local.prot) | physical);
+                    shadow.* = @bitCast(PTE.PRESENT | physical);
                 }
             }
         }
@@ -592,24 +593,40 @@ pub inline fn switchPageTable(page_table: u64) void {
 }
 
 pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
-    if (reason.present) return error.PageProtectionViolation;
-
+    if (reason.present or reason.reserved_write or reason.protection_key or reason.shadow_stack or reason.software_guard_extensions) {
+        return error.PageProtectionViolation;
+    }
+    const interrupt_state = lockVmm(&range_lock);
+    defer unlockVmm(&range_lock, interrupt_state);
     const addr_space = sched.currentThread().process.addr_space;
-    const range = blk: {
-        const interrupt_state = lockVmm(&addr_space.lock);
-        defer unlockVmm(&addr_space.lock, interrupt_state);
-        break :blk try Addr2Range.init(addr_space, cr2);
-    };
+    const range = try Addr2Range.init(addr_space, cr2);
+    const local = range.range;
+    if (local.prot == ubik.PROT.NONE or
+        (reason.write and (local.prot & ubik.PROT.WRITE) == 0) or
+        (reason.instruction_fetch and (local.prot & ubik.PROT.EXEC) == 0) or
+        (!reason.write and !reason.instruction_fetch and (local.prot & (ubik.PROT.READ | ubik.PROT.WRITE)) == 0))
+    {
+        return error.PageProtectionViolation;
+    }
 
-    // TODO: enable interrupts?
-
-    const local_range = range.range;
-    const page = if (local_range.flags.ANONYMOUS)
-        pmm.alloc(1, true) orelse return error.OutOfMemory
-    else
-        @panic("TODO: map files");
-
-    try mmapPageInRange(local_range.global, range.memory_page * page_size, page, local_range.prot);
+    const page = range.memory_page * page_size;
+    const address_interrupt_state = lockVmm(&addr_space.lock);
+    defer unlockVmm(&addr_space.lock, address_interrupt_state);
+    const pte = try addr_space.virt2pte(page, true);
+    if (pte.present) {
+        // Another CPU may have resolved this fault before we acquired the lock.
+        addr_space.flush(page);
+        return;
+    }
+    const shadow = try local.global.shadow_addr_space.virt2pte(page, true);
+    if (!shadow.present) {
+        if (!local.flags.ANONYMOUS) @panic("TODO: map files");
+        const physical = pmm.alloc(1, true) orelse return error.OutOfMemory;
+        // No fallible work remains once ownership is transferred to the shadow.
+        shadow.* = @bitCast(physical | PTE.PRESENT);
+    }
+    pte.* = @bitCast(shadow.getAddress() | protectionFlags(local.prot));
+    addr_space.flush(page);
 }
 
 fn protectionFlags(prot: i32) u64 {
@@ -618,24 +635,6 @@ fn protectionFlags(prot: i32) u64 {
     if ((prot & ubik.PROT.WRITE) != 0) flags |= PTE.WRITABLE;
     if ((prot & ubik.PROT.EXEC) == 0) flags |= PTE.NOEXEC;
     return flags;
-}
-
-fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) !void {
-    var flags = PTE.PRESENT | PTE.USER;
-    if ((prot & ubik.PROT.WRITE) != 0) {
-        flags |= PTE.WRITABLE;
-    }
-    if ((prot & ubik.PROT.EXEC) == 0) {
-        flags |= PTE.NOEXEC;
-    }
-
-    try global.shadow_addr_space.mapPage(vaddr, paddr, flags);
-
-    for (global.locals.items) |local_range| {
-        if (vaddr >= local_range.base and vaddr < local_range.base + local_range.length) {
-            try local_range.addr_space.mapPage(vaddr, paddr, flags);
-        }
-    }
 }
 
 fn tlbShootdownHandler(ctx: *arch.Context) callconv(.SysV) void {
