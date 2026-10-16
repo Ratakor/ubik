@@ -102,6 +102,7 @@ pub const Thread = struct {
     run_next: ?*Thread = null,
     // enqueued_by_signal: bool, // TODO: for events
     reschedule_pending: bool = false,
+    dying: bool = false,
     // gs_base
     fs_base: u64,
     cr3: u64,
@@ -190,6 +191,7 @@ pub const Thread = struct {
         thread.lock = .{};
         thread.enqueued = false;
         thread.reschedule_pending = false;
+        thread.dying = false;
         thread.stacks = .{};
 
         // TODO: ugly + save in threads.stacks so it's easily freed on deinit?
@@ -429,9 +431,12 @@ fn isEnqueued(thread: *Thread) bool {
 
 pub fn die() noreturn {
     arch.disableInterrupts();
-    const current_thread = currentThread();
-    dequeue(current_thread);
-    current_thread.deinit(); // TODO: ?
+    const thread = currentThread();
+    sched_lock.lock();
+    thread.dying = true;
+    dequeueLocked(thread);
+    sched_lock.unlock();
+    // The handler owns a per-CPU IST stack; only it may reclaim this stack.
     yield();
     unreachable;
 }
@@ -452,9 +457,10 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     if (cpu.current_thread) |current_thread| {
         sched_lock.lock();
         current_thread.reschedule_pending = false;
+        const dying = current_thread.dying;
         sched_lock.unlock();
 
-        if (maybe_next_thread == null and isEnqueued(current_thread)) {
+        if (maybe_next_thread == null and !dying and isEnqueued(current_thread)) {
             apic.eoi();
             apic.timerOneShot(quantum, sched_vector);
             return;
@@ -472,7 +478,12 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
         // outgoing thread after publishing its saved context to another CPU.
         cpu.current_thread = null;
         cpu.tss.ist2 = cpu.tss.rsp0;
-        current_thread.lock.unlock();
+        if (dying) {
+            vmm.switchPageTable(vmm.kaddr_space.cr3());
+            current_thread.deinit();
+        } else {
+            current_thread.lock.unlock();
+        }
     }
 
     if (maybe_next_thread) |next_thread| {
