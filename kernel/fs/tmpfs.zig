@@ -21,10 +21,10 @@ const assert = std.debug.assert;
 //     inode_counter: *ubik.ino_t,
 const Inode = union {
     target: []u8, // symlink
-    data: std.ArrayListAlignedUnmanaged(u8, blksize), // file
+    data: std.array_list.Aligned(u8, .fromByteUnits(blksize)), // file
     children: std.StringHashMapUnmanaged(*vfs.Node), // directory
 
-    const blksize = std.mem.page_size;
+    const blksize = root.pmm.page_size;
     // different vtable for each kind?
     const vtable = vfs.Node.VTable{
         .open = open,
@@ -51,7 +51,7 @@ const Inode = union {
         switch (kind) {
             .symlink => inode.target = try root.allocator.dupe(u8, target.?),
             .directory => inode.children = .{},
-            .file => inode.data = .{},
+            .file => inode.data = .empty,
             else => unreachable,
         }
 
@@ -63,7 +63,7 @@ const Inode = union {
         const self: *Inode = @ptrCast(@alignCast(node.context));
         switch (node.kind) {
             .directory => {}, // TODO
-            .file => self.data.deinit(),
+            .file => self.data.deinit(root.allocator),
             .symlink => root.allocator.free(self.target),
             else => unreachable,
         }

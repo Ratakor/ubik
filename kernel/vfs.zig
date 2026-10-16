@@ -11,14 +11,14 @@ pub const DirectoryEntry = ubik.dirent; // TODO: why lol?
 pub const DefaultError = error{
     OperationNotSupported,
     FileNotFound,
-} || std.mem.Allocator.Error || std.posix.UnexpectedError;
-pub const OpenError = std.posix.OpenError || DefaultError;
-pub const ReadError = std.posix.ReadError || DefaultError;
+} || std.mem.Allocator.Error || std.Io.UnexpectedError;
+pub const OpenError = std.Io.File.OpenError || DefaultError;
+pub const ReadError = std.Io.File.ReadPositionalError || DefaultError;
 pub const ReadDirError = ReadError || error{IsNotDir};
 pub const ReadLinkError = ReadError || error{IsNotLink};
-pub const WriteError = std.posix.WriteError || DefaultError;
-pub const CreateError = std.posix.MakeDirError || DefaultError || error{IsDir};
-pub const StatError = std.posix.FStatError || DefaultError;
+pub const WriteError = std.Io.File.WritePositionalError || DefaultError;
+pub const CreateError = std.Io.Dir.CreateDirError || DefaultError || error{IsDir};
+pub const StatError = std.Io.File.StatError || DefaultError;
 pub const UnlinkError = DefaultError || error{IsDir};
 
 // TODO: rename VNode

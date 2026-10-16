@@ -4,7 +4,7 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const pmm = root.pmm;
 const vmm = root.vmm;
-const page_size = std.mem.page_size;
+const page_size = pmm.page_size;
 
 // TODO: could std.elf be useful?
 

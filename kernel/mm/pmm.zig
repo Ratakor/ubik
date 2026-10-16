@@ -3,7 +3,8 @@ const root = @import("root");
 const vmm = root.vmm;
 const SpinLock = root.SpinLock;
 const log = std.log.scoped(.pmm);
-const page_size = std.mem.page_size;
+/// Hardware page size, independent of the host OS page size.
+pub const page_size = 4096;
 const free_page = false;
 
 var bitmap: []bool = undefined;

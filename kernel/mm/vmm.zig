@@ -14,7 +14,9 @@ const SpinLock = root.SpinLock;
 const log = std.log.scoped(.vmm);
 const alignBackward = std.mem.alignBackward;
 const alignForward = std.mem.alignForward;
-const page_size = std.mem.page_size;
+const page_size = pmm.page_size;
+
+const PROT = ubik.PROT;
 
 // TODO: mapRange/unmapRange?
 // TODO: move paging code to paging.zig
@@ -92,7 +94,7 @@ pub const PageFaultError = packed struct(u32) {
 // TODO: init and deinit func?
 const MMapRangeGlobal = struct {
     shadow_addr_space: *AddressSpace,
-    locals: std.ArrayListUnmanaged(*MMapRangeLocal) = .{}, // HashMap?
+    locals: std.ArrayListUnmanaged(*MMapRangeLocal) = .empty, // HashMap?
     // resource: *Resource, // TODO: vnode?
     base: usize,
     length: usize,
@@ -140,7 +142,7 @@ const Addr2Range = struct {
 pub const AddressSpace = struct {
     pml4: *[512]PTE,
     lock: SpinLock = .{},
-    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal) = .{}, // HashMap?
+    mmap_ranges: std.ArrayListUnmanaged(*MMapRangeLocal) = .empty, // HashMap?
 
     pub fn init() !*AddressSpace {
         const addr_space = try root.allocator.create(AddressSpace);
@@ -610,10 +612,10 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
     const addr_space = sched.currentThread().process.addr_space;
     const range = try Addr2Range.init(addr_space, cr2);
     const local = range.range;
-    if (local.prot == ubik.PROT.NONE or
-        (reason.write and (local.prot & ubik.PROT.WRITE) == 0) or
-        (reason.instruction_fetch and (local.prot & ubik.PROT.EXEC) == 0) or
-        (!reason.write and !reason.instruction_fetch and (local.prot & (ubik.PROT.READ | ubik.PROT.WRITE)) == 0))
+    if (local.prot == PROT.NONE or
+        (reason.write and (local.prot & PROT.WRITE) == 0) or
+        (reason.instruction_fetch and (local.prot & PROT.EXEC) == 0) or
+        (!reason.write and !reason.instruction_fetch and (local.prot & (PROT.READ | PROT.WRITE)) == 0))
     {
         return error.PageProtectionViolation;
     }
@@ -640,13 +642,13 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
 
 fn protectionFlags(prot: i32) u64 {
     var flags: u64 = PTE.USER;
-    if (prot != ubik.PROT.NONE) flags |= PTE.PRESENT;
-    if ((prot & ubik.PROT.WRITE) != 0) flags |= PTE.WRITABLE;
-    if ((prot & ubik.PROT.EXEC) == 0) flags |= PTE.NOEXEC;
+    if (prot != PROT.NONE) flags |= PTE.PRESENT;
+    if ((prot & PROT.WRITE) != 0) flags |= PTE.WRITABLE;
+    if ((prot & PROT.EXEC) == 0) flags |= PTE.NOEXEC;
     return flags;
 }
 
-fn tlbShootdownHandler(ctx: *arch.Context) callconv(.SysV) void {
+fn tlbShootdownHandler(ctx: *arch.Context) callconv(.{ .x86_64_sysv = .{} }) void {
     _ = ctx;
 
     serviceShootdown();

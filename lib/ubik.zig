@@ -11,7 +11,13 @@ pub const STDERR_FILENO = 2;
 pub const T = linux.T;
 pub const S = linux.S;
 pub const E = linux.E;
-pub const PROT = linux.PROT;
+// Preserve the kernel's integer protection-mask API.
+pub const PROT = struct {
+    pub const NONE: i32 = @bitCast(linux.PROT{});
+    pub const READ: i32 = @bitCast(linux.PROT{ .READ = true });
+    pub const WRITE: i32 = @bitCast(linux.PROT{ .WRITE = true });
+    pub const EXEC: i32 = @bitCast(linux.PROT{ .EXEC = true });
+};
 pub const MAP_TYPE = linux.MAP_TYPE;
 pub const MAP = linux.MAP;
 pub const DT = linux.DT;
