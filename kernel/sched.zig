@@ -603,11 +603,15 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         \\pop %r13
         \\pop %r14
         \\pop %r15
+        \\cmpq %[kcode], 0x18(%rsp)
+        \\je 1f
         \\swapgs
+        \\1:
         \\add $16, %rsp
         \\iretq
         :
         : [ctx] "rm" (ctx),
+          [kcode] "i" (gdt.kernel_code),
         : "memory"
     );
     unreachable;
