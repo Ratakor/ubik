@@ -36,7 +36,7 @@ pub fn init() void {
         }
     }
 
-    while (cpus_started != cpus.len) {
+    while (@atomicLoad(usize, &cpus_started, .acquire) != cpus.len) {
         std.atomic.spinLoopHint();
     }
 
@@ -44,7 +44,7 @@ pub fn init() void {
 }
 
 pub fn stopAll() void {
-    if (cpus_started > 0) {
+    if (@atomicLoad(usize, &cpus_started, .acquire) > 0) {
         apic.sendIPI(undefined, .{
             .vector = idt.panic_ipi_vector,
             .destination_shorthand = .all_excluding_self,
