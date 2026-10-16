@@ -45,6 +45,8 @@ pub const CpuLocal = extern struct {
         const common_int_stack_phys = pmm.alloc(stack_pages, true) orelse unreachable;
         const common_int_stack = common_int_stack_phys + stack_size + vmm.hhdm_offset;
         self.tss.rsp0 = common_int_stack;
+        // Page faults also need a valid IST before the first thread is selected.
+        self.tss.ist2 = common_int_stack;
 
         const sched_stack_phys = pmm.alloc(stack_pages, true) orelse unreachable;
         const sched_stack = sched_stack_phys + stack_size + vmm.hhdm_offset;
