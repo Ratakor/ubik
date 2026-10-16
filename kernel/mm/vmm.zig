@@ -158,7 +158,7 @@ pub const AddressSpace = struct {
         if (level == 0) return;
 
         for (start..end) |i| {
-            const next_level = pml[i].getNextLevel(false) catch unreachable; // TODO: continue
+            const next_level = pml[i].getNextLevel(false) catch continue;
             destroyLevel(next_level, 0, 512, level - 1);
         }
 
