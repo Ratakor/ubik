@@ -25,13 +25,19 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v1
         with:
-          version: master
+          version: 0.16.0
 
       - name: Install dependencies
         run: sudo apt update && sudo apt install -yq xorriso qemu-system-x86
 
       - name: Build
         run: zig build
+
+      - name: Build ReleaseSafe
+        run: zig build -Doptimize=ReleaseSafe
+
+      - name: Host regression tests
+        run: zig build test
 
       - name: Make image
         run: zig build image
@@ -52,7 +58,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v1
         with:
-          version: master
+          version: 0.16.0
 
       - name: Lint
         run: zig fmt --check kernel lib build.zig
