@@ -184,71 +184,64 @@ pub const AddressSpace = struct {
         root.allocator.destroy(self);
     }
 
-    // TODO
     pub fn fork(self: *AddressSpace) !*AddressSpace {
+        const range_interrupt_state = lockVmm(&range_lock);
+        defer unlockVmm(&range_lock, range_interrupt_state);
         const interrupt_state = lockVmm(&self.lock);
         defer unlockVmm(&self.lock, interrupt_state);
 
-        const new_addr_space = try AddressSpace.init();
-        errdefer new_addr_space.deinit();
+        const child = try AddressSpace.init();
+        errdefer child.deinitLocked();
+        try child.mmap_ranges.ensureUnusedCapacity(root.allocator, self.mmap_ranges.items.len);
 
-        for (self.mmap_ranges.items) |local_range| {
-            const global_range = local_range.global;
-
-            const new_local_range = try root.allocator.create(MMapRangeLocal);
-            new_local_range.* = local_range.*;
-            new_local_range.addr_space = new_addr_space; // TODO?
-
-            // if (global_range.resource) |res| {
-            //     res.refcount += 1;
-            // }
-
-            try new_addr_space.mmap_ranges.append(root.allocator, new_local_range);
-
-            if (local_range.flags.TYPE == ubik.MAP_TYPE.SHARED) {
-                try global_range.locals.append(root.allocator, new_local_range);
-                var i = local_range.base;
-                while (i < local_range.base + local_range.length) : (i += page_size) {
-                    const old_pte = self.virt2pte(i, false) catch unreachable; // TODO: continue?
-                    const new_pte = new_addr_space.virt2pte(i, true) catch unreachable; // TODO: free
-                    new_pte.* = old_pte.*;
+        for (self.mmap_ranges.items) |local| {
+            const new_local = blk: {
+                const entry = try root.allocator.create(MMapRangeLocal);
+                errdefer root.allocator.destroy(entry);
+                entry.* = local.*;
+                entry.addr_space = child;
+                if (local.flags.TYPE == .SHARED) {
+                    try local.global.locals.append(root.allocator, entry);
+                } else {
+                    if (!local.flags.ANONYMOUS) @panic("Non anonymous fork");
+                    const global = try root.allocator.create(MMapRangeGlobal);
+                    errdefer root.allocator.destroy(global);
+                    global.* = .{
+                        .shadow_addr_space = try AddressSpace.init(),
+                        .base = local.global.base,
+                        .length = local.global.length,
+                        .offset = local.global.offset,
+                    };
+                    errdefer global.shadow_addr_space.deinitLocked();
+                    try global.locals.append(root.allocator, entry);
+                    entry.global = global;
                 }
-            } else {
-                const new_global_range = try root.allocator.create(MMapRangeGlobal);
-                errdefer root.allocator.destroy(new_global_range);
-                new_global_range.* = .{
-                    .shadow_addr_space = try AddressSpace.init(),
-                    .base = global_range.base,
-                    .length = global_range.length,
-                    .offset = global_range.offset,
+                child.mmap_ranges.appendAssumeCapacity(entry);
+                break :blk entry;
+            };
+
+            var page = local.base;
+            while (page < local.base + local.length) : (page += page_size) {
+                const source = self.virt2pte(page, false) catch |err| switch (err) {
+                    error.NotMapped => continue,
+                    else => return err,
                 };
-                errdefer new_global_range.shadow_addr_space.deinit();
-                try new_global_range.locals.append(root.allocator, new_local_range);
-                errdefer new_global_range.locals.deinit(root.allocator);
-
-                if (local_range.flags.ANONYMOUS == false) {
-                    @panic("Non anonymous fork");
-                }
-
-                var i = local_range.base;
-                while (i < local_range.base + local_range.length) : (i += page_size) {
-                    const old_pte = self.virt2pte(i, false) catch unreachable; // TODO: continue?
-                    if (old_pte.present == false) continue;
-                    const new_pte = new_addr_space.virt2pte(i, true) catch unreachable; // TODO: free
-                    const new_spte = new_global_range.shadow_addr_space.virt2pte(i, true) catch unreachable; // TODO: free
-
-                    const old_page = old_pte.getAddress();
-                    const new_page = pmm.alloc(1, false) orelse unreachable; // TODO: free
-                    const slice_old_page = @as([*]u8, @ptrFromInt(old_page + hhdm_offset))[0..page_size];
-                    const slice_new_page = @as([*]u8, @ptrFromInt(new_page + hhdm_offset))[0..page_size];
-                    @memcpy(slice_new_page, slice_old_page);
-                    new_pte.* = @bitCast(old_pte.getFlags() | new_page);
-                    new_spte.* = new_pte.*;
+                if (!source.present) continue;
+                const destination = try child.virt2pte(page, true);
+                if (local.flags.TYPE == .SHARED) {
+                    destination.* = source.*;
+                } else {
+                    const shadow = try new_local.global.shadow_addr_space.virt2pte(page, true);
+                    const physical = pmm.alloc(1, false) orelse return error.OutOfMemory;
+                    const old_bytes = @as([*]const u8, @ptrFromInt(source.getAddress() + hhdm_offset))[0..page_size];
+                    const new_bytes = @as([*]u8, @ptrFromInt(physical + hhdm_offset))[0..page_size];
+                    @memcpy(new_bytes, old_bytes);
+                    destination.* = @bitCast(source.getFlags() | physical);
+                    shadow.* = destination.*;
                 }
             }
         }
-
-        return new_addr_space;
+        return child;
     }
 
     pub fn virt2pte(self: *const AddressSpace, vaddr: u64, allocate: bool) MapError!*PTE {
