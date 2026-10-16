@@ -101,7 +101,7 @@ pub const Thread = struct {
     run_prev: ?*Thread = null,
     run_next: ?*Thread = null,
     // enqueued_by_signal: bool, // TODO: for events
-    yield_await: SpinLock = .{},
+    reschedule_pending: bool = false,
     // gs_base
     fs_base: u64,
     cr3: u64,
@@ -189,7 +189,7 @@ pub const Thread = struct {
         thread.tickets = tickets;
         thread.lock = .{};
         thread.enqueued = false;
-        thread.yield_await = .{};
+        thread.reschedule_pending = false;
         thread.stacks = .{};
 
         // TODO: ugly + save in threads.stacks so it's easily freed on deinit?
@@ -323,7 +323,7 @@ pub var kernel_process: *Process = undefined;
 pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
 // Intrusive links avoid allocation (and allocator lock inversion) under sched_lock.
 var running_threads: ?*Thread = null;
-var waiting_threads: std.AutoArrayHashMapUnmanaged(*Thread, void) = .{};
+
 var total_tickets: usize = 0;
 
 var sched_vector: u8 = undefined;
@@ -433,6 +433,7 @@ pub fn die() noreturn {
     dequeue(current_thread);
     current_thread.deinit(); // TODO: ?
     yield();
+    unreachable;
 }
 
 fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
@@ -449,7 +450,9 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     const maybe_next_thread = nextThread();
 
     if (cpu.current_thread) |current_thread| {
-        // current_thread.yield_await.unlock(); // TODO
+        sched_lock.lock();
+        current_thread.reschedule_pending = false;
+        sched_lock.unlock();
 
         if (maybe_next_thread == null and isEnqueued(current_thread)) {
             apic.eoi();
@@ -465,6 +468,10 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
             arch.cpu.fpuSave(current_thread.fpu_storage);
         }
 
+        // The interrupt already switched to IST1. Nothing below may access the
+        // outgoing thread after publishing its saved context to another CPU.
+        cpu.current_thread = null;
+        cpu.tss.ist2 = cpu.tss.rsp0;
         current_thread.lock.unlock();
     }
 
@@ -482,9 +489,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
 
             cpu.tss.ist2 = next_thread.pf_stack;
 
-            if (arch.readRegister("cr3") != next_thread.cr3) {
-                arch.writeRegister("cr3", next_thread.cr3);
-            }
+            vmm.switchPageTable(next_thread.cr3);
 
             arch.cpu.fpuRestore(next_thread.fpu_storage);
         }
@@ -501,50 +506,30 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
     unreachable;
 }
 
-// TODO?: add comptime mode: .resched, .block ( or .await), .die <- replace die()
-pub fn yield() noreturn {
-    std.debug.assert(arch.interruptState() == false);
-    // arch.disableInterrupts();
-
-    apic.timerStop();
-    smp.thisCpu().current_thread = null; // TODO: removing this line causes kernel panic in debug build
-    apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
-
-    arch.enableInterrupts();
-    arch.halt();
-}
-
-// TODO: wake is the same but reverse
-fn blockThread(thread: *Thread) void {
-    dequeue(thread);
-    sched_lock.lock();
-    waiting_threads.putNoClobber(root.allocator, thread, {}) catch unreachable;
-    sched_lock.unlock();
-}
-
-// TODO
-pub fn yieldAwait() void {
-    std.debug.assert(arch.interruptState() == false);
-
-    apic.timerStop();
-
+pub fn yield() void {
+    const interrupt_state = arch.toggleInterrupts(false);
+    defer _ = arch.toggleInterrupts(interrupt_state);
     const thread = currentThread();
+    sched_lock.lock();
+    thread.reschedule_pending = true;
+    sched_lock.unlock();
 
-    const use_yield_await = false; // DEBUG
-    if (use_yield_await) {
-        thread.yield_await.lock();
-    } else {
-        blockThread(thread);
-    }
-
+    apic.timerStop();
     apic.sendIPI(undefined, .{ .vector = sched_vector, .destination_shorthand = .self });
-    arch.enableInterrupts();
-
-    if (use_yield_await) {
-        // TODO: useless since yield_await should already be unlocked
-        thread.yield_await.lock();
-        thread.yield_await.unlock();
+    while (true) {
+        sched_lock.lock();
+        const pending = thread.reschedule_pending;
+        sched_lock.unlock();
+        if (!pending) break;
+        asm volatile ("sti; hlt; cli" ::: "memory");
     }
+}
+
+// The caller has already removed the thread while holding its event locks.
+// Never dequeue here: a trigger may have re-enqueued it before this call.
+pub fn yieldAwait() void {
+    std.debug.assert(!arch.interruptState());
+    yield();
 }
 
 fn contextSwitch(ctx: *arch.Context) noreturn {
