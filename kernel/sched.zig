@@ -112,7 +112,7 @@ pub const Thread = struct {
     kernel_stack: u64,
 
     which_event: usize,
-    attached_events: std.BoundedArray(*Event, 32) = .{}, // TODO: use ArrayListUnmanaged?
+    waiting_event: bool = false,
 
     // running_time: usize, // TODO
 
@@ -385,6 +385,7 @@ pub fn enqueue(thread: *Thread) !void {
 }
 
 fn enqueueLocked(thread: *Thread) !void {
+    if (thread.dying) return error.ThreadExiting;
     if (thread.enqueued) return;
     if (thread.tickets == 0) return error.InvalidTickets;
     const tickets = try std.math.add(usize, total_tickets, thread.tickets);
@@ -536,6 +537,39 @@ pub fn yield() void {
         if (!pending) break;
         asm volatile ("sti; hlt; cli" ::: "memory");
     }
+}
+
+// Lock order is event locks (ascending address), then sched_lock. These
+// transitions never acquire an event lock or allocate while holding sched_lock.
+pub fn beginEventWait(thread: *Thread) void {
+    std.debug.assert(!arch.interruptState());
+    sched_lock.lock();
+    defer sched_lock.unlock();
+    std.debug.assert(!thread.waiting_event and !thread.dying);
+    thread.waiting_event = true;
+    thread.which_event = std.math.maxInt(usize);
+    dequeueLocked(thread);
+}
+
+pub fn wakeEventWait(thread: *Thread, which: usize) bool {
+    sched_lock.lock();
+    if (!thread.waiting_event or thread.dying) {
+        sched_lock.unlock();
+        return false;
+    }
+    thread.waiting_event = false;
+    thread.which_event = which;
+    enqueueLocked(thread) catch unreachable;
+    sched_lock.unlock();
+    notifyRunnable();
+    return true;
+}
+
+pub fn eventWaitResult(thread: *Thread) usize {
+    sched_lock.lock();
+    defer sched_lock.unlock();
+    std.debug.assert(!thread.waiting_event);
+    return thread.which_event;
 }
 
 // The caller has already removed the thread while holding its event locks.

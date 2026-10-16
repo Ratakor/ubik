@@ -4,22 +4,12 @@ const arch = @import("arch.zig");
 const sched = @import("sched.zig");
 const SpinLock = root.SpinLock;
 
-// TODO: this can be simplified
-
 pub const Listener = struct {
     thread: *sched.Thread,
     which: usize,
 };
 
-// TODO
-// pub const Events = struct {
-//     lock: SpinLock,
-//     events: std.ArrayListUnmanaged(usize),
-//     // events: struct {
-//     //     pending: usize,
-//     //     listeners: std.ArrayListUnmanaged(Listener),
-//     // },
-// };
+const max_events = 32;
 
 pub const Event = struct {
     lock: SpinLock = .{},
@@ -29,23 +19,16 @@ pub const Event = struct {
     pub fn trigger(self: *Event, drop: bool) void {
         const old_state = arch.toggleInterrupts(false);
         defer _ = arch.toggleInterrupts(old_state);
-
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (self.listeners.len == 0) {
-            if (!drop) {
-                self.pending += 1;
-            }
-        } else {
-            for (self.listeners.slice()) |listener| {
-                const thread = listener.thread;
-                thread.which_event = listener.which;
-                sched.enqueue(thread) catch unreachable;
-            }
-
-            self.listeners.len = 0;
+        var delivered = false;
+        for (self.listeners.slice()) |listener| {
+            if (sched.wakeEventWait(listener.thread, listener.which)) delivered = true;
         }
+        self.listeners.len = 0;
+        // Listeners already awakened by another event do not consume this one.
+        if (!delivered and !drop) self.pending += 1;
     }
 };
 
@@ -58,38 +41,55 @@ pub fn init() void {
 }
 
 pub fn awaitEvents(events: []*Event, blocking: bool) ?union { ev: *Event, i: usize } {
-    const old_state = arch.toggleInterrupts(false);
-    defer _ = arch.toggleInterrupts(old_state);
-
-    lockEvents(events);
-    defer unlockEvents(events);
-
-    if (getFirstPending(events)) |event| {
-        return .{ .ev = event };
+    // Keep the caller's order for result indices, but always acquire event locks
+    // in address order. Reject duplicates before attempting any lock acquisition.
+    if (events.len == 0 or events.len > max_events) @panic("invalid event wait set size");
+    var storage: [max_events]*Event = undefined;
+    const ordered = storage[0..events.len];
+    @memcpy(ordered, events);
+    std.mem.sort(*Event, ordered, {}, eventLessThan);
+    for (ordered[1..], ordered[0 .. ordered.len - 1]) |event, previous| {
+        if (event == previous) @panic("duplicate event in wait set");
     }
 
+    const old_state = arch.toggleInterrupts(false);
+    defer _ = arch.toggleInterrupts(old_state);
+    lockEvents(ordered);
+
+    if (getFirstPending(events)) |event| {
+        unlockEvents(ordered);
+        return .{ .ev = event };
+    }
     if (!blocking) {
+        unlockEvents(ordered);
         return null;
     }
 
+    // Validate all capacities before publishing even the first listener.
+    for (events) |event| {
+        if (event.listeners.len == event.listeners.capacity()) @panic("too many event listeners");
+    }
     const thread = sched.currentThread();
-    attachListeners(events, thread);
-    sched.dequeue(thread); // re-enqueue when? <- Event.trigger
-    unlockEvents(events);
+    for (events, 0..) |event, i| {
+        event.listeners.appendAssumeCapacity(.{ .thread = thread, .which = i });
+    }
+    sched.beginEventWait(thread);
+    unlockEvents(ordered);
+    // A trigger may win here. yieldAwait must not dequeue the thread again.
     sched.yieldAwait();
 
-    arch.disableInterrupts();
-
-    // TODO
-    // if (thread.enqueued_by_signal) {
-    //     return error.
-    // }
-    const ret = .{ .i = thread.which_event };
-
-    lockEvents(events);
-    detachListeners(thread);
-
-    return ret;
+    lockEvents(ordered);
+    defer unlockEvents(ordered);
+    const which = sched.eventWaitResult(thread);
+    for (events) |event| {
+        for (event.listeners.slice(), 0..) |listener, i| {
+            if (listener.thread == thread) {
+                _ = event.listeners.swapRemove(i);
+                break;
+            }
+        }
+    }
+    return .{ .i = which };
 }
 
 fn intEventHandler(ctx: *arch.Context) callconv(.SysV) void {
@@ -107,36 +107,18 @@ fn getFirstPending(events: []*Event) ?*Event {
     return null;
 }
 
-fn attachListeners(events: []*Event, thread: *sched.Thread) void {
-    thread.attached_events.len = 0;
-
-    for (events, 0..) |event, i| {
-        // TODO: replace with append + panic?
-        event.listeners.appendAssumeCapacity(.{ .thread = thread, .which = i });
-        thread.attached_events.appendAssumeCapacity(event);
-    }
+fn eventLessThan(_: void, a: *Event, b: *Event) bool {
+    return @intFromPtr(a) < @intFromPtr(b);
 }
 
-fn detachListeners(thread: *sched.Thread) void {
-    for (thread.attached_events.slice()) |event| {
-        for (event.listeners.slice(), 0..) |listener, i| {
-            if (listener.thread == thread) {
-                _ = event.listeners.swapRemove(i); // TODO: weird (loop)
-            }
-        }
-    }
-
-    thread.attached_events.len = 0;
+fn lockEvents(events: []*Event) void {
+    for (events) |event| event.lock.lock();
 }
 
-inline fn lockEvents(events: []*Event) void {
-    for (events) |event| {
-        event.lock.lock();
-    }
-}
-
-inline fn unlockEvents(events: []*Event) void {
-    for (events) |event| {
-        event.lock.unlock();
+fn unlockEvents(events: []*Event) void {
+    var i = events.len;
+    while (i > 0) {
+        i -= 1;
+        events[i].lock.unlock();
     }
 }
