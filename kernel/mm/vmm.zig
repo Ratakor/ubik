@@ -178,7 +178,6 @@ pub const AddressSpace = struct {
     pub fn fork(self: *AddressSpace) !*AddressSpace {
         self.lock.lock();
         defer self.lock.unlock();
-        errdefer self.lock.unlock();
 
         const new_addr_space = try AddressSpace.init();
         errdefer new_addr_space.deinit();
