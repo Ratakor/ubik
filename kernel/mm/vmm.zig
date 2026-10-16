@@ -347,44 +347,74 @@ pub const AddressSpace = struct {
         paddr: u64,
         len: usize,
         prot: i32,
-        flags: i32,
+        flags: ubik.MAP,
     ) !void {
-        // flags |= MAP.ANONYMOUS; // TODO
+        if (len == 0 or vaddr % page_size != paddr % page_size) return error.EINVAL;
+        const base = alignBackward(u64, vaddr, page_size);
+        const physical = alignBackward(u64, paddr, page_size);
+        const size = std.math.add(usize, len, vaddr - base) catch return error.EINVAL;
+        const padded = std.math.add(usize, size, page_size - 1) catch return error.EINVAL;
+        const length = alignBackward(usize, padded, page_size);
+        const end = std.math.add(u64, base, length) catch return error.EINVAL;
+        _ = std.math.add(u64, physical, length) catch return error.EINVAL;
+        if (end > 0x800000000000) return error.EINVAL;
 
-        const aligned_vaddr = alignBackward(u64, vaddr, page_size);
-        const aligned_len = alignForward(u64, len + (vaddr - aligned_vaddr), page_size);
-
-        const global_range = try root.allocator.create(MMapRangeGlobal);
-        errdefer root.allocator.destroy(global_range);
-        global_range.shadow_addr_space = try AddressSpace.init();
-        errdefer global_range.shadow_addr_space.deinit();
-        global_range.base = aligned_vaddr;
-        global_range.length = aligned_len;
-        global_range.locals = .{};
-        errdefer global_range.locals.deinit(root.allocator);
-
-        const local_range = try root.allocator.create(MMapRangeLocal);
-        errdefer root.allocator.destroy(local_range);
-        local_range.addr_space = self;
-        local_range.global = global_range;
-        local_range.base = aligned_vaddr;
-        local_range.length = aligned_len;
-        local_range.prot = prot;
-        local_range.flags = flags;
-
-        try global_range.locals.append(root.allocator, local_range);
-
-        {
-            const interrupt_state = lockVmm(&self.lock);
-            defer unlockVmm(&self.lock, interrupt_state);
-            try self.mmap_ranges.append(root.allocator, local_range);
+        const range_interrupt_state = lockVmm(&range_lock);
+        defer unlockVmm(&range_lock, range_interrupt_state);
+        const interrupt_state = lockVmm(&self.lock);
+        defer unlockVmm(&self.lock, interrupt_state);
+        for (self.mmap_ranges.items) |other| {
+            if (base < other.base + other.length and other.base < end) return error.AlreadyMapped;
         }
-
-        var i: usize = 0;
-        while (i < aligned_len) : (i += page_size) {
-            try mmapPageInRange(global_range, aligned_vaddr + i, paddr + i, prot);
-            // TODO: if mmapPageInRange fails we're in trouble
+        var page = base;
+        while (page < end) : (page += page_size) {
+            const pte = self.virt2pte(page, false) catch continue;
+            if (pte.present) return error.AlreadyMapped;
         }
+        try self.mmap_ranges.ensureUnusedCapacity(root.allocator, 1);
+
+        const global = try root.allocator.create(MMapRangeGlobal);
+        errdefer root.allocator.destroy(global);
+        global.* = .{
+            .shadow_addr_space = try AddressSpace.init(),
+            .base = base,
+            .length = length,
+            .offset = 0,
+        };
+        errdefer global.shadow_addr_space.deinitLocked();
+        errdefer global.locals.deinit(root.allocator);
+        const local = try root.allocator.create(MMapRangeLocal);
+        errdefer root.allocator.destroy(local);
+        local.* = .{
+            .addr_space = self,
+            .global = global,
+            .base = base,
+            .length = length,
+            .offset = 0,
+            .prot = prot,
+            .flags = flags,
+        };
+        try global.locals.append(root.allocator, local);
+
+        // Physical pages remain the callers ownership until the whole mapping
+        // succeeds. Rollback removes translations but must not free those pages.
+        var mapped: usize = 0;
+        errdefer {
+            var offset: usize = 0;
+            while (offset < mapped) : (offset += page_size) {
+                const pte = self.virt2pte(base + offset, false) catch unreachable;
+                pte.* = @bitCast(@as(u64, 0));
+                self.flush(base + offset);
+            }
+        }
+        while (mapped < length) : (mapped += page_size) {
+            const pte = try self.virt2pte(base + mapped, true);
+            const shadow = try global.shadow_addr_space.virt2pte(base + mapped, true);
+            shadow.* = @bitCast((physical + mapped) | PTE.PRESENT);
+            pte.* = @bitCast((physical + mapped) | protectionFlags(prot));
+            self.flush(base + mapped);
+        }
+        self.mmap_ranges.appendAssumeCapacity(local);
     }
 
     pub fn munmap(self: *AddressSpace, addr: u64, constlen: usize) !void {
@@ -580,6 +610,14 @@ pub fn handlePageFault(cr2: u64, reason: PageFaultError) !void {
         @panic("TODO: map files");
 
     try mmapPageInRange(local_range.global, range.memory_page * page_size, page, local_range.prot);
+}
+
+fn protectionFlags(prot: i32) u64 {
+    var flags: u64 = PTE.USER;
+    if (prot != ubik.PROT.NONE) flags |= PTE.PRESENT;
+    if ((prot & ubik.PROT.WRITE) != 0) flags |= PTE.WRITABLE;
+    if ((prot & ubik.PROT.EXEC) == 0) flags |= PTE.NOEXEC;
+    return flags;
 }
 
 fn mmapPageInRange(global: *MMapRangeGlobal, vaddr: u64, paddr: u64, prot: i32) !void {
