@@ -512,7 +512,9 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
         cpu.current_thread = null;
         vmm.switchPageTable(vmm.kaddr_space.cr3());
         apic.eoi();
-        arch.halt();
+        apic.timerOneShot(quantum, sched_vector);
+        // STI's interrupt shadow closes the wakeup window before HLT.
+        while (true) asm volatile ("sti; hlt" ::: "memory");
     }
     unreachable;
 }
