@@ -14,11 +14,21 @@ A kernel
 - write core in zig and the rest in nov
 
 # Clone, build and run
-Make sure to have `zig master`, `xorriso` and `qemu-system-x86` then run
+Use Zig `0.14.0-dev.1637+8c232922b`, `xorriso`, `make`, a C compiler,
+and `qemu-system-x86_64`, then run
 
 ```console
 % git clone git@github.com:ratakor/ubik --recursive
 % zig build run
+```
+
+# Host regression tests
+These tests use mocked CPU and physical-memory interfaces; they do not execute
+privileged instructions or replace SMP boot testing. Run from the repository root:
+
+```console
+zig test --test-runner kernel/test_runner.zig --dep harness=root -Mroot=kernel/lib/lock_test.zig
+zig test --test-runner kernel/test_runner.zig --dep harness=root --dep ubik --dep lock -Mroot=kernel/mm/vmm_test.zig -Mubik=lib/ubik.zig -Mlock=kernel/lib/lock.zig
 ```
 
 # File structure

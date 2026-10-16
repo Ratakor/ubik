@@ -1,6 +1,5 @@
-//! Run from the repository root with Zig 0.14.0-dev.1827 (not dev1637):
-//! printf '%s\n' 'pub usingnamespace @import("harness");' > /tmp/ubik-host-test-runner.zig
-//! zig test --test-runner /tmp/ubik-host-test-runner.zig --dep harness=root -Mroot=kernel/lib/lock_test.zig
+//! Run from the repository root (validated with dev1827, not pinned dev1637):
+//! zig test --test-runner kernel/test_runner.zig --dep harness=root -Mroot=kernel/lib/lock_test.zig
 //! The self-dependency exposes the test module to the custom root runner.
 const std = @import("std");
 const SpinLock = @import("lock.zig").SpinLock;

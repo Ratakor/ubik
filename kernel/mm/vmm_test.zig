@@ -1,7 +1,6 @@
 //! Host-only harness; no kernel initialization or privileged instructions.
-//! Run from the repository root with Zig 0.14.0-dev.1827 (not dev1637):
-//! printf '%s\n' 'pub usingnamespace @import("harness");' > /tmp/ubik-host-test-runner.zig
-//! zig test --test-runner /tmp/ubik-host-test-runner.zig --dep harness=root --dep ubik --dep lock -Mroot=kernel/mm/vmm_test.zig -Mubik=lib/ubik.zig -Mlock=kernel/lib/lock.zig
+//! Run from the repository root (validated with dev1827, not pinned dev1637):
+//! zig test --test-runner kernel/test_runner.zig --dep harness=root --dep ubik --dep lock -Mroot=kernel/mm/vmm_test.zig -Mubik=lib/ubik.zig -Mlock=kernel/lib/lock.zig
 //! The runner re-exports this module so kernel @import("root") sees the mocks.
 const std = @import("std");
 const ubik = @import("ubik");
