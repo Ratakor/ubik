@@ -14,7 +14,7 @@ A kernel
 - write core in zig and the rest in nov
 
 # Clone, build and run
-Use Zig `0.14.0-dev.1637+8c232922b`, `xorriso`, `make`, a C compiler,
+Use Zig **0.16.0** (with LLVM support), `xorriso`, `make`, a C compiler,
 and `qemu-system-x86_64`, then run
 
 ```console
@@ -23,13 +23,19 @@ and `qemu-system-x86_64`, then run
 ```
 
 # Host regression tests
-These tests use mocked CPU and physical-memory interfaces; they do not execute
-privileged instructions or replace SMP boot testing. Run from the repository root:
+These tests cover locking, page/heap allocation, VMM, serial/TTY I/O, and debug
+helpers using mocked hardware. They do not execute privileged instructions or
+replace SMP boot testing. Run from the repository root:
 
 ```console
-zig test --test-runner kernel/test_runner.zig --dep harness=root -Mroot=kernel/lib/lock_test.zig
-zig test --test-runner kernel/test_runner.zig --dep harness=root --dep ubik --dep lock -Mroot=kernel/mm/vmm_test.zig -Mubik=lib/ubik.zig -Mlock=kernel/lib/lock.zig
+zig build test
 ```
+
+The kernel uses Zig's LLVM backend for its interrupt-stub inline assembly.
+Historical Limine protocol bindings are vendored in `lib/limine`; the bootloader
+submodule is still required to build the ISO. Panic diagnostics retain DWARF
+source lookup using frame pointers. Heap safety checks remain enabled in safe
+builds, but hosted allocator stack-trace capture is disabled.
 
 # File structure
 This shouldn't be in readme.
