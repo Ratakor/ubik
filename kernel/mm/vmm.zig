@@ -352,9 +352,9 @@ pub const AddressSpace = struct {
         prot: i32,
         flags: ubik.MAP,
     ) !void {
-        if (len == 0 or vaddr % page_size != paddr % page_size) return error.EINVAL;
+        if (len == 0 or paddr % page_size != 0) return error.EINVAL;
         const base = alignBackward(u64, vaddr, page_size);
-        const physical = alignBackward(u64, paddr, page_size);
+        const physical = paddr;
         const size = std.math.add(usize, len, vaddr - base) catch return error.EINVAL;
         const padded = std.math.add(usize, size, page_size - 1) catch return error.EINVAL;
         const length = alignBackward(usize, padded, page_size);
@@ -399,7 +399,7 @@ pub const AddressSpace = struct {
         };
         try global.locals.append(root.allocator, local);
 
-        // Physical pages remain the callers ownership until the whole mapping
+        // Physical pages remain the caller's ownership until the whole mapping
         // succeeds. Rollback removes translations but must not free those pages.
         var mapped: usize = 0;
         errdefer {
