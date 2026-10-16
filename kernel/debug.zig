@@ -16,13 +16,15 @@ var debug_fba = std.heap.FixedBufferAllocator.init(&fba_buffer);
 const debug_allocator = debug_fba.allocator();
 var debug_info: ?std.debug.Dwarf = null;
 
-// https://github.com/ziglang/zig/issues/21233
-var dmesg_sfa = std.heap.stackFallback(4096, root.allocator);
+// Logging can run while the heap allocator is locked, including its own logs.
+// Keep the message buffer bounded so logging never allocates from that heap.
+var dmesg_buffer: [1024 * 1024]u8 = undefined;
+var dmesg_fba = std.heap.FixedBufferAllocator.init(&dmesg_buffer);
 var dmesg: std.ArrayList(u8) = undefined;
 const dmesg_writer = dmesg.writer();
 
 pub fn init() void {
-    dmesg = std.ArrayList(u8).init(dmesg_sfa.get());
+    dmesg = std.ArrayList(u8).init(dmesg_fba.allocator());
 }
 
 pub fn log(
