@@ -541,7 +541,7 @@ fn waitForIpiDelivery() void {
     while ((icr_low.* & (1 << 12)) != 0) std.atomic.spinLoopHint();
 }
 
-fn serviceShootdown() void {
+pub fn serviceShootdown() void {
     if (!smp.initialized) return;
     const cpu = smp.thisCpu();
     if (@atomicLoad(u64, &cpu.tlb_shootdown_cr3, .acquire) == 0) return;
