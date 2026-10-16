@@ -332,7 +332,9 @@ pub const AddressSpace = struct {
         for (smp.cpus) |*cpu| {
             if (cpu == this_cpu) continue;
             @atomicStore(u64, &cpu.tlb_shootdown_cr3, 1, .release);
+            waitForIpiDelivery();
             apic.sendIPI(cpu.lapic_id, .{ .vector = tlb_shootdown_ipi_vector });
+            waitForIpiDelivery();
         }
         for (smp.cpus) |*cpu| {
             if (cpu == this_cpu) continue;
@@ -530,6 +532,13 @@ fn lockVmm(lock: *SpinLock) bool {
 fn unlockVmm(lock: *SpinLock, old_state: bool) void {
     lock.unlock();
     _ = arch.toggleInterrupts(old_state);
+}
+
+// sendIPI does not wait for the xAPIC ICR delivery-status bit. Keep this
+// local until the APIC API provides that guarantee for all its callers.
+fn waitForIpiDelivery() void {
+    const icr_low: *volatile u32 = @ptrFromInt(apic.lapic_base + 0x300);
+    while ((icr_low.* & (1 << 12)) != 0) std.atomic.spinLoopHint();
 }
 
 fn serviceShootdown() void {
