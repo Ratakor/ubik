@@ -115,6 +115,40 @@ fn buildImage(b: *std.Build, image_name: []const u8) *std.Build.Step.Run {
     return b.addSystemCommand(image_params);
 }
 
+fn buildHostTests(b: *std.Build) void {
+    const test_step = b.step("test", "Run host kernel regression tests");
+    const ubik = b.createModule(.{
+        .root_source_file = b.path("lib/ubik.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .omit_frame_pointer = false,
+    });
+    const lock = b.createModule(.{
+        .root_source_file = b.path("kernel/lib/lock.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .omit_frame_pointer = false,
+    });
+    for ([_][]const u8{ "kernel/lib/lock_test.zig", "kernel/mm/vmm_test.zig", "kernel/io_test.zig" }) |source| {
+        const harness = b.createModule(.{
+            .root_source_file = b.path(source),
+            .target = b.graph.host,
+            .optimize = .Debug,
+            .omit_frame_pointer = false,
+        });
+        // The custom runner is the root; its imports use this module's table.
+        harness.addImport("harness", harness);
+        harness.addImport("ubik", ubik);
+        harness.addImport("lock", lock);
+        const tests = b.addTest(.{
+            .name = std.fs.path.stem(source),
+            .root_module = harness,
+            .test_runner = .{ .path = b.path("kernel/test_runner.zig"), .mode = .simple },
+        });
+        test_step.dependOn(&b.addRunArtifact(tests).step);
+    }
+}
+
 pub fn build(b: *std.Build) void {
     comptime {
         const current_zig = builtin.zig_version;
@@ -128,6 +162,7 @@ pub fn build(b: *std.Build) void {
 
     const kernel = buildKernel(b);
     b.installArtifact(kernel);
+    buildHostTests(b);
 
     const arch = @tagName(kernel.root_module.resolved_target.?.result.cpu.arch);
     const image_name = concat(b, &[_][]const u8{ "ubik-", arch, ".iso" });

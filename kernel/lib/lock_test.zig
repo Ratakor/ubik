@@ -1,19 +1,6 @@
-//! Run from the repository root (validated with dev1827, not pinned dev1637):
-//! zig test --test-runner kernel/test_runner.zig --dep harness=root -Mroot=kernel/lib/lock_test.zig
-//! The self-dependency exposes the test module to the custom root runner.
+//! Host-only spinlock tests with interrupt and shootdown mocks.
 const std = @import("std");
-const SpinLock = @import("lock.zig").SpinLock;
-
-// The kernel resolves mocks through @import("root"), i.e. the test runner.
-pub fn main() !void {
-    for (@import("builtin").test_functions) |case| {
-        std.testing.allocator_instance = .{};
-        defer if (std.testing.allocator_instance.deinit() == .leak) @panic("test allocator leak");
-        std.debug.print("{s}... ", .{case.name});
-        try case.func();
-        std.debug.print("OK\n", .{});
-    }
-}
+const SpinLock = @import("lock").SpinLock;
 
 pub const arch = struct {
     var interrupts = true;

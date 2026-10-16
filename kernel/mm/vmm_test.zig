@@ -1,28 +1,17 @@
 //! Host-only harness; no kernel initialization or privileged instructions.
-//! Run from the repository root (validated with dev1827, not pinned dev1637):
-//! zig test --test-runner kernel/test_runner.zig --dep harness=root --dep ubik --dep lock -Mroot=kernel/mm/vmm_test.zig -Mubik=lib/ubik.zig -Mlock=kernel/lib/lock.zig
+//! Run from the repository root with Zig 0.16.0: zig build test
 //! The runner re-exports this module so kernel @import("root") sees the mocks.
 const std = @import("std");
 const ubik = @import("ubik");
 pub const vmm = @import("vmm.zig");
 pub const SpinLock = @import("lock").SpinLock;
-pub var allocator = std.testing.allocator;
-const page = std.mem.page_size;
+pub const allocator = std.testing.allocator;
+const page = pmm.page_size;
+const PROT = ubik.PROT;
 const base = 0x400000;
-const rw = ubik.PROT.READ | ubik.PROT.WRITE;
+const rw = PROT.READ | PROT.WRITE;
 const private: ubik.MAP = .{ .TYPE = .PRIVATE, .ANONYMOUS = true };
 const shared: ubik.MAP = .{ .TYPE = .SHARED, .ANONYMOUS = true };
-
-// A custom runner makes the mocks visible to kernel @import("root") calls.
-pub fn main() !void {
-    for (@import("builtin").test_functions) |case| {
-        std.testing.allocator_instance = .{};
-        defer if (std.testing.allocator_instance.deinit() == .leak) @panic("test allocator leak");
-        std.debug.print("{s}... ", .{case.name});
-        try case.func();
-        std.debug.print("OK\n", .{});
-    }
-}
 
 pub const arch = struct {
     var interrupts = true;
@@ -75,6 +64,7 @@ pub const sched = struct {
 };
 
 pub const pmm = struct {
+    pub const page_size = 4096;
     // Static aligned storage keeps physical addresses dereferenceable at HHDM 0.
     var storage: [256][page]u8 align(page) = undefined;
     var used: [256]bool = [_]bool{false} ** 256;
@@ -116,7 +106,7 @@ pub const pmm = struct {
 var kernel: vmm.AddressSpace = undefined;
 fn setup() void {
     std.debug.assert(pmm.live == 0);
-    allocator = std.testing.allocator;
+
     pmm.budget = null;
     arch.interrupts = true;
     arch.cr3 = 0;
@@ -151,6 +141,102 @@ fn unlocked(space: *vmm.AddressSpace) !void {
     try std.testing.expect(space.lock.tryLock());
     space.lock.unlock();
     try std.testing.expect(arch.interrupts);
+}
+
+test "page allocator honors alignment and reclaims trimmed and resized pages" {
+    setup();
+    defer teardown();
+    const baseline = pmm.live;
+    const page_allocator: std.mem.Allocator = .{
+        .ptr = undefined,
+        .vtable = &@import("PageAllocator.zig").vtable,
+    };
+    inline for (.{ 1, page, 4 * page }) |alignment| {
+        const memory = try page_allocator.alignedAlloc(u8, .fromByteUnits(alignment), 2 * page + 17);
+        try std.testing.expectEqual(@as(usize, 0), @intFromPtr(memory.ptr) % alignment);
+        try std.testing.expectEqual(baseline + 3, pmm.live);
+        @memset(memory, 0xa5);
+        try std.testing.expect(page_allocator.resize(memory, 3 * page));
+        const expanded: []align(alignment) u8 = memory.ptr[0 .. 3 * page];
+        try std.testing.expect(!page_allocator.resize(expanded, 4 * page));
+        try std.testing.expect(page_allocator.remap(expanded, 4 * page) == null);
+        try std.testing.expectEqual(@as(u8, 0xa5), memory[page]);
+        const shrunk = page_allocator.remap(expanded, page + 1).?;
+        try std.testing.expectEqual(memory.ptr, shrunk.ptr);
+        try std.testing.expectEqual(baseline + 2, pmm.live);
+        try std.testing.expect(page_allocator.resize(shrunk, 1));
+        const final: []align(alignment) u8 = shrunk.ptr[0..1];
+        page_allocator.free(final);
+        try std.testing.expectEqual(baseline, pmm.live);
+    }
+    pmm.budget = 0;
+    try std.testing.expectError(error.OutOfMemory, page_allocator.alloc(u8, 1));
+    pmm.budget = null;
+    try std.testing.expectError(error.OutOfMemory, page_allocator.alloc(u8, std.math.maxInt(usize)));
+    try std.testing.expectEqual(baseline, pmm.live);
+}
+
+test "heap allocator restores IRQs and reclaims small and large backing allocations" {
+    for ([_]bool{ true, false }) |enabled| {
+        setup();
+        defer teardown();
+        defer arch.interrupts = true;
+        const baseline = pmm.live;
+        defer std.testing.expectEqual(baseline, pmm.live) catch @panic("heap backing page leak");
+        var heap: @import("HeapAllocator.zig") = .{};
+        defer {
+            std.testing.expectEqual(.ok, heap.backend.deinit()) catch @panic("heap allocator leak");
+            std.testing.expectEqual(enabled, arch.interrupts) catch @panic("heap deinit changed IRQ state");
+        }
+        const heap_allocator = heap.allocator();
+        arch.interrupts = enabled;
+        {
+            var small = try heap_allocator.alignedAlloc(u8, .fromByteUnits(64), 33);
+            defer heap_allocator.free(small);
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            try std.testing.expectEqual(@as(usize, 0), @intFromPtr(small.ptr) % 64);
+            try std.testing.expect(pmm.live > baseline);
+            @memset(small, 0xa5);
+            const small_ptr = small.ptr;
+            try std.testing.expect(heap_allocator.resize(small, 48));
+            small = small.ptr[0..48];
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            small = heap_allocator.remap(small, 40) orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            try std.testing.expectEqual(small_ptr, small.ptr);
+            try std.testing.expect(std.mem.allEqual(u8, small[0..33], 0xa5));
+
+            var large = try heap_allocator.alignedAlloc(u8, .fromByteUnits(4 * page), 3 * page + 17);
+            defer heap_allocator.free(large);
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            try std.testing.expectEqual(@as(usize, 0), @intFromPtr(large.ptr) % (4 * page));
+            @memset(large, 0x5a);
+            const large_ptr = large.ptr;
+            try std.testing.expect(heap_allocator.resize(large, 4 * page));
+            large = large.ptr[0 .. 4 * page];
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            const before_shrink = pmm.live;
+            large = heap_allocator.remap(large, 2 * page + 7) orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            try std.testing.expectEqual(large_ptr, large.ptr);
+            try std.testing.expectEqual(before_shrink - 1, pmm.live);
+            try std.testing.expect(std.mem.allEqual(u8, large, 0x5a));
+            try std.testing.expect(!heap_allocator.resize(large, 8 * page));
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            try std.testing.expect(heap_allocator.remap(large, 8 * page) == null);
+            try std.testing.expectEqual(enabled, arch.interrupts);
+            try std.testing.expect(std.mem.allEqual(u8, large, 0x5a));
+
+            pmm.budget = 0;
+            defer pmm.budget = null;
+            try std.testing.expectError(error.OutOfMemory, heap_allocator.alloc(u8, 8 * page));
+            try std.testing.expectEqual(enabled, arch.interrupts);
+        }
+        try std.testing.expectEqual(enabled, arch.interrupts);
+        try std.testing.expect(heap.lock.tryLock());
+        heap.lock.unlock();
+        try std.testing.expectEqual(enabled, arch.interrupts);
+    }
 }
 
 test "sparse page tables deinit and fork skip absent branches and leaves" {
@@ -290,7 +376,7 @@ test "PROT_NONE retains backing ownership across fork and unmap" {
     defer teardown();
     const parent = try vmm.AddressSpace.init();
     defer parent.deinit();
-    const physical = try mapping(parent, base, 1, ubik.PROT.NONE, private);
+    const physical = try mapping(parent, base, 1, PROT.NONE, private);
     try std.testing.expectError(error.NotMapped, parent.virt2phys(base));
     try std.testing.expectError(error.PageProtectionViolation, fault(parent, base + 7, 0));
     const child = try parent.fork();
@@ -311,17 +397,17 @@ test "permissions reject disallowed faults and preserve IRQ and lock state" {
     defer teardown();
     const space = try vmm.AddressSpace.init();
     defer space.deinit();
-    const protections = [_]i32{ ubik.PROT.READ, rw, ubik.PROT.EXEC, ubik.PROT.NONE };
+    const protections = [_]i32{ PROT.READ, rw, PROT.EXEC, PROT.NONE };
     for (protections, 0..) |prot, i| {
         const address = base + i * page;
         _ = try mapping(space, address, 1, prot, private);
         const pte = try space.virt2pte(address, false);
         try std.testing.expect(pte.user);
-        try std.testing.expectEqual(prot != ubik.PROT.NONE, pte.present);
-        try std.testing.expectEqual((prot & ubik.PROT.WRITE) != 0, pte.writable);
-        try std.testing.expectEqual((prot & ubik.PROT.EXEC) == 0, pte.execute_disable);
+        try std.testing.expectEqual(prot != PROT.NONE, pte.present);
+        try std.testing.expectEqual((prot & PROT.WRITE) != 0, pte.writable);
+        try std.testing.expectEqual((prot & PROT.EXEC) == 0, pte.execute_disable);
         for ([_]u32{ 0, 2, 16 }) |reason| {
-            const permitted = if (reason == 2) (prot & ubik.PROT.WRITE) != 0 else if (reason == 16) (prot & ubik.PROT.EXEC) != 0 else (prot & rw) != 0;
+            const permitted = if (reason == 2) (prot & PROT.WRITE) != 0 else if (reason == 16) (prot & PROT.EXEC) != 0 else (prot & rw) != 0;
             if (permitted) try fault(space, address + 11, reason) else try std.testing.expectError(error.PageProtectionViolation, fault(space, address + 11, reason));
             try unlocked(space);
         }
