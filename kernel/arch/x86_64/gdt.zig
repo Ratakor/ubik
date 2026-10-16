@@ -109,8 +109,7 @@ pub fn reload() void {
         : [gdtr] "r" (&gdtr),
           [kcode] "i" (kernel_code),
           [kdata] "i" (kernel_data),
-        : "rax", "memory"
-    );
+        : .{ .rax = true, .memory = true });
 }
 
 pub fn loadTSS(tss: *TSS) void {
@@ -130,6 +129,5 @@ pub fn loadTSS(tss: *TSS) void {
         \\ltr %[tss]
         :
         : [tss] "{ax}" (@as(u16, tss_descriptor)),
-        : "memory"
-    );
+        : .{ .memory = true });
 }

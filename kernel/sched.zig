@@ -48,9 +48,9 @@ pub const Process = struct {
         errdefer root.allocator.destroy(process);
 
         process.parent = parent;
-        process.threads = .{};
-        process.children = .{};
-        process.child_events = .{};
+        process.threads = .empty;
+        process.children = .empty;
+        process.child_events = .empty;
 
         if (parent) |p| {
             @memcpy(&process.name, &p.name);
@@ -107,7 +107,7 @@ pub const Thread = struct {
     fs_base: u64,
     cr3: u64,
     fpu_storage: u64,
-    stacks: std.ArrayListUnmanaged(u64) = .{},
+    stacks: std.ArrayListUnmanaged(u64) = .empty,
     pf_stack: u64,
     kernel_stack: u64,
 
@@ -117,10 +117,12 @@ pub const Thread = struct {
     // running_time: usize, // TODO
 
     pub const stack_size = 8 * 1024 * 1024; // 8MiB
-    pub const stack_pages = stack_size / std.mem.page_size;
+    pub const stack_pages = stack_size / pmm.page_size;
+
+    pub const KernelEntry = *const fn (?*anyopaque) callconv(.c) void;
 
     // TODO: merge initUser and initKernel?
-    pub fn initKernel(func: *const anyopaque, arg: ?*anyopaque, tickets: usize) !*Thread {
+    pub fn initKernel(func: KernelEntry, arg: ?*anyopaque, tickets: usize) !*Thread {
         if (tickets == 0) return error.InvalidTickets;
         const thread = try root.allocator.create(Thread);
         errdefer root.allocator.destroy(thread);
@@ -144,7 +146,7 @@ pub const Thread = struct {
             thread.stacks.deinit(root.allocator);
         }
 
-        const fpu_storage = try root.allocator.alignedAlloc(u8, arch.cpu.fpu_storage_alignment, arch.cpu.fpu_storage_size);
+        const fpu_storage = try root.allocator.alignedAlloc(u8, .fromByteUnits(arch.cpu.fpu_storage_alignment), arch.cpu.fpu_storage_size);
         errdefer root.allocator.free(fpu_storage);
         @memset(fpu_storage, 0);
         // The legacy FXSAVE region also supplies defaults when XSAVE is unavailable.
@@ -192,7 +194,7 @@ pub const Thread = struct {
         thread.enqueued = false;
         thread.reschedule_pending = false;
         thread.dying = false;
-        thread.stacks = .{};
+        thread.stacks = .empty;
 
         // TODO: ugly + save in threads.stacks so it's easily freed on deinit?
         var stack: u64 = undefined;
@@ -213,7 +215,7 @@ pub const Thread = struct {
                 ubik.PROT.READ | ubik.PROT.WRITE,
                 .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             );
-            process.thread_stack_top -= stack_size - std.mem.page_size;
+            process.thread_stack_top -= stack_size - pmm.page_size;
         }
 
         thread.kernel_stack = blk: {
@@ -250,15 +252,13 @@ pub const Thread = struct {
             \\fldcw %[fcw]
             :
             : [fcw] "m" (default_fcw),
-            : "memory"
-        );
+            : .{ .memory = true });
         const default_mxcsr: u32 = 0b1111110000000;
         asm volatile (
             \\ldmxcsr %[mxcsr]
             :
             : [mxcsr] "m" (default_mxcsr),
-            : "memory"
-        );
+            : .{ .memory = true });
         arch.cpu.fpuSave(thread.fpu_storage);
 
         thread.tid = process.threads.items.len; // TODO?
@@ -302,7 +302,7 @@ pub const Thread = struct {
         return physical + stack_size + vmm.hhdm_offset;
     }
 
-    fn kernelEntry(entry: *const fn (?*anyopaque) callconv(.SysV) void, arg: ?*anyopaque) callconv(.SysV) noreturn {
+    fn kernelEntry(entry: KernelEntry, arg: ?*anyopaque) callconv(.{ .x86_64_sysv = .{} }) noreturn {
         entry(arg);
         die();
     }
@@ -322,7 +322,7 @@ pub const Thread = struct {
 const quantum = 50_000;
 
 pub var kernel_process: *Process = undefined;
-pub var processes: std.ArrayListUnmanaged(*Process) = .{}; // TODO: hashmap with pid?
+pub var processes: std.ArrayListUnmanaged(*Process) = .empty; // TODO: hashmap with pid?
 // Intrusive links avoid allocation (and allocator lock inversion) under sched_lock.
 var running_threads: ?*Thread = null;
 
@@ -442,7 +442,7 @@ pub fn die() noreturn {
     unreachable;
 }
 
-fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
+fn schedHandler(ctx: *arch.Context) callconv(.{ .x86_64_sysv = .{} }) void {
     apic.timerStop();
 
     const cpu = smp.thisCpu();
@@ -515,7 +515,7 @@ fn schedHandler(ctx: *arch.Context) callconv(.SysV) void {
         apic.eoi();
         apic.timerOneShot(quantum, sched_vector);
         // STI's interrupt shadow closes the wakeup window before HLT.
-        while (true) asm volatile ("sti; hlt" ::: "memory");
+        while (true) asm volatile ("sti; hlt" ::: .{ .memory = true });
     }
     unreachable;
 }
@@ -535,7 +535,7 @@ pub fn yield() void {
         const pending = thread.reschedule_pending;
         sched_lock.unlock();
         if (!pending) break;
-        asm volatile ("sti; hlt; cli" ::: "memory");
+        asm volatile ("sti; hlt; cli" ::: .{ .memory = true });
     }
 }
 
@@ -612,7 +612,6 @@ fn contextSwitch(ctx: *arch.Context) noreturn {
         :
         : [ctx] "rm" (ctx),
           [kcode] "i" (gdt.kernel_code),
-        : "memory"
-    );
+        : .{ .memory = true });
     unreachable;
 }

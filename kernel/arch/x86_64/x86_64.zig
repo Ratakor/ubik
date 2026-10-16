@@ -28,8 +28,7 @@ pub const RFlags = packed struct(u64) {
             \\pop %[ret]
             : [ret] "=r" (-> RFlags),
             :
-            : "memory"
-        );
+            : .{ .memory = true });
     }
 };
 
@@ -78,22 +77,19 @@ pub inline fn out(comptime T: type, port: u16, value: T) void {
             :
             : [val] "{al}" (value),
               [port] "N{dx}" (port),
-            : "memory"
-        ),
+            : .{ .memory = true }),
         u16 => asm volatile (
             \\outw %[val], %[port]
             :
             : [val] "{ax}" (value),
               [port] "N{dx}" (port),
-            : "memory"
-        ),
+            : .{ .memory = true }),
         u32 => asm volatile (
             \\outl %[val], %[port]
             :
             : [val] "{eax}" (value),
               [port] "N{dx}" (port),
-            : "memory"
-        ),
+            : .{ .memory = true }),
         else => @compileError("No port out instruction available for type " ++ @typeName(T)),
     }
 }
@@ -104,20 +100,17 @@ pub inline fn in(comptime T: type, port: u16) T {
             \\inb %[port], %[res]
             : [res] "={al}" (-> T),
             : [port] "N{dx}" (port),
-            : "memory"
-        ),
+            : .{ .memory = true }),
         u16 => asm volatile (
             \\inw %[port], %[res]
             : [res] "={ax}" (-> T),
             : [port] "N{dx}" (port),
-            : "memory"
-        ),
+            : .{ .memory = true }),
         u32 => asm volatile (
             \\inl %[port], %[res]
             : [res] "={eax}" (-> T),
             : [port] "N{dx}" (port),
-            : "memory"
-        ),
+            : .{ .memory = true }),
         else => @compileError("No port in instruction available for type " ++ @typeName(T)),
     };
 }
@@ -126,16 +119,14 @@ pub inline fn readRegister(comptime reg: []const u8) u64 {
     return asm volatile ("mov %" ++ reg ++ ", %[res]"
         : [res] "=r" (-> u64),
         :
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn writeRegister(comptime reg: []const u8, value: u64) void {
     asm volatile ("mov %[val], %" ++ reg
         :
         : [val] "r" (value),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn cpuid(leaf: u32, subleaf: u32) CpuID {
@@ -165,8 +156,7 @@ pub inline fn rdmsr(msr: MSR) u64 {
         : [_] "={eax}" (low),
           [_] "={edx}" (high),
         : [_] "{ecx}" (@intFromEnum(msr)),
-        : "memory"
-    );
+        : .{ .memory = true });
 
     return @as(u64, low) | (@as(u64, high) << 32);
 }
@@ -178,8 +168,7 @@ pub inline fn wrmsr(msr: MSR, value: u64) void {
         : [_] "{eax}" (@as(u32, @truncate(value))),
           [_] "{edx}" (@as(u32, @truncate(value >> 32))),
           [_] "{ecx}" (@intFromEnum(msr)),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn wrxcr(reg: u32, value: u64) void {
@@ -189,8 +178,7 @@ pub inline fn wrxcr(reg: u32, value: u64) void {
         : [_] "{eax}" (@as(u32, @truncate(value))),
           [_] "{edx}" (@as(u32, @truncate(value >> 32))),
           [_] "{ecx}" (reg),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn xsave(ctx: u64) void {
@@ -200,8 +188,7 @@ pub inline fn xsave(ctx: u64) void {
         : [ctx] "r" (ctx),
           [_] "{rax}" (~@as(u64, 0)),
           [_] "{rdx}" (~@as(u64, 0)),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn xrstor(ctx: u64) void {
@@ -211,8 +198,7 @@ pub inline fn xrstor(ctx: u64) void {
         : [ctx] "r" (ctx),
           [_] "{rax}" (~@as(u64, 0)),
           [_] "{rdx}" (~@as(u64, 0)),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn fxsave(ctx: u64) void {
@@ -220,8 +206,7 @@ pub inline fn fxsave(ctx: u64) void {
         \\fxsave (%[ctx])
         :
         : [ctx] "r" (ctx),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn fxrstor(ctx: u64) void {
@@ -229,8 +214,7 @@ pub inline fn fxrstor(ctx: u64) void {
         \\fxrstor (%[ctx])
         :
         : [ctx] "r" (ctx),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn rdseed() u64 {
@@ -252,6 +236,5 @@ pub inline fn invlpg(addr: u64) void {
         \\invlpg (%[addr])
         :
         : [addr] "r" (addr),
-        : "memory"
-    );
+        : .{ .memory = true });
 }

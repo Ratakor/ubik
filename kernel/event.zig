@@ -14,7 +14,8 @@ const max_events = 32;
 pub const Event = struct {
     lock: SpinLock = .{},
     pending: usize = 0,
-    listeners: std.BoundedArray(Listener, 32) = .{},
+    listeners: [max_events]Listener = undefined,
+    listener_count: usize = 0,
 
     pub fn trigger(self: *Event, drop: bool) void {
         const old_state = arch.toggleInterrupts(false);
@@ -23,10 +24,10 @@ pub const Event = struct {
         defer self.lock.unlock();
 
         var delivered = false;
-        for (self.listeners.slice()) |listener| {
+        for (self.listeners[0..self.listener_count]) |listener| {
             if (sched.wakeEventWait(listener.thread, listener.which)) delivered = true;
         }
-        self.listeners.len = 0;
+        self.listener_count = 0;
         // Listeners already awakened by another event do not consume this one.
         if (!delivered and !drop) self.pending += 1;
     }
@@ -67,11 +68,12 @@ pub fn awaitEvents(events: []*Event, blocking: bool) ?union { ev: *Event, i: usi
 
     // Validate all capacities before publishing even the first listener.
     for (events) |event| {
-        if (event.listeners.len == event.listeners.capacity()) @panic("too many event listeners");
+        if (event.listener_count == max_events) @panic("too many event listeners");
     }
     const thread = sched.currentThread();
     for (events, 0..) |event, i| {
-        event.listeners.appendAssumeCapacity(.{ .thread = thread, .which = i });
+        event.listeners[event.listener_count] = .{ .thread = thread, .which = i };
+        event.listener_count += 1;
     }
     sched.beginEventWait(thread);
     unlockEvents(ordered);
@@ -82,9 +84,10 @@ pub fn awaitEvents(events: []*Event, blocking: bool) ?union { ev: *Event, i: usi
     defer unlockEvents(ordered);
     const which = sched.eventWaitResult(thread);
     for (events) |event| {
-        for (event.listeners.slice(), 0..) |listener, i| {
+        for (event.listeners[0..event.listener_count], 0..) |listener, i| {
             if (listener.thread == thread) {
-                _ = event.listeners.swapRemove(i);
+                event.listener_count -= 1;
+                event.listeners[i] = event.listeners[event.listener_count];
                 break;
             }
         }
@@ -92,7 +95,7 @@ pub fn awaitEvents(events: []*Event, blocking: bool) ?union { ev: *Event, i: usi
     return .{ .i = which };
 }
 
-fn intEventHandler(ctx: *arch.Context) callconv(.SysV) void {
+fn intEventHandler(ctx: *arch.Context) callconv(.{ .x86_64_sysv = .{} }) void {
     int_events[ctx.vector].trigger(false);
     arch.apic.eoi();
 }

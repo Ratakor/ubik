@@ -58,7 +58,7 @@ pub inline fn thisCpu() *CpuLocal {
     return @ptrFromInt(arch.readRegister("gs:0x0"));
 }
 
-fn initAp(smp_info: *limine.SmpInfo) callconv(.C) noreturn {
+fn initAp(smp_info: *limine.SmpInfo) callconv(.c) noreturn {
     const cpu_local: *CpuLocal = @ptrFromInt(smp_info.extra_argument);
 
     cpu_local.initCpu(false);

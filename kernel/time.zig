@@ -67,7 +67,7 @@ pub var monotonic: timespec = .{};
 pub var realtime: timespec = .{};
 
 var timers_lock: SpinLock = .{};
-var armed_timers: std.ArrayListUnmanaged(*Timer) = .{};
+var armed_timers: std.ArrayListUnmanaged(*Timer) = .empty;
 
 pub fn init() void {
     const boot_time = root.boot_time_request.response.?.boot_time;
@@ -79,7 +79,7 @@ pub fn init() void {
     apic.setIRQRedirect(smp.bsp_lapic_id, timer_vector, 0, true);
 }
 
-fn timerHandler(ctx: *arch.Context) callconv(.SysV) void {
+fn timerHandler(ctx: *arch.Context) callconv(.{ .x86_64_sysv = .{} }) void {
     _ = ctx;
 
     defer apic.eoi();

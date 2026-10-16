@@ -4,7 +4,7 @@ const gdt = @import("gdt.zig");
 const vmm = @import("root").vmm;
 const log = std.log.scoped(.idt);
 
-pub const InterruptHandler = *const fn (ctx: *Context) callconv(.SysV) void;
+pub const InterruptHandler = *const fn (ctx: *Context) callconv(.{ .x86_64_sysv = .{} }) void;
 
 pub const Context = extern struct {
     ds: u64,
@@ -136,8 +136,7 @@ pub fn reload() void {
         \\lidt (%[idtr])
         :
         : [idtr] "r" (&idt.descriptor),
-        : "memory"
-    );
+        : .{ .memory = true });
 }
 
 pub fn allocVector() u8 {
@@ -157,12 +156,12 @@ pub inline fn registerHandler(vector: u8, handler: InterruptHandler) void {
     isr[vector] = handler;
 }
 
-fn panicHandler() callconv(.Naked) noreturn {
+fn panicHandler() callconv(.naked) noreturn {
     x86.disableInterrupts();
     x86.halt();
 }
 
-fn defaultHandler(ctx: *Context) callconv(.SysV) void {
+fn defaultHandler(ctx: *Context) callconv(.{ .x86_64_sysv = .{} }) void {
     const cr2 = x86.readRegister("cr2");
 
     if (ctx.cs == gdt.user_code) {
@@ -226,9 +225,9 @@ fn defaultHandler(ctx: *Context) callconv(.SysV) void {
     });
 }
 
-fn makeHandler(comptime vector: u8) *const fn () callconv(.Naked) void {
+fn makeHandler(comptime vector: u8) *const fn () callconv(.naked) void {
     return struct {
-        fn handler() callconv(.Naked) void {
+        fn handler() callconv(.naked) void {
             const has_error_code = switch (vector) {
                 0x8 => true,
                 0xa...0xe => true,
@@ -261,7 +260,7 @@ inline fn swapgs() void {
     );
 }
 
-export fn commonStub() callconv(.Naked) void {
+export fn commonStub() callconv(.naked) void {
     swapgs();
 
     asm volatile (

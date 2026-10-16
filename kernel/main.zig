@@ -87,14 +87,14 @@ export fn _start() noreturn {
     smp.init();
     time.init();
 
-    const kernel_thread = sched.Thread.initKernel(@ptrCast(&main), null, 1) catch unreachable;
+    const kernel_thread = sched.Thread.initKernel(&main, null, 1) catch unreachable;
     sched.enqueue(kernel_thread) catch unreachable;
 
     arch.enableInterrupts();
     arch.halt();
 }
 
-fn main() noreturn {
+fn main(_: ?*anyopaque) callconv(.c) void {
     arch.disableInterrupts();
     std.log.debug("in main with cpu {}", .{smp.thisCpu().id});
     arch.enableInterrupts();
@@ -128,7 +128,7 @@ fn main() noreturn {
 
     // DEBUG: for some reason the kernel hangs after creating some threads
     inline for (0..10) |i| {
-        const thread = sched.Thread.initKernel(@ptrCast(&dummy), null, 1) catch unreachable;
+        const thread = sched.Thread.initKernel(&dummy, null, 1) catch unreachable;
         thread.tid = i;
         std.log.debug("enqueuing thread {}", .{i});
         sched.enqueue(thread) catch unreachable;
@@ -148,7 +148,7 @@ fn main() noreturn {
     sched.die();
 }
 
-fn dummy() void {
+fn dummy(_: ?*anyopaque) callconv(.c) void {
     arch.disableInterrupts();
     const cpu = smp.thisCpu();
     std.log.debug("in dummy with cpu {} and thread {*}", .{ cpu.id, cpu.current_thread });

@@ -27,7 +27,7 @@ pub const CpuLocal = extern struct {
     cpu_name: [48]u8,
 
     pub const stack_size = 0x10000; // 64KiB
-    pub const stack_pages = stack_size / std.mem.page_size;
+    pub const stack_pages = stack_size / 4096; // x86 hardware page size
 
     pub fn initCpu(self: *CpuLocal, is_bsp: bool) void {
         self.this = self;

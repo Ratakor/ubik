@@ -112,8 +112,8 @@ const ICRLow = packed struct(u32) {
 };
 
 pub var lapic_base: u64 = undefined; // set in acpi.zig with handleMADT()
-pub var io_apics: std.ArrayListUnmanaged(*const IOAPIC) = .{};
-pub var isos: std.ArrayListUnmanaged(*const ISO) = .{};
+pub var io_apics: std.ArrayListUnmanaged(*const IOAPIC) = .empty;
+pub var isos: std.ArrayListUnmanaged(*const ISO) = .empty;
 
 var init_lock: SpinLock = .{};
 
