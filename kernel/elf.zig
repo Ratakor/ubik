@@ -1,4 +1,5 @@
 const std = @import("std");
+const ubik = @import("ubik");
 const root = @import("root");
 const arch = @import("arch.zig");
 const pmm = root.pmm;
@@ -27,12 +28,12 @@ pub fn load(elf_addr: u64, addr_space: *vmm.AddressSpace, load_base: u64) !AuxVa
     const ph_tbl = @as([*]std.elf.Elf64_Phdr, @ptrFromInt(elf_addr + header.phoff))[0..header.phnum];
     for (ph_tbl) |phdr| switch (phdr.p_type) {
         std.elf.PT_LOAD => {
-            var prot: i32 = std.os.PROT.READ;
+            var prot: i32 = ubik.PROT.READ;
             if (phdr.p_flags & std.elf.PF_W != 0) {
-                prot |= std.os.PROT.WRITE;
+                prot |= ubik.PROT.WRITE;
             }
             if (phdr.p_flags & std.elf.PF_X != 0) {
-                prot |= std.os.PROT.EXEC;
+                prot |= ubik.PROT.EXEC;
             }
 
             const misalign = phdr.p_vaddr & (page_size - 1);
@@ -44,9 +45,9 @@ pub fn load(elf_addr: u64, addr_space: *vmm.AddressSpace, load_base: u64) !AuxVa
             try addr_space.mmapRange(
                 phdr.p_vaddr + load_base,
                 paddr,
-                page_count * page_size,
+                phdr.p_memsz,
                 prot,
-                std.os.MAP.ANONYMOUS,
+                .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             );
 
             const dst: [*]u8 = @ptrFromInt(phdr.p_vaddr);
