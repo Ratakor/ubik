@@ -1,6 +1,6 @@
 //! https://wiki.osdev.org/PIT
 
-const x86 = @import("x86_64.zig");
+const x86 = @import("../x86_64.zig");
 
 pub const dividend = 1_193_182;
 pub const timer_freq = 1000;

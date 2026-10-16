@@ -1,6 +1,6 @@
 const std = @import("std");
 const root = @import("root");
-const x86 = @import("x86_64.zig");
+const x86 = @import("../x86_64.zig");
 const pit = @import("pit.zig");
 const vmm = root.vmm;
 const smp = root.smp;

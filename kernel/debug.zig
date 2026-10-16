@@ -204,7 +204,6 @@ const source_files = [_][]const u8{
     "arch/x86_64/gdt.zig",
     "arch/x86_64/idt.zig",
     "arch/x86_64/mem.zig",
-    "arch/x86_64/x86_64.zig",
 
     "arch/x86_64.zig",
     "fs/initramfs.zig",

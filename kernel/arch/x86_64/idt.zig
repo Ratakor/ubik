@@ -1,5 +1,5 @@
 const std = @import("std");
-const x86 = @import("x86_64.zig");
+const x86 = @import("../x86_64.zig");
 const gdt = @import("gdt.zig");
 const vmm = @import("root").vmm;
 const log = std.log.scoped(.idt);
